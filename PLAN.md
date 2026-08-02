@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 6 of 13 |
+| Steps complete | 7 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -122,7 +122,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 4 | 0.9 | `REQUIREMENTS.md` — NFRs & release gates | M | ✅ |
 | 5 | 0.10 | `ARCHITECTURE.md` | M | ✅ |
 | 6 | 0.11 | ADR-0001 … ADR-0015 | M | ✅ |
-| 7 | 0.12 | `USE_CASES.md` | L | ☐ |
+| 7 | 0.12 | `USE_CASES.md` | L | ✅ |
 | 8 | 0.2 | Backend uv project & dependency groups | S | ☐ |
 | 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ☐ |
 | 10 | 0.4 | Backend ruff / mypy / pytest | S | ☐ |
@@ -214,12 +214,20 @@ ADR-0011 has an empty results table to be filled in Phase 16, and adds **structu
 rate** to the §55 benchmark measures — quantization degrades schema fidelity before fluency, and
 this system validates against schema.
 
-### 0.12 — `USE_CASES.md`
+### 0.12 — `USE_CASES.md` ✅
 
-- [ ] Template: actor, preconditions, main flow, alternate and exception flows, postconditions,
+- [x] Template: actor, preconditions, main flow, alternate and exception flows, postconditions,
       acceptance criteria
-- [ ] UC-01 … UC-22, cross-referenced to FRs and API endpoints
-- [ ] Early-phase use cases written in full; later ones stubbed and completed as their phase lands
+- [x] **UC-01 … UC-24**, cross-referenced to FRs, NFRs, API endpoints and phases
+- [x] All written in full rather than stubbed — the specification supplies enough to complete them
+      now, and later phases are checked against them rather than the reverse
+- [x] Coverage table mapping all nine §2 student capabilities to use cases
+- [x] Release-gate coverage table — every gate exercised by at least one use case
+
+**Two use cases added beyond the planned 22.** UC-23 (ask a relationship or prerequisite question)
+and UC-24 (explore the concept graph) close a gap: `FR-OBJ-08` — "explore relationships through a
+concept graph" — was a §2 objective with no use case. Numbering was appended, not inserted, so
+UC-01 … UC-22 remain stable where earlier phases reference them.
 
 ### 0.2 — Backend uv project
 
