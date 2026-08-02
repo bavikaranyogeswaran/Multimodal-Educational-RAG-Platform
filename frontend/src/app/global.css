@@ -9,7 +9,8 @@
   --color-accent: #2457d6;
   --color-accent-soft: #eef3ff;
 
-  /* Answer states are semantically distinct, not decorative — NFR-UX-02, NFR-UX-03. */
+  /* Answer states are semantically distinct, not decorative. An abstention and a
+     source conflict must never look like an ordinary answer. */
   --color-abstain: #8a6d1f;
   --color-abstain-soft: #fdf6e3;
   --color-conflict: #9a3d2f;

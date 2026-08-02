@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 11 of 13 |
+| Steps complete | 12 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -38,6 +38,11 @@ These apply to every phase and are not revisited.
 - **Knowledge Base isolation is the security boundary.** Every scoped record carries `user_id` and
   `knowledge_base_id`; every query filters on both before ranking or traversal (§5, §10).
 - **Library fidelity.** The §65 stack is used exactly as specified. Substitutions require an ADR.
+- **Comments carry no cross-reference identifiers.** Code comments, docstrings, config comments and
+  error messages explain the reasoning in plain language. They do not cite phase numbers, step
+  numbers, requirement IDs, use-case IDs, ADR numbers or spec sections — a comment that only points
+  at a register is not an explanation, and it rots when the register is renumbered. The registers in
+  this repository still cross-reference each other freely; the rule applies to source files.
 
 ---
 
@@ -84,6 +89,7 @@ through and point at what replaced them.
 | D-26 | **structlog** for logging | `NFR-OBS-01` needs a trace ID on every line without threading it through call signatures; `NFR-OBS-02` needs 16 stage timings as queryable fields rather than formatted strings; `NFR-PRV-03` needs redaction as a central processor rather than a convention at each call site. |
 | D-27 | **PaddleOCR runs on CPU; the GPU is reserved for inference, embeddings and reranking** | The target GPU has 6 GB. Gemma 3 4B plus KV cache is ~3.5 GB, leaving no room to share with OCR. Job priority (`FR-JOB-06`) arbitrates CPU scheduling, not VRAM — two processes wanting the card would degrade chat latency regardless of priority. Ingestion is background work, so slower OCR costs little; chat latency, which the `NFR-PERF` budgets measure, is protected. Side benefit: the CPU wheel is plain `paddlepaddle` on PyPI, removing the CUDA-index problem that deferred the `ml` group from step 0.2. |
 | D-28 | **PaddleOCR-VL retained, CPU-only** | `FR-ING-11` and `FR-ING-12` stay satisfied rather than deferred. `NFR-PERF-17` already caps the VL path at under 20% of pages, so a slow fallback on a rare minority is coherent. `NFR-PERF-12` revised from 20 s to 120 s per complex page. |
+| D-29 | **Child chunk overlap is 70 tokens**, not the ~50 §19 suggests | User decision. §19 says "approximately 50 tokens where necessary", so 70 is within the spirit of an approximate figure rather than a substantive deviation. More overlap reduces the chance that a sentence spanning a chunk boundary is retrievable from neither side, at a modest cost in index size and duplicate evidence — which the deduplication stage already handles. Revisit against retrieval evaluation. |
 
 ### Quality
 
@@ -133,7 +139,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ✅ |
 | 10 | 0.4 | Backend ruff / mypy / pytest | S | ✅ |
 | 11 | 0.5 | Frontend Vite/React/TS scaffold | S | ✅ |
-| 12 | 0.6 | Config schema & `.env.example` | M | ☐ |
+| 12 | 0.6 | Config schema & `.env.example` | M | ✅ |
 | 13 | 0.7 | Environment verification script | M | ☐ |
 
 ### 0.1 — Repository skeleton & git ✅
@@ -343,14 +349,45 @@ now than to retrofit in Phase 19.
 The query client disables retry on 401 and 404, since `FR-AUTH-13` makes a foreign Knowledge Base
 return 404 by design — retrying it is pure latency.
 
-### 0.6 — Configuration schema & `.env.example`
+### 0.6 — Configuration schema & `.env.example` ✅
 
-- [ ] Pydantic Settings: Supabase URL and keys, database URL, R2 credentials, Ollama base URL
-- [ ] The four internal model keys (§51)
-- [ ] Retrieval parameters — RRF `k`=60, top-k ranges, candidate pool, reranker thresholds (D-20)
-- [ ] Chunking parameters (§19 token targets)
-- [ ] Job queue tuning, cache TTLs
-- [ ] Fully commented `.env.example`
+- [x] 16 typed settings groups in `app/configuration/settings.py`, each with its own env prefix
+- [x] Supabase, database, R2, Ollama, and the four internal model keys (§51)
+- [x] Every §19/§26/§29/§30 tuning constant as named configuration (D-20, NFR-MNT-04)
+- [x] Memory compaction thresholds, job queue tuning, cache TTLs, observability flags
+- [x] `backend/.env.example` and `frontend/.env.example`, fully commented with requirement
+      references
+- [x] 21 tests passing; ruff and mypy clean
+
+**Secrets are `SecretStr`.** Verified by a test that injects a sentinel value into every credential
+field and asserts it appears in neither `repr`, `str`, `model_dump()` nor `model_dump_json()`
+(NFR-SEC-12).
+
+**Seven invariants are enforced at startup rather than documented.** A misconfiguration that boots
+successfully is the one that reaches production:
+
+| Invariant | Requirement |
+|---|---|
+| Signed-URL TTL within 60–3600 s | NFR-SEC-05 |
+| `parent_target_tokens` > `child_max_tokens` | FR-EVD-09 — otherwise parent expansion restores nothing |
+| `max_items` ≥ `min_items` | FR-EVD-04 |
+| Expansion leaves room for the original query | FR-QRY-06 |
+| Job lease outlasts two heartbeats | FR-JOB-07 — otherwise a healthy worker loses its job mid-flight |
+| Reranker candidates ≤ candidate pool | FR-RET-09 |
+| Production forbids logging prompts, document text or model outputs | NFR-PRV-03 |
+
+**There is deliberately no absolute reranker threshold setting.** R-08 measured scores of −10.58
+(relevant) and −11.24 (irrelevant); a plausible-looking "keep scores above zero" rule would discard
+every candidate. Selection uses `EVIDENCE_RELATIVE_SCORE_MARGIN` against the top-ranked candidate,
+and a test fails if a key matching `ABSOLUTE` or `SCORE_THRESHOLD` is ever reintroduced.
+
+Two tests keep `.env.example` and the schema in sync in both directions — a declared key that no
+setting reads (looks configured, does nothing), and a credential the schema needs that the file
+does not document (a fresh clone would not know to set it).
+
+Ruff's `RUF002`/`RUF003` are disabled: comments legitimately contain `§48–§54` and `−10.58`.
+`RUF001`, which catches ambiguous characters in *identifiers* — the actual homoglyph hazard —
+remains enabled.
 
 ### 0.7 — Environment verification script
 

@@ -226,7 +226,7 @@ extracted from the 68-section system design specification.
 | ID | Requirement | Spec | Phase |
 |---|---|---|---|
 | FR-CHK-01 | Chunking MUST be layout-aware, semantic and hierarchical. | §19 | 7 |
-| FR-CHK-02 | Child chunks MUST target 300–500 tokens, with a maximum of approximately 700 and approximately 50 tokens of overlap where necessary. | §19 | 7 |
+| FR-CHK-02 | Child chunks MUST target 300–500 tokens, with a maximum of approximately 700 and overlap where necessary. Overlap is configured at 70 tokens (D-29); §19 suggests approximately 50. | §19, D-29 | 7 |
 | FR-CHK-03 | Parent chunks MUST target 800–1,500 tokens. | §19 | 7 |
 | FR-CHK-04 | Splitting MUST follow the priority: chapter boundary, section boundary, subsection boundary, paragraph boundary, and sentence boundary only when unavoidable. | §19 | 7 |
 | FR-CHK-05 | Chunk types MUST include `TEXT`, `TABLE`, `FIGURE`, `CHART`, `DIAGRAM`, `FORMULA`, `DEFINITION`, `EXAMPLE`. | §19 | 7 |

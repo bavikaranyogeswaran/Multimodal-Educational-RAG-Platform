@@ -8,7 +8,7 @@ import { QueryClient } from '@tanstack/react-query';
  * refetching would re-request expensive retrieval endpoints for no benefit.
  *
  * Document processing status is the exception — it polls, and sets its own interval at
- * the call site (UC-05).
+ * the call site.
  */
 export function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -17,8 +17,8 @@ export function createQueryClient(): QueryClient {
         staleTime: 30_000,
         refetchOnWindowFocus: false,
         retry: (failureCount, error) => {
-          // Never retry an authorization failure — a foreign Knowledge Base returns 404
-          // by design (FR-AUTH-13), and retrying it is pure latency.
+          // Never retry an authorization failure. A Knowledge Base the user does not own
+          // returns 404 by design, so it will never succeed and retrying is pure latency.
           if (error instanceof Response && (error.status === 401 || error.status === 404)) {
             return false;
           }

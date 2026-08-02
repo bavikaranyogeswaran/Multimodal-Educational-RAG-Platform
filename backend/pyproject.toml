@@ -20,63 +20,64 @@ packages = ["app"]
 # Dependency groups
 # ---------------------------------------------------------------------------
 # core     — API, data layer, configuration, observability
-# parsing  — PDF and image handling (§14)
-# storage  — object storage adapter (ADR-0013)
-# ml       — added in step 0.3, once the CUDA version is known
+# parsing  — PDF and image handling
+# storage  — object storage adapter
+# ml       — embeddings, reranking and OCR; large, and installed deliberately
 # dev      — tooling and tests
 #
 # Install:  uv sync                      (default groups: core, parsing, storage, dev)
-#           uv sync --group ml           (once step 0.3 has declared it)
+#           uv sync --group ml
 [dependency-groups]
 
 core = [
     # Web framework and serving
     "fastapi>=0.118",
     "uvicorn[standard]>=0.38",
-    "sse-starlette>=3.0",            # FR-GEN-12, FR-API-04 — streaming answers
+    "sse-starlette>=3.0",            # streaming answers
 
     # Validation and configuration
     "pydantic>=2.12",
-    "pydantic-settings>=2.11",       # step 0.6 — typed settings, D-20
+    "pydantic-settings>=2.11",
 
-    # Data layer — async throughout (D-25)
+    # Data layer — async throughout
     "sqlalchemy[asyncio]>=2.0.44",
     "psycopg[binary,pool]>=3.2",
-    "alembic>=1.17",                 # owns schema and RLS (D-11)
+    "alembic>=1.17",                 # owns schema and row-level security policies
     "pgvector>=0.4",                 # SQLAlchemy type for embedding columns
 
     # HTTP and auth
     "httpx>=0.28",
-    "pyjwt[crypto]>=2.11",           # FR-AUTH-02 — Supabase token verification
+    "pyjwt[crypto]>=2.11",           # access token verification
 
     # Observability
-    "structlog>=25.5",               # NFR-OBS-01, NFR-OBS-02, NFR-PRV-03
+    "structlog>=25.5",
 
     # Utility
-    "tenacity>=9.1",                 # FR-MDL-18, NFR-REL-03 — bounded retry
+    "tenacity>=9.1",                 # bounded retry
 ]
 
 parsing = [
-    "pypdf>=6.1",                    # FR-ING-02 — metadata, native text
-    "pdfplumber>=0.11",              # FR-ING-02 — layout, blocks, tables
-    "pypdfium2>=5.0",                # FR-ING-02 — page and region rendering
-    "pillow>=12.0",                  # FR-ING-02 — image operations
-    # OpenCV is intentionally absent — FR-ING-03 admits it only where
-    # preprocessing is genuinely necessary. Add it when a page demands it.
+    "pypdf>=6.1",                    # metadata, native text
+    "pdfplumber>=0.11",              # layout, blocks, tables
+    "pypdfium2>=5.0",                # page and region rendering
+    "pillow>=12.0",                  # image operations
+    # OpenCV is intentionally absent — it belongs only where preprocessing is
+    # genuinely necessary. Add it when a page demands it.
 ]
 
 storage = [
-    "aioboto3>=15.5",                # ADR-0013 — R2 via S3-compatible presigned URLs
+    "aioboto3>=15.5",                # R2 via S3-compatible presigned URLs
 ]
 
 ml = [
-    # GPU — embeddings and reranking (D-27)
+    # GPU — embeddings and reranking
     "torch>=2.6",                    # cu126: driver 555.97 supports CUDA 12.x via minor-version compat
-    "sentence-transformers>=5.0",    # FR-IDX-01 bge-small-en-v1.5, FR-RET-08 ms-marco-MiniLM-L6-v2
+    "sentence-transformers>=5.0",
 
-    # CPU — OCR (D-27). Deliberately the CPU wheel, not paddlepaddle-gpu.
+    # CPU — OCR. Deliberately the CPU wheel, not paddlepaddle-gpu: the 6 GB GPU
+    # cannot host OCR alongside the answer model.
     "paddlepaddle>=3.0",
-    "paddleocr>=3.0",                # FR-ING-09 PP-OCRv6, FR-ING-11 VL fallback
+    "paddleocr>=3.0",
 ]
 
 dev = [
@@ -91,7 +92,7 @@ dev = [
 
 [tool.uv]
 # `ml` is excluded from the default set: it is large, and installing it is a separate
-# deliberate act (`uv sync --group ml`). See PLAN.md step 0.3.
+# deliberate act (`uv sync --group ml`).
 default-groups = ["core", "parsing", "storage", "dev"]
 
 # torch resolves from the CUDA 12.6 index rather than PyPI. Driver 555.97 reports CUDA
@@ -124,11 +125,11 @@ select = [
     "C4",        # comprehensions
     "SIM",       # simplify
     "RUF",       # ruff-specific
-    "ASYNC",     # async correctness — load-bearing given D-25
+    "ASYNC",     # async correctness — load-bearing, the data layer is async throughout
     "S",         # bandit — security posture is a first-class concern here
-    "DTZ",       # timezone-aware datetimes — FR-MEM-13, FR-JOB-02 depend on this
+    "DTZ",       # timezone-aware datetimes — memory validity and job leases depend on it
     "PTH",       # pathlib over os.path
-    "T20",       # no print — structlog only (D-26)
+    "T20",       # no print — structured logging only
     "TID",       # tidy imports
     "ARG",       # unused arguments
     "TRY",       # exception handling
@@ -139,6 +140,10 @@ ignore = [
     "PLR0913",   # many arguments — dependency injection legitimately has them
     "PLR2004",   # magic values — too noisy before constants exist
     "S101",      # assert — re-enabled outside tests via per-file-ignores below
+    # Prose in comments and docstrings uses typographic dashes. RUF001, which catches
+    # ambiguous characters in *identifiers* — the actual homoglyph hazard — stays on.
+    "RUF002",    # ambiguous unicode in docstrings
+    "RUF003",    # ambiguous unicode in comments
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -174,7 +179,7 @@ disallow_untyped_defs = true
 check_untyped_defs = true
 
 # The domain and application layers hold the business rules and the security invariants.
-# They depend on nothing external (ARCHITECTURE.md §4), so there is no excuse for looseness.
+# They depend on nothing external, so there is no excuse for looseness.
 [[tool.mypy.overrides]]
 module = ["app.domain.*", "app.application.*"]
 strict = true
@@ -200,8 +205,8 @@ addopts = "--import-mode=importlib --strict-markers --strict-config -ra"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "security: enforces a requirement from the security test suite (§64)",
-    "gate: enforces a zero-tolerance release gate (NFR-GATE-01..06)",
+    "security: exercises an isolation or injection scenario from the security suite",
+    "gate: enforces a zero-tolerance release gate",
     "slow: takes more than a second",
 ]
 

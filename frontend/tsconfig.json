@@ -9,8 +9,8 @@
     "jsx": "react-jsx",
     "useDefineForClassFields": true,
 
-    /* Strictness — the API contract is mirrored here in Zod (NFR-MNT-07), so
-       type looseness on this side defeats the point of having it. */
+    /* Strictness — the backend contract is mirrored here in Zod, so type looseness
+       on this side defeats the point of having the contract at all. */
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

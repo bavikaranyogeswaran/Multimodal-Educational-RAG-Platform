@@ -1,12 +1,11 @@
 """Enforce the dependency rule: dependencies point inward.
 
-NFR-MNT-01 requires this to be a test rather than a review convention. The domain layer
-holds the business rules and security invariants; it depends on nothing external. The
-application layer orchestrates use cases through domain ports and likewise touches no
-framework or vendor SDK.
+This is a test rather than a review convention. The domain layer holds the business rules
+and security invariants; it depends on nothing external. The application layer orchestrates
+use cases through domain ports and likewise touches no framework or vendor SDK.
 
-See ARCHITECTURE.md §4. This test passes vacuously until Phase 1 puts code in these
-directories, and becomes load-bearing from that point on.
+Passes vacuously until there is code in these directories, and becomes load-bearing from
+that point on.
 """
 
 from __future__ import annotations
@@ -102,8 +101,8 @@ def test_inner_layer_has_no_outward_imports(app_root: Path, layer: str) -> None:
             violations.append(f"  {relative}  imports  {', '.join(sorted(forbidden))}")
 
     assert not violations, (
-        f"Dependency rule violated in app/{layer}/ — dependencies must point inward "
-        f"(ARCHITECTURE.md §4, NFR-MNT-01):\n" + "\n".join(violations)
+        f"Dependency rule violated in app/{layer}/ — dependencies must point inward:\n"
+        + "\n".join(violations)
     )
 
 

@@ -1,7 +1,7 @@
 """FastAPI application entry point.
 
 The presentation layer only. Routes, middleware and error mapping are wired here;
-retrieval, OCR and provider-specific logic live behind the domain ports (ARCHITECTURE.md §4).
+retrieval, OCR and provider-specific logic live behind the domain ports.
 
 Run with:  uv run uvicorn app.main:app --reload
 """
@@ -21,8 +21,8 @@ API_PREFIX = "/api/v1"
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application startup and shutdown.
 
-    Phase 8 adds model warm-up here (FR-PRF-02): configured models are loaded and
-    receive a small warm-up request before the first user request is served.
+    Model warm-up hangs off this later: configured models are loaded and receive a small
+    warm-up request before the first user request is served.
     """
     yield
 
@@ -41,7 +41,7 @@ app = FastAPI(
 async def health() -> dict[str, Any]:
     """Liveness probe. Deliberately unauthenticated and free of dependency checks.
 
-    Readiness — database, storage and model provider reachability — is a separate
-    concern introduced in Phase 3 alongside the observability middleware.
+    Readiness — database, storage and model provider reachability — is a separate concern
+    and gets its own endpoint alongside the observability middleware.
     """
     return {"status": "ok", "version": app.version}
