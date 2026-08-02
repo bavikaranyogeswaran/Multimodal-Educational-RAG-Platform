@@ -17,10 +17,14 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **0 — Foundation** |
-| Steps complete | 12 of 13 |
-| Phases complete | 0 of 21 |
+| Current phase | **0 complete — next is 1, clean architecture skeleton** |
+| Phase 0 steps | 13 of 13 ✅ |
+| Phases complete | 1 of 21 |
 | Last updated | 2 August 2026 |
+
+Phase 0 is finished. Backend: ruff, mypy and 29 tests green. Frontend: typecheck, lint, 3 tests and a
+production build green. `uv run python scripts/verify_environment.py` reports the machine's real
+state — currently 3 pass, 1 fail (Ollama not installed), 2 skip (credentials not supplied).
 
 ---
 
@@ -140,7 +144,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 10 | 0.4 | Backend ruff / mypy / pytest | S | ✅ |
 | 11 | 0.5 | Frontend Vite/React/TS scaffold | S | ✅ |
 | 12 | 0.6 | Config schema & `.env.example` | M | ✅ |
-| 13 | 0.7 | Environment verification script | M | ☐ |
+| 13 | 0.7 | Environment verification script | M | ✅ |
 
 ### 0.1 — Repository skeleton & git ✅
 
@@ -389,11 +393,42 @@ Ruff's `RUF002`/`RUF003` are disabled: comments legitimately contain `§48–§5
 `RUF001`, which catches ambiguous characters in *identifiers* — the actual homoglyph hazard —
 remains enabled.
 
-### 0.7 — Environment verification script
+### 0.7 — Environment verification script ✅
 
-- [ ] Pass/fail table for: Python version · CUDA + torch · Paddle · Ollama reachable with
-      `gemma3:4b` · Supabase connectivity, server version and availability of `vector`, `rum`,
-      `pg_cron`, `pg_trgm` · R2 bucket round-trip (put → signed GET → delete)
+`backend/scripts/verify_environment.py`, run with `uv run python scripts/verify_environment.py`.
+
+- [x] Python version, CUDA + torch with a real GPU matmul, Paddle build and device
+- [x] Ollama reachability plus a check that every configured model key is actually pulled
+- [x] PostgreSQL connectivity, server version, and per-extension status for `vector`, `rum`,
+      `pg_cron`, `pg_trgm`
+- [x] R2 round-trip — put, fetch through a presigned URL, verify the bytes, delete
+- [x] Four tests covering the script's own logic
+
+**Current output on this machine:**
+
+```
+  runtime
+    python         PASS   3.12.13
+    torch / cuda   PASS   2.13.0+cu126 · RTX 3050 6GB Laptop · 6.00 GiB · sm_86
+    paddle / ocr   PASS   paddle 3.3.1 · paddleocr 3.7.0 · cpu
+  services
+    ollama         FAIL   nothing listening at http://127.0.0.1:11434
+    postgres       SKIP   DATABASE_URL not set
+    r2 storage     SKIP   STORAGE_ACCOUNT_ID / credentials not set
+
+  3 pass · 1 fail · 2 skip
+```
+
+**SKIP and FAIL are deliberately different.** An unconfigured service skips; a configured but broken
+one fails, and only a failure sets a non-zero exit code. The script is meant to be useful *before*
+everything is wired up, not only afterwards — otherwise nobody runs it until it is too late to help.
+
+Checks distinguish three shades of wrong rather than two: a Paddle GPU build when the configuration
+says CPU is a warning (wasteful, risks VRAM contention), not a failure. An extension that is
+available but not yet installed is a warning, because migrations install it.
+
+The verification is **live rather than declarative** — it runs a GPU matmul, fetches a real presigned
+URL and compares the bytes. Checking that a library imports proves considerably less.
 
 ---
 
@@ -809,9 +844,13 @@ Every one of the 68 sections is assigned to a phase.
 
 ## Inputs needed
 
+Verify each with `uv run python scripts/verify_environment.py` after supplying it.
+
 | Input | Needed by | Status |
 |---|---|---|
-| Supabase project URL, anon key, service key, database URL | Step 0.6 | ☐ |
-| Cloudflare R2 account ID, bucket name, access key ID, secret | Step 0.6 | ☐ |
-| Ollama installed with `gemma3:4b` pulled | Step 0.7 | ☐ |
+| Supabase project URL, anon key, service key, database URL | Phase 2 | ☐ |
+| Cloudflare R2 account ID, bucket name, access key ID, secret | Phase 4 | ☐ |
+| Ollama installed with `gemma3:4b` pulled | Phase 8 | ☐ — confirmed not installed |
 | 2–3 educational PDFs with real tables and charts, for the gold evaluation set | Phase 17 | ☐ |
+
+None of these block Phase 1, which builds the domain layer and its ports against nothing external.
