@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+# Secrets and local configuration
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Private data
+# ---------------------------------------------------------------------------
+# Student documents, evaluation PDFs and anything ingested locally.
+# Never commit source material — see NFR on corpus custody.
+data/
+storage/
+uploads/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.venv/
+venv/
+env/
+ENV/
+
+*.egg-info/
+.eggs/
+dist/
+build/
+wheels/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# ---------------------------------------------------------------------------
+# Model weights and caches
+# ---------------------------------------------------------------------------
+# Embedding, reranker and OCR weights are downloaded, never vendored.
+.models/
+.hf_cache/
+.paddle/
+.paddleocr/
+*.onnx
+*.pdparams
+*.pdmodel
+*.pdiparams
+*.safetensors
+*.gguf
+
+# ---------------------------------------------------------------------------
+# Node / frontend
+# ---------------------------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/build/
+.vite/
+.eslintcache
+*.tsbuildinfo
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Playwright
+/frontend/test-results/
+/frontend/playwright-report/
+/frontend/blob-report/
+/frontend/.playwright/
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Scratch and generated output
+# ---------------------------------------------------------------------------
+scratch/
+tmp/
+*.log
+evaluation/results/
