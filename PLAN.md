@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 7 of 13 |
+| Steps complete | 8 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -80,6 +80,8 @@ through and point at what replaced them.
 | D-18 | English-only content | `bge-small-en-v1.5` as specified. `preferred_language` and `chunk.language` are populated by detection but no multilingual embedding or OCR path is built. Swapping models later is a config change plus reindex, which the versioned-index design already supports (§20). |
 | D-19 | Graph extraction **opt-in per Knowledge Base** | §21 runs an LLM over every parent section — hundreds of local calls for a 400-page textbook. A `graph_enabled` flag gates `BUILD_GRAPH`; enabling it later triggers a backfill job. Ingestion always produces chunks, embeddings and full-text indexes. See ADR-008. |
 | D-20 | All §26/§29/§30 tuning numbers become named config values | RRF `k`, top-k ranges, candidate pool size, reranker thresholds and evidence limits are configuration from step 0.6 onward — never literals in code. §30 requires calibration against evaluation data, which is impossible if they are scattered. |
+| D-25 | **Async data layer throughout** — SQLAlchemy 2.0 asyncio + psycopg3 async | `FR-RET-17` requires concurrent dense and keyword retrieval across query variants, `FR-PRF-06` requires batching, `FR-GEN-12` requires SSE streaming, `NFR-PERF-19` requires backpressure. All are natural in async and awkward otherwise. Cost accepted: no lazy loading, explicit eager loads, and the worker is async too since it shares repository code. |
+| D-26 | **structlog** for logging | `NFR-OBS-01` needs a trace ID on every line without threading it through call signatures; `NFR-OBS-02` needs 16 stage timings as queryable fields rather than formatted strings; `NFR-PRV-03` needs redaction as a central processor rather than a convention at each call site. |
 
 ### Quality
 
@@ -123,7 +125,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 5 | 0.10 | `ARCHITECTURE.md` | M | ✅ |
 | 6 | 0.11 | ADR-0001 … ADR-0015 | M | ✅ |
 | 7 | 0.12 | `USE_CASES.md` | L | ✅ |
-| 8 | 0.2 | Backend uv project & dependency groups | S | ☐ |
+| 8 | 0.2 | Backend uv project & dependency groups | S | ✅ |
 | 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ☐ |
 | 10 | 0.4 | Backend ruff / mypy / pytest | S | ☐ |
 | 11 | 0.5 | Frontend Vite/React/TS scaffold | S | ☐ |
@@ -229,14 +231,20 @@ and UC-24 (explore the concept graph) close a gap: `FR-OBJ-08` — "explore rela
 concept graph" — was a §2 objective with no use case. Numbering was appended, not inserted, so
 UC-01 … UC-22 remain stable where earlier phases reference them.
 
-### 0.2 — Backend uv project
+### 0.2 — Backend uv project ✅
 
-- [ ] `pyproject.toml`, Python 3.12 pinned, `uv.lock` committed
-- [ ] Dependency groups kept separate so a broken ML install cannot block backend work:
-      `core` (FastAPI, Pydantic, SQLAlchemy, psycopg, Alembic, HTTPX) · `parsing` (pypdf,
-      pdfplumber, pypdfium2, Pillow) · `storage` (aioboto3) · `ml` (torch, sentence-transformers,
-      paddleocr, paddlepaddle-gpu) · `dev`
-- [ ] `backend/app/main.py`
+- [x] `pyproject.toml` with Python pinned to `==3.12.*`; uv resolved 3.12.13
+- [x] `uv.lock` committed
+- [x] Four dependency groups installed and verified: `core`, `parsing`, `storage`, `dev`
+- [x] `backend/app/main.py` — boots, serves `/health`, lifespan hook reserved for Phase 8 warm-up
+- [x] `.venv` confirmed ignored
+
+**The `ml` group is deferred to step 0.3.** `paddlepaddle-gpu` is not resolvable from PyPI — it
+requires a CUDA-version-specific index that is not known until the GPU is probed. Declaring it now
+would make `uv lock` fail. Step 0.3 adds the group with the correct index configuration.
+
+Runtime dependencies live entirely in `[dependency-groups]` rather than `[project.dependencies]`, so
+a failed ML install cannot block work on the rest of the backend.
 
 ### 0.3 — GPU/ML dependencies & CUDA smoke test
 

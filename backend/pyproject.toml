@@ -1,0 +1,83 @@
+[project]
+name = "tutor-rag-backend"
+version = "0.1.0"
+description = "Multimodal Educational Tutor RAG — FastAPI backend and ingestion workers"
+readme = "../README.md"
+requires-python = "==3.12.*"
+
+# Runtime dependencies live in [dependency-groups] below rather than here, so a
+# failure installing the heavy ML stack cannot block work on the rest of the backend.
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# Dependency groups
+# ---------------------------------------------------------------------------
+# core     — API, data layer, configuration, observability
+# parsing  — PDF and image handling (§14)
+# storage  — object storage adapter (ADR-0013)
+# ml       — added in step 0.3, once the CUDA version is known
+# dev      — tooling and tests
+#
+# Install:  uv sync                      (default groups: core, parsing, storage, dev)
+#           uv sync --group ml           (once step 0.3 has declared it)
+[dependency-groups]
+
+core = [
+    # Web framework and serving
+    "fastapi>=0.118",
+    "uvicorn[standard]>=0.38",
+    "sse-starlette>=3.0",            # FR-GEN-12, FR-API-04 — streaming answers
+
+    # Validation and configuration
+    "pydantic>=2.12",
+    "pydantic-settings>=2.11",       # step 0.6 — typed settings, D-20
+
+    # Data layer — async throughout (D-25)
+    "sqlalchemy[asyncio]>=2.0.44",
+    "psycopg[binary,pool]>=3.2",
+    "alembic>=1.17",                 # owns schema and RLS (D-11)
+    "pgvector>=0.4",                 # SQLAlchemy type for embedding columns
+
+    # HTTP and auth
+    "httpx>=0.28",
+    "pyjwt[crypto]>=2.11",           # FR-AUTH-02 — Supabase token verification
+
+    # Observability
+    "structlog>=25.5",               # NFR-OBS-01, NFR-OBS-02, NFR-PRV-03
+
+    # Utility
+    "tenacity>=9.1",                 # FR-MDL-18, NFR-REL-03 — bounded retry
+]
+
+parsing = [
+    "pypdf>=6.1",                    # FR-ING-02 — metadata, native text
+    "pdfplumber>=0.11",              # FR-ING-02 — layout, blocks, tables
+    "pypdfium2>=5.0",                # FR-ING-02 — page and region rendering
+    "pillow>=12.0",                  # FR-ING-02 — image operations
+    # OpenCV is intentionally absent — FR-ING-03 admits it only where
+    # preprocessing is genuinely necessary. Add it when a page demands it.
+]
+
+storage = [
+    "aioboto3>=15.5",                # ADR-0013 — R2 via S3-compatible presigned URLs
+]
+
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio>=1.3",
+    "pytest-cov>=7.0",
+    "ruff>=0.15",
+    "mypy>=1.19",
+    "anyio>=4.11",
+    "httpx2>=2.9.1",                 # required by starlette.testclient since Starlette 1.3
+]
+
+[tool.uv]
+default-groups = ["core", "parsing", "storage", "dev"]
