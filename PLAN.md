@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 5 of 13 |
+| Steps complete | 6 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -121,7 +121,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 3 | 0.8 | `REQUIREMENTS.md` — functional | L | ✅ |
 | 4 | 0.9 | `REQUIREMENTS.md` — NFRs & release gates | M | ✅ |
 | 5 | 0.10 | `ARCHITECTURE.md` | M | ✅ |
-| 6 | 0.11 | ADR-001 … ADR-015 | M | ☐ |
+| 6 | 0.11 | ADR-0001 … ADR-0015 | M | ✅ |
 | 7 | 0.12 | `USE_CASES.md` | L | ☐ |
 | 8 | 0.2 | Backend uv project & dependency groups | S | ☐ |
 | 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ☐ |
@@ -185,23 +185,34 @@ the phase that introduces each surface, not deferred to Phase 17.
       model gateway
 - [x] Closing section on what the architecture deliberately is not
 
-### 0.11 — Architecture decision records
+### 0.11 — Architecture decision records ✅
 
-- [ ] ADR-001 No PyMuPDF — licensing unsuitable for some distribution models (§14)
-- [ ] ADR-002 Self-hosted PaddleOCR, not Baidu Cloud OCR (§14)
-- [ ] ADR-003 No LangChain / LangGraph / LlamaIndex (§65)
-- [ ] ADR-004 Selective, not global, GraphRAG (§34)
-- [ ] ADR-005 PostgreSQL as job queue and cache, not Redis (§12, §56)
-- [ ] ADR-006 Modular monolith, not microservices (§6, §67)
-- [ ] ADR-007 HyDE disabled by default (§26)
-- [ ] ADR-008 Graph extraction opt-in per Knowledge Base (D-19)
-- [ ] ADR-009 Provider-agnostic model gateway (§48)
-- [ ] ADR-010 One-hop initial traversal depth (§34)
-- [ ] ADR-011 Local model quantization benchmark (§55)
-- [ ] ADR-012 PostgreSQL graph adapter, Neo4j deferred (D-10)
-- [ ] ADR-013 Cloudflare R2 over Supabase Storage (D-08, R-01)
-- [ ] ADR-014 Page renders as regenerable cache (D-13)
-- [ ] ADR-015 `rum` over GIN for full-text indexes (D-12)
+Each ADR records context, decision, alternatives rejected with reasons, consequences, and — the part
+that makes it a decision rather than a belief — **the condition under which it should be revisited**.
+
+- [x] ADR-0001 No PyMuPDF — licensing unsuitable for some distribution models (§14)
+- [x] ADR-0002 Self-hosted PaddleOCR, not cloud OCR (§14)
+- [x] ADR-0003 No LangChain / LangGraph / LlamaIndex (§65)
+- [x] ADR-0004 Selective, not global, GraphRAG (§34)
+- [x] ADR-0005 PostgreSQL as job queue and cache, not Redis (§12, §56)
+- [x] ADR-0006 Modular monolith, not microservices (§6, §67)
+- [x] ADR-0007 HyDE disabled by default (§26)
+- [x] ADR-0008 Graph extraction opt-in per Knowledge Base (D-19)
+- [x] ADR-0009 Provider-agnostic model gateway (§48)
+- [x] ADR-0010 One-hop initial traversal depth (§34)
+- [x] ADR-0011 Local model quantization benchmark (§55) — **status: pending results, Phase 16**
+- [x] ADR-0012 PostgreSQL graph adapter, Neo4j deferred (D-10) — *deviates from §22, §65*
+- [x] ADR-0013 Cloudflare R2 over Supabase Storage (D-08, R-01) — *deviates from §60, §65*
+- [x] ADR-0014 Page renders as regenerable cache (D-13) — *deviates from §60*
+- [x] ADR-0015 `rum` over GIN for full-text indexes (D-12) — *refines §65*
+- [x] `docs/adr/README.md` index with the ADR template
+
+ADR-0013 carries `NFR-PRV-06`: it states plainly that the corpus resides with third parties and that
+this is accepted for convenience, not because it is privacy-preserving.
+
+ADR-0011 has an empty results table to be filled in Phase 16, and adds **structured-output validity
+rate** to the §55 benchmark measures — quantization degrades schema fidelity before fluency, and
+this system validates against schema.
 
 ### 0.12 — `USE_CASES.md`
 
