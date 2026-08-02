@@ -3,8 +3,9 @@
 Functional and non-functional requirements for the Multimodal Educational Tutor RAG platform,
 extracted from the 68-section system design specification.
 
-> **Status:** functional requirements complete (step 0.8). Non-functional requirements and release
-> gates arrive in step 0.9.
+> **Status:** complete. Functional requirements (step 0.8) and non-functional requirements with
+> release gates (step 0.9). Latency and capacity targets are provisional until measured in Phase 17
+> — see [Performance](#performance-nfr).
 
 ## Conventions
 
@@ -53,6 +54,22 @@ extracted from the 68-section system design specification.
 | [OBS](#observability) | Observability | §62 |
 | [EVL](#evaluation-and-security-testing) | Evaluation and security testing | §63, §64 |
 | [UI](#frontend) | Frontend | §7 |
+
+### Non-functional domains
+
+| Prefix | Domain | Spec sections |
+|---|---|---|
+| [NFR-SEC](#security-nfr) | Security | §5, §10, §64 |
+| [NFR-PRV](#privacy-nfr) | Privacy and data boundary | §52, §62 |
+| [NFR-PERF](#performance-nfr) | Performance and latency | §55, §62 |
+| [NFR-REL](#reliability-nfr) | Reliability | §12, §39, §53, §58 |
+| [NFR-DAT](#data-integrity-nfr) | Data integrity | §5, §20, §21, §22 |
+| [NFR-OBS](#observability-nfr) | Observability | §62 |
+| [NFR-MNT](#maintainability-nfr) | Maintainability | §8, §48, §51 |
+| [NFR-POR](#portability-nfr) | Portability | §48, §51, §67 |
+| [NFR-CAP](#capacity-nfr) | Capacity | §67 |
+| [NFR-UX](#usability-nfr) | Usability and accessibility | §7 |
+| [NFR-GATE](#release-gates) | **Release gates — zero tolerance** | §64 |
 
 ---
 
@@ -611,6 +628,237 @@ extracted from the 68-section system design specification.
 | FR-UI-12 | The frontend MUST provide memory-management controls. | §7 | 20 |
 | FR-UI-13 | Insufficient-evidence and conflicting-source responses MUST be rendered distinctly from ordinary answers. | §35, §38 | 19 |
 | FR-UI-14 | The frontend MUST be built with React, TypeScript, Vite, CSS Modules, TanStack Query and Zod. | §65 | 18 |
+
+---
+---
+
+# Non-functional requirements
+
+---
+
+## Security {#security-nfr}
+
+Knowledge Base isolation is the central security property. Every requirement here is testable, and
+the six that admit no failures at all are promoted to [release gates](#release-gates).
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-SEC-01 | Row-Level Security MUST be enabled on every table carrying `user_id`, and MUST be verified by a test that enumerates tables and asserts policy presence. A new scoped table without RLS MUST fail the test suite. | §10 | 2 |
+| NFR-SEC-02 | Scope filters MUST be applied within the query that ranks or traverses, never as a post-filter on results. Post-filtering MUST NOT be used as a substitute. | §10 | 9, 12 |
+| NFR-SEC-03 | The repository layer MUST make an unscoped query structurally impossible — a query without a `ScopeContext` MUST fail to compile or fail at construction, not at review time. | §10 | 1, 2 |
+| NFR-SEC-04 | `user_id` MUST be derived only from a verified access token, never from a request body, query parameter, header or client-supplied claim. | §10 | 3 |
+| NFR-SEC-05 | Signed URLs MUST carry a bounded expiry, and expiry MUST be short enough that a leaked URL has limited value. Default MUST NOT exceed 1 hour. | §10, §64 | 4 |
+| NFR-SEC-06 | Storage buckets MUST deny public access; every object read MUST require a signed URL issued after a backend ownership check. | §10 | 4 |
+| NFR-SEC-07 | Text extracted from uploaded documents MUST be treated as untrusted data throughout the pipeline. Instructions found in that text MUST NOT influence system behaviour, prompt structure, memory writes or tool selection. | §38, §64 | 5, 11, 14 |
+| NFR-SEC-08 | Every cache key that can return generated content MUST include `user_id` and `knowledge_base_id`, so a cache hit cannot cross a tenancy boundary. | §56, §64 | 16 |
+| NFR-SEC-09 | Citation identifiers MUST be validated against the evidence set actually supplied to the model for that specific request. A citation naming a real but uncontextualised chunk MUST be rejected. | §40 | 11 |
+| NFR-SEC-10 | Graph traversal MUST apply the same scope predicates as relational retrieval; a traversal path MUST NOT be able to reach a node outside the caller's Knowledge Base. | §64 | 12 |
+| NFR-SEC-11 | Content belonging to a document or Knowledge Base in `DELETING` state MUST be unreachable through search, citation, cache, memory or graph from the moment deletion begins. | §58, §64 | 16 |
+| NFR-SEC-12 | Secrets MUST NOT appear in source control, logs, error responses or client-visible payloads. | §62 | 0.6 |
+| NFR-SEC-13 | Error responses MUST NOT disclose the existence of resources the caller does not own. | §10 | 3 |
+| NFR-SEC-14 | The ten §64 security scenarios MUST each have a dedicated automated test, and those tests MUST run in the standard suite rather than on request. | §64 | 3–17 |
+| NFR-SEC-15 | Uploaded files MUST be validated by magic bytes and constrained by size and page count before any parsing library touches them. | §11 | 4 |
+
+---
+
+## Privacy and data boundary {#privacy-nfr}
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-PRV-01 | Every model provider MUST declare a `data_boundary`, and the gateway MUST refuse to send private documents, memory or personal identifiers to a provider whose boundary forbids them. | §52 | 8 |
+| NFR-PRV-02 | The system MUST NOT fall back from a local provider to an external provider automatically. Such a fallback MUST raise rather than proceed. | §52 | 8 |
+| NFR-PRV-03 | Logs MUST NOT contain full document text, full prompts, full model outputs or memory contents by default. Enabling verbose capture MUST be an explicit, non-default configuration. | §62 | 3, 17 |
+| NFR-PRV-04 | Personal or document-derived data MUST NOT be placed in URL paths, query strings or referrer-exposed positions. | §10 | 3, 4 |
+| NFR-PRV-05 | Deletion MUST remove derived data as well as canonical data — embeddings, full-text vectors, graph edges, cached answers, crops and memory records. | §58 | 16 |
+| NFR-PRV-06 | The system's custody posture MUST be documented honestly. Under the current deployment the corpus resides with third-party providers; documentation MUST state this rather than implying local-only custody. | R-01 | 0.11 |
+| NFR-PRV-07 | A student MUST be able to delete their own content, and deletion MUST be complete rather than a soft flag that leaves data retrievable. | §58 | 16 |
+| NFR-PRV-08 | Evaluation and observability records MUST store identifiers and metrics, not document content. | §62, §63 | 17 |
+
+---
+
+## Performance and latency {#performance-nfr}
+
+The specification states no latency targets. The budgets below are **derived from the described
+pipeline** on the target hardware (local NVIDIA GPU for inference, embeddings and reranking;
+Supabase Cloud PostgreSQL over the network). They are **provisional** and MUST be recalibrated
+against measured p50/p95/p99 in Phase 17 (D-23).
+
+### Derivation — `DIRECT` query, time to first token
+
+Every database round trip crosses the internet under the current hosting choice, which is the
+single largest non-model contributor.
+
+| Stage | Budget | Basis |
+|---|---|---|
+| Authentication | 5 ms | Local JWT verification, cached JWKS |
+| Conversation context + memory load | 120 ms | 1–2 Supabase round trips |
+| Query rewrite | 500 ms | ~30 output tokens on a small local model; skipped when the question is already standalone |
+| Classification | 5 ms | Deterministic rules, no model call |
+| Cache lookup | 40 ms | 1 round trip |
+| Query embedding | 15 ms | `bge-small-en-v1.5`, 384-dim, GPU |
+| Dense + keyword retrieval | 200 ms | Parallel across variants; pgvector HNSW and `rum` |
+| RRF fusion | 5 ms | In-process |
+| Cross-encoder reranking | 80 ms | 40 pairs batched, MiniLM-L6, GPU |
+| Evidence selection, parent expansion, compression | 150 ms | Extractive; at most one extra round trip |
+| Context construction | 10 ms | In-process |
+| Prompt prefill to first token | 700 ms | ~2,500-token prompt on Gemma 3 4B, GPU |
+| **Total** | **~1.8 s typical** | **2.5 s p95 allowing for variance** |
+
+### Budgets
+
+| ID | Requirement | Target | Phase |
+|---|---|---|---|
+| NFR-PERF-01 | Time to first token, `DIRECT` and `EXACT_TERM` queries | ≤ 2.5 s p95 | 17 |
+| NFR-PERF-02 | Time to first token, `TABLE` and `VISUAL` queries taking an early-exit path | ≤ 2.0 s p95 | 17 |
+| NFR-PERF-03 | Complete answer, ordinary single-hop query | ≤ 6 s p95 | 17 |
+| NFR-PERF-04 | First progress event, `MULTI_HOP` and `MULTI_DOCUMENT` queries | ≤ 1 s p95 | 17 |
+| NFR-PERF-05 | Time to first token of the synthesized answer, `MULTI_HOP` | ≤ 12 s p95 | 17 |
+| NFR-PERF-06 | Complete answer, `MULTI_HOP` at maximum rounds | ≤ 30 s p95 | 17 |
+| NFR-PERF-07 | Retrieval through reranking, excluding generation | ≤ 800 ms p95 | 17 |
+| NFR-PERF-08 | Memory retrieval | ≤ 250 ms p95 | 17 |
+| NFR-PERF-09 | Validation, deterministic checks only | ≤ 100 ms p95 | 17 |
+| NFR-PERF-10 | Ingestion, native-text page | ≤ 1 s p95 | 17 |
+| NFR-PERF-11 | Ingestion, scanned page via PP-OCRv6 on GPU | ≤ 5 s p95 | 17 |
+| NFR-PERF-12 | Ingestion, complex page via PaddleOCR-VL fallback | ≤ 20 s p95 | 17 |
+| NFR-PERF-13 | Upload endpoint response, excluding background processing | ≤ 1.5 s p95 | 4 |
+| NFR-PERF-14 | Concept graph query returning ≤ 50 nodes | ≤ 500 ms p95 | 17 |
+
+### Performance behaviours
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-PERF-15 | Interactive requests MUST NOT be blocked by ingestion, OCR, graph building or compaction. | §7, §12 | 4 |
+| NFR-PERF-16 | Configured models MUST be warm before the first user request is served. | §55 | 8 |
+| NFR-PERF-17 | The PaddleOCR-VL fallback MUST be invoked on a minority of pages. If it exceeds 20% of pages on a representative document, the classifier MUST be treated as miscalibrated. | §15 | 5, 17 |
+| NFR-PERF-18 | A client disconnect MUST cancel in-flight generation rather than completing work nobody will receive. | §55 | 16 |
+| NFR-PERF-19 | The system MUST apply backpressure rather than queueing without bound when concurrent generation capacity is exhausted. | §55 | 16 |
+| NFR-PERF-20 | Latency MUST be attributable — every budget above MUST map to instrumented stages so a regression identifies its own cause. | §62 | 3, 17 |
+
+---
+
+## Reliability {#reliability-nfr}
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-REL-01 | Every background job MUST be idempotent; re-running it MUST NOT duplicate derived records or corrupt state. | §12, §58 | 4 |
+| NFR-REL-02 | A worker crash MUST NOT strand a job. Expired leases MUST be reclaimable by another worker without manual intervention. | §12 | 4 |
+| NFR-REL-03 | Job failures MUST be bounded by an attempt count and dead-lettered rather than retried indefinitely. | §12 | 4 |
+| NFR-REL-04 | Answer repair MUST be attempted at most once. Regeneration loops MUST NOT be possible. | §39 | 11 |
+| NFR-REL-05 | Multi-hop retrieval MUST terminate — bounded by 3 rounds and 8 sub-questions regardless of coverage outcome. | §35 | 13 |
+| NFR-REL-06 | Provider failure MUST degrade explicitly: an approved fallback, or a clear error. Silent substitution MUST NOT occur. | §53 | 8 |
+| NFR-REL-07 | A document that fails processing MUST NOT leave partial content retrievable. | §11 | 5, 7 |
+| NFR-REL-08 | Ingestion MUST be resumable at page granularity so a failure late in a long document does not discard completed work. | §12 | 5 |
+| NFR-REL-09 | Deletion MUST be resumable and idempotent, and MUST reach a terminal state even if interrupted partway. | §58 | 16 |
+| NFR-REL-10 | Insufficient evidence MUST be a normal, correct outcome — never an error, and never grounds for answering from model memory. | §38, §39 | 11 |
+| NFR-REL-11 | Database migrations MUST run to completion or roll back cleanly; a partially applied migration MUST NOT be a reachable state. | §65 | 2 |
+| NFR-REL-12 | External service unavailability — Supabase, R2 or the model provider — MUST produce an actionable error rather than a stack trace or a hang. | §53 | 3, 4, 8 |
+
+---
+
+## Data integrity {#data-integrity-nfr}
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-DAT-01 | PostgreSQL MUST remain the single canonical store. No derived system may hold data that cannot be reconstructed from it. | §5 | 2 |
+| NFR-DAT-02 | Rebuildability MUST be demonstrable, not assumed — a test MUST reconstruct vector indexes, full-text indexes and the graph projection from canonical records. | §5, §22 | 7, 12 |
+| NFR-DAT-03 | Embedding indexes MUST be versioned, and a retrieval query MUST NOT mix embeddings from different versions. | §20 | 7 |
+| NFR-DAT-04 | Graph records MUST be versioned, and a traversal MUST NOT mix graph versions. | §21, §22 | 12 |
+| NFR-DAT-05 | Every chunk, table, visual object and graph edge MUST be traceable to a source document, page and bounding box. | §16, §21, §40 | 5, 6, 12 |
+| NFR-DAT-06 | Deleting a document MUST NOT orphan chunks, embeddings, citations, graph edges or crops. | §58 | 16 |
+| NFR-DAT-07 | Deleting a document MUST NOT delete graph entities that remain supported by other documents. | §58 | 16 |
+| NFR-DAT-08 | Numerical values and units MUST survive extraction, chunking, compression and generation unaltered. | §33, §38 | 6, 10, 11 |
+| NFR-DAT-09 | Original messages MUST be immutable once persisted; summaries and derived memory MUST NOT overwrite them. | §42, §44 | 14 |
+| NFR-DAT-10 | Conflicting memory MUST be preserved with status rather than silently overwritten, so supersession is auditable. | §43 | 14 |
+| NFR-DAT-11 | Schema changes MUST be expressed as versioned migrations. Manual schema edits MUST NOT be a supported workflow. | §65 | 2 |
+
+---
+
+## Observability {#observability-nfr}
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-OBS-01 | Every request MUST be traceable end to end by a single trace ID, including work performed by background workers on its behalf. | §62 | 3 |
+| NFR-OBS-02 | All 16 §62 stage timings MUST be recorded for every interactive request, not sampled. | §62 | 3, 17 |
+| NFR-OBS-03 | Every model invocation MUST be recorded, including invocations that failed, fell back or were served from cache. | §62 | 8 |
+| NFR-OBS-04 | Latency MUST be reported as p50, p95 and p99. A mean alone MUST NOT be used to assess a budget. | §62 | 17 |
+| NFR-OBS-05 | Evaluation results MUST be persisted per run so regressions between changes are detectable. | §63 | 17 |
+| NFR-OBS-06 | Retrieval decisions MUST be inspectable after the fact — which candidates were retrieved, how they ranked, which were selected, and why an answer abstained. | §62, §63 | 9, 17 |
+
+---
+
+## Maintainability {#maintainability-nfr}
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-MNT-01 | Dependencies MUST point inward. Domain code MUST NOT import FastAPI, SQLAlchemy, provider SDKs or any infrastructure library, enforced by an automated test rather than review. | §8 | 1 |
+| NFR-MNT-02 | The presentation layer MUST NOT contain retrieval, OCR or provider-specific logic. | §8 | 3 |
+| NFR-MNT-03 | Provider-specific model names MUST NOT appear outside provider configuration. | §51 | 8 |
+| NFR-MNT-04 | Tuning constants — RRF `k`, top-k values, candidate pool size, reranker thresholds, evidence limits, chunk sizes, compaction thresholds — MUST be named configuration, never literals in application code. | D-20 | 0.6 |
+| NFR-MNT-05 | Each retrieval, evidence and validation stage MUST be independently testable without running the full pipeline. | §63 | 9–11 |
+| NFR-MNT-06 | Prompts MUST be versioned, and the version MUST be recorded with every generated message. | §41, §56 | 11 |
+| NFR-MNT-07 | Public API request and response schemas MUST be defined once and mirrored in the frontend by generated or hand-checked Zod schemas that are tested against the backend contract. | §65 | 18 |
+| NFR-MNT-08 | A requirement in this register MUST be referenceable by ID from tests and use cases, and requirement IDs MUST NOT be reused after withdrawal. | — | all |
+
+---
+
+## Portability {#portability-nfr}
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-POR-01 | Replacing the answer-generation model MUST require configuration change only — no change to retrieval, evidence, validation or business logic. | §50 | 8 |
+| NFR-POR-02 | Replacing the object storage provider MUST require implementing one port, with no change to callers. | D-08 | 4 |
+| NFR-POR-03 | Introducing a dedicated graph database later MUST require implementing `GraphPort`, with no change to callers. `GraphPort` MUST therefore be expressed in traversal terms, not in any vendor query language. | D-10 | 1, 12 |
+| NFR-POR-04 | Replacing the authentication provider MUST require implementing one dependency, with RLS predicates reading a session-scoped identity rather than a vendor-specific function directly in every policy. | R-01 | 2, 3 |
+| NFR-POR-05 | The development environment MUST work on Windows without containers. | — | 0 |
+| NFR-POR-06 | Changing the embedding model MUST be a configuration change plus a reindex job, never a schema migration. | §20 | 7 |
+
+---
+
+## Capacity {#capacity-nfr}
+
+| ID | Requirement | Target | Phase |
+|---|---|---|---|
+| NFR-CAP-01 | Permanent object storage per ingested 400-page textbook — original plus table and figure crops, excluding regenerable page renders | ≤ 100 MB | 5, 6 |
+| NFR-CAP-02 | Database footprint per ingested 400-page textbook, including chunks, elements, embeddings and indexes | ≤ 40 MB | 7 |
+| NFR-CAP-03 | Page renders MUST be regenerable and MUST expire, rather than accumulating permanently | TTL-bounded | 5, 16 |
+| NFR-CAP-04 | Concept graph responses MUST be bounded regardless of Knowledge Base size | ≤ 50 nodes | 12 |
+| NFR-CAP-05 | Evidence sent to the model MUST be bounded regardless of retrieval pool size | ≤ 8 items, ordinary queries | 10 |
+| NFR-CAP-06 | Storage and database growth MUST be observable, so a free-tier ceiling is approached with warning rather than discovered on failure | instrumented | 17 |
+| NFR-CAP-07 | Conversation and retrieval-log tables MUST be designed partition-ready so growth is addressable without a schema rewrite | design-time | 2 |
+
+---
+
+## Usability and accessibility {#usability-nfr}
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| NFR-UX-01 | Long-running operations — upload processing, multi-hop retrieval, graph building — MUST show progress rather than an indefinite spinner. | §7 | 18–20 |
+| NFR-UX-02 | An abstention MUST be visually distinct from an answer, so a student is not misled into treating "insufficient evidence" as a conclusion. | §38 | 19 |
+| NFR-UX-03 | Conflicting sources MUST be presented as a conflict, not resolved silently in the interface. | §35 | 19 |
+| NFR-UX-04 | Citations MUST be reachable in one interaction from the claim they support. | §40 | 19 |
+| NFR-UX-05 | The interface MUST meet WCAG 2.1 AA for contrast, keyboard navigation and focus management. | — | 20 |
+| NFR-UX-06 | The interface MUST be usable at tablet width; the PDF viewer and graph view MUST degrade rather than break. | — | 20 |
+| NFR-UX-07 | Processing failures MUST explain what failed and what the student can do, not surface an internal error code alone. | §11 | 18 |
+
+---
+
+## Release gates
+
+These six admit **no failures**. Each is an automated test that fails the suite on any non-zero
+result. They are drawn directly from §64 and are not negotiable against schedule.
+
+| ID | Gate | Threshold | Enforcing test | Phase |
+|---|---|---|---|---|
+| NFR-GATE-01 | Cross-user data leakage | **0** | A second user's token MUST NOT reach any record, file, citation, cached answer, memory or graph node belonging to the first, across every endpoint. | 3, 17 |
+| NFR-GATE-02 | Cross-Knowledge-Base leakage | **0** | Retrieval, graph traversal, memory lookup and citation resolution within one Knowledge Base MUST NOT surface content from another owned by the same user. | 9, 12, 14, 17 |
+| NFR-GATE-03 | Fabricated citation acceptance | **0** | An answer citing an identifier that does not exist, was not in context, or belongs to another scope MUST be rejected by validation and MUST NOT reach the student. | 11, 17 |
+| NFR-GATE-04 | Deleted memory retrieval | **0** | A memory record in `DELETED` state, and any content belonging to a deleted document or Knowledge Base, MUST NOT be retrievable through any path. | 14, 16, 17 |
+| NFR-GATE-05 | Unauthorized cache reuse | **0** | A cached answer MUST NOT be served to a different user, a different Knowledge Base, or across an index, prompt, model or conversation-state change. | 16, 17 |
+| NFR-GATE-06 | Graph edge without provenance | **0** | An edge lacking `source_chunk_id`, `page_number` or evidence MUST be rejected at write time and MUST NOT exist in the store. | 12, 17 |
+
+**Gate discipline.** A gate failure blocks release regardless of feature completeness. Gates are
+checked continuously from the phase that introduces the surface, not deferred to Phase 17 — Phase 17
+consolidates them into a single suite and adds the evaluation metrics around them.
 
 ---
 

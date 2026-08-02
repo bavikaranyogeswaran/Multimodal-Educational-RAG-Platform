@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 3 of 13 |
+| Steps complete | 4 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -119,7 +119,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 1 | 0.1 | Repository skeleton & git | S | ✅ |
 | 2 | 0.13 | `PLAN.md` | S | ✅ |
 | 3 | 0.8 | `REQUIREMENTS.md` — functional | L | ✅ |
-| 4 | 0.9 | `REQUIREMENTS.md` — NFRs & release gates | M | ☐ |
+| 4 | 0.9 | `REQUIREMENTS.md` — NFRs & release gates | M | ✅ |
 | 5 | 0.10 | `ARCHITECTURE.md` | M | ☐ |
 | 6 | 0.11 | ADR-001 … ADR-015 | M | ☐ |
 | 7 | 0.12 | `USE_CASES.md` | L | ☐ |
@@ -161,12 +161,15 @@ IDs are **domain-prefixed** (`FR-RET-04`) rather than flat-numbered, so requirem
 without renumbering and a test or use case referencing one is self-describing. IDs are permanent —
 a withdrawn requirement is marked `WITHDRAWN`, never reused.
 
-### 0.9 — Non-functional requirements & release gates
+### 0.9 — Non-functional requirements & release gates ✅
 
-- [ ] `NFR-001…` for security, privacy, performance, reliability, observability, data integrity
-- [ ] Derived latency budgets with reasoning (D-23)
-- [ ] The six §64 zero-tolerance gates as hard, testable NFRs
-- [ ] Storage NFR: permanent storage per ingested textbook ≤ ~100 MB (D-13)
+- [x] 11 non-functional domains: SEC, PRV, PERF, REL, DAT, OBS, MNT, POR, CAP, UX, GATE
+- [x] Latency budgets derived from a stage-by-stage cost model, with the derivation shown (D-23)
+- [x] The six §64 zero-tolerance gates as hard, testable NFRs with named enforcing tests
+- [x] Capacity targets: ≤ 100 MB permanent storage and ≤ 40 MB database per textbook (D-13)
+
+Latency and capacity targets are **provisional** until measured in Phase 17. Gates are checked from
+the phase that introduces each surface, not deferred to Phase 17.
 
 ### 0.10 — `ARCHITECTURE.md`
 
