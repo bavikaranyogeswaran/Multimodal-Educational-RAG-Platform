@@ -704,6 +704,23 @@ single largest non-model contributor.
 | Prompt prefill to first token | 700 ms | ~2,500-token prompt on Gemma 3 4B, GPU |
 | **Total** | **~1.8 s typical** | **2.5 s p95 allowing for variance** |
 
+### Hardware ceiling
+
+Measured in step 0.3: **NVIDIA RTX 3050 6 GB Laptop, driver 555.97, compute capability 8.6.**
+
+6 GB is the binding constraint on the whole design. The allocation (D-27):
+
+| Component | Device | VRAM |
+|---|---|---|
+| Gemma 3 4B, quantized, + KV cache | GPU | ~3.5 GB |
+| `bge-small-en-v1.5` | GPU | 0.13 GB (measured) |
+| `ms-marco-MiniLM-L6-v2` | GPU | 0.09 GB (measured) |
+| PaddleOCR PP-OCRv6 and VL | **CPU** | — |
+| **Remaining headroom** | | **~2.3 GB** |
+
+Ingestion budgets below assume CPU OCR. Chat budgets (`NFR-PERF-01` … `NFR-PERF-10`) are unaffected
+— the GPU is not contended by the worker.
+
 ### Budgets
 
 | ID | Requirement | Target | Phase |
@@ -718,8 +735,10 @@ single largest non-model contributor.
 | NFR-PERF-08 | Memory retrieval | ≤ 250 ms p95 | 17 |
 | NFR-PERF-09 | Validation, deterministic checks only | ≤ 100 ms p95 | 17 |
 | NFR-PERF-10 | Ingestion, native-text page | ≤ 1 s p95 | 17 |
-| NFR-PERF-11 | Ingestion, scanned page via PP-OCRv6 on GPU | ≤ 5 s p95 | 17 |
-| NFR-PERF-12 | Ingestion, complex page via PaddleOCR-VL fallback | ≤ 20 s p95 | 17 |
+| NFR-PERF-11 | Ingestion, scanned page via PP-OCRv6 **on CPU** (D-27) | ≤ 15 s p95 | 5, 17 |
+| NFR-PERF-12 | Ingestion, complex page via PaddleOCR-VL fallback **on CPU** (D-28) | ≤ 120 s p95 | 5, 17 |
+| NFR-PERF-21 | Full-document ingestion, 400-page scanned textbook | ≤ 2 h | 5, 17 |
+| NFR-PERF-22 | Full-document ingestion, 400-page native-text PDF | ≤ 20 min | 5, 17 |
 | NFR-PERF-13 | Upload endpoint response, excluding background processing | ≤ 1.5 s p95 | 4 |
 | NFR-PERF-14 | Concept graph query returning ≤ 50 nodes | ≤ 500 ms p95 | 17 |
 

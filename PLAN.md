@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 8 of 13 |
+| Steps complete | 9 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -75,13 +75,15 @@ through and point at what replaced them.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D-16 | NVIDIA GPU available — CUDA builds throughout | PaddleOCR GPU, GPU embeddings and reranker, Ollama GPU offload. |
+| D-16 | ~~NVIDIA GPU available — CUDA builds throughout~~ | Partially superseded by D-27. GPU confirmed, but at 6 GB it cannot host OCR alongside inference. |
 | D-17 | Ollama and OpenAI-compatible adapters implemented; Gemini and Anthropic interface-only | The OpenAI-compatible adapter covers vLLM and llama.cpp servers for free. The gateway, task router, capability registry, privacy policy and fallback logic are built in full regardless (§48–§54). |
 | D-18 | English-only content | `bge-small-en-v1.5` as specified. `preferred_language` and `chunk.language` are populated by detection but no multilingual embedding or OCR path is built. Swapping models later is a config change plus reindex, which the versioned-index design already supports (§20). |
 | D-19 | Graph extraction **opt-in per Knowledge Base** | §21 runs an LLM over every parent section — hundreds of local calls for a 400-page textbook. A `graph_enabled` flag gates `BUILD_GRAPH`; enabling it later triggers a backfill job. Ingestion always produces chunks, embeddings and full-text indexes. See ADR-008. |
 | D-20 | All §26/§29/§30 tuning numbers become named config values | RRF `k`, top-k ranges, candidate pool size, reranker thresholds and evidence limits are configuration from step 0.6 onward — never literals in code. §30 requires calibration against evaluation data, which is impossible if they are scattered. |
 | D-25 | **Async data layer throughout** — SQLAlchemy 2.0 asyncio + psycopg3 async | `FR-RET-17` requires concurrent dense and keyword retrieval across query variants, `FR-PRF-06` requires batching, `FR-GEN-12` requires SSE streaming, `NFR-PERF-19` requires backpressure. All are natural in async and awkward otherwise. Cost accepted: no lazy loading, explicit eager loads, and the worker is async too since it shares repository code. |
 | D-26 | **structlog** for logging | `NFR-OBS-01` needs a trace ID on every line without threading it through call signatures; `NFR-OBS-02` needs 16 stage timings as queryable fields rather than formatted strings; `NFR-PRV-03` needs redaction as a central processor rather than a convention at each call site. |
+| D-27 | **PaddleOCR runs on CPU; the GPU is reserved for inference, embeddings and reranking** | The target GPU has 6 GB. Gemma 3 4B plus KV cache is ~3.5 GB, leaving no room to share with OCR. Job priority (`FR-JOB-06`) arbitrates CPU scheduling, not VRAM — two processes wanting the card would degrade chat latency regardless of priority. Ingestion is background work, so slower OCR costs little; chat latency, which the `NFR-PERF` budgets measure, is protected. Side benefit: the CPU wheel is plain `paddlepaddle` on PyPI, removing the CUDA-index problem that deferred the `ml` group from step 0.2. |
+| D-28 | **PaddleOCR-VL retained, CPU-only** | `FR-ING-11` and `FR-ING-12` stay satisfied rather than deferred. `NFR-PERF-17` already caps the VL path at under 20% of pages, so a slow fallback on a rare minority is coherent. `NFR-PERF-12` revised from 20 s to 120 s per complex page. |
 
 ### Quality
 
@@ -106,6 +108,8 @@ Recorded during planning. Each needs revisiting at the phase noted.
 | R-04 | **Step 0.3 (CUDA + Paddle on Windows) is the highest-risk step in Phase 0.** 3–5 GB of downloads and CUDA/cuDNN version matching. | Isolated deliberately, and sequenced *after* all documentation so a failure cannot block the governing documents. | Phase 0.3 |
 | R-05 | **`pgvectorscale`, `pg_search` (ParadeDB BM25) and Apache AGE are not available on Supabase Cloud.** Verified against the 64 approved extensions. | AGE would have been the cleanest graph answer — hence D-10 uses plain tables. `pg_search` would give real BM25; mitigated because §28 fuses via RRF, which consumes ranks rather than scores, and by D-12's `rum` indexes. `pgvectorscale` matters only at millions of vectors. | Phase 2, Phase 9 |
 | R-06 | **KùzuDB is dead** — archived October 2025, team acqui-hired. Evaluated and rejected as an embedded graph option. | None; recorded so it is not reconsidered. | — |
+| R-07 | **6 GB VRAM is the binding hardware constraint.** Measured in step 0.3: RTX 3050 6 GB Laptop, driver 555.97, sm_86. After Gemma 3 4B (~3.5 GB) and the retrieval models (0.22 GB measured), roughly 2.3 GB remains. | D-27 moves OCR to CPU. `Q8_0` quantization is likely not selectable (ADR-0011). `FR-PRF-02` — all models warm at startup — is satisfiable only because OCR left the GPU. Any future model addition must be budgeted against this ceiling, not assumed to fit. | Phase 8, Phase 16 |
+| R-08 | **Cross-encoder scores are low and compressed in absolute terms.** Measured in step 0.3: a relevant pair scored −10.58, an irrelevant one −11.24 — correct ordering, margin only +0.66, both far below zero. | Early confirmation of why §30 forbids universal thresholds (`FR-EVD-05`). A naive "keep candidates above 0" rule would discard every candidate. Evidence selection must use a **relative** margin against the top-ranked candidate, never an absolute cut, and the threshold must be calibrated in Phase 17. | Phase 10, Phase 17 |
 
 ---
 
@@ -126,7 +130,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 6 | 0.11 | ADR-0001 … ADR-0015 | M | ✅ |
 | 7 | 0.12 | `USE_CASES.md` | L | ✅ |
 | 8 | 0.2 | Backend uv project & dependency groups | S | ✅ |
-| 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ☐ |
+| 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ✅ |
 | 10 | 0.4 | Backend ruff / mypy / pytest | S | ☐ |
 | 11 | 0.5 | Frontend Vite/React/TS scaffold | S | ☐ |
 | 12 | 0.6 | Config schema & `.env.example` | M | ☐ |
@@ -246,11 +250,39 @@ would make `uv lock` fail. Step 0.3 adds the group with the correct index config
 Runtime dependencies live entirely in `[dependency-groups]` rather than `[project.dependencies]`, so
 a failed ML install cannot block work on the rest of the backend.
 
-### 0.3 — GPU/ML dependencies & CUDA smoke test
+### 0.3 — GPU/ML dependencies & CUDA smoke test ✅
 
-- [ ] CUDA-matched `paddlepaddle-gpu`, CUDA torch, sentence-transformers
-- [ ] `paddle.utils.run_check()` and `torch.cuda.is_available()` pass
-- [ ] `bge-small-en-v1.5` and `ms-marco-MiniLM-L6-v2` load and run once on GPU
+- [x] `ml` dependency group declared: `torch` (cu126 index), `sentence-transformers`,
+      `paddlepaddle` (**CPU wheel**, D-27), `paddleocr`
+- [x] torch resolves from `https://download.pytorch.org/whl/cu126` via `[tool.uv.sources]`
+
+**Measured results**
+
+```
+torch            2.13.0+cu126
+cuda available   True
+device           NVIDIA GeForce RTX 3050 6GB Laptop GPU
+capability       sm_86          vram total  6.00 GiB
+matmul x10       OK (122 ms)
+
+paddle           3.3.1          compiled w/ cuda  False  (expected — D-27)
+paddle device    cpu            paddleocr         3.7.0
+
+bge-small        load 8.9s · encode 104 ms · dim 384 · 136 MiB
+ms-marco-MiniLM  load 5.8s · predict 51 ms · num_labels 1 · ordering OK
+
+peak vram        223 MiB        headroom  5.78 GiB
+```
+
+- [x] `torch.cuda.is_available()` true; GPU matmul verified
+- [x] Paddle confirmed CPU-only, as intended
+- [x] Both retrieval models load on GPU and produce correct output — 384-dim embeddings, correct
+      relevance ordering from the reranker
+
+**cu126, not cu128.** Driver 555.97 reports CUDA 12.5. CUDA minor-version compatibility covers any
+12.x runtime on a driver ≥ 525, so cu126 is safe; cu128 or cu129 would want a newer driver.
+
+Two findings recorded as risks: **R-07** (6 GB ceiling) and **R-08** (compressed reranker scores).
 
 ### 0.4 — Backend code-quality tooling
 

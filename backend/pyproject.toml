@@ -69,6 +69,16 @@ storage = [
     "aioboto3>=15.5",                # ADR-0013 — R2 via S3-compatible presigned URLs
 ]
 
+ml = [
+    # GPU — embeddings and reranking (D-27)
+    "torch>=2.6",                    # cu126: driver 555.97 supports CUDA 12.x via minor-version compat
+    "sentence-transformers>=5.0",    # FR-IDX-01 bge-small-en-v1.5, FR-RET-08 ms-marco-MiniLM-L6-v2
+
+    # CPU — OCR (D-27). Deliberately the CPU wheel, not paddlepaddle-gpu.
+    "paddlepaddle>=3.0",
+    "paddleocr>=3.0",                # FR-ING-09 PP-OCRv6, FR-ING-11 VL fallback
+]
+
 dev = [
     "pytest>=9.0",
     "pytest-asyncio>=1.3",
@@ -80,4 +90,17 @@ dev = [
 ]
 
 [tool.uv]
+# `ml` is excluded from the default set: it is large, and installing it is a separate
+# deliberate act (`uv sync --group ml`). See PLAN.md step 0.3.
 default-groups = ["core", "parsing", "storage", "dev"]
+
+# torch resolves from the CUDA 12.6 index rather than PyPI. Driver 555.97 reports CUDA
+# 12.5; CUDA minor-version compatibility covers any 12.x runtime on a driver >= 525, so
+# cu126 is safe here while cu128/cu129 would want a newer driver.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
