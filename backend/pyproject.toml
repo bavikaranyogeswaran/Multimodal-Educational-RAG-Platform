@@ -104,3 +104,117 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu126" }
+
+# ---------------------------------------------------------------------------
+# Ruff — lint and format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "RUF",       # ruff-specific
+    "ASYNC",     # async correctness — load-bearing given D-25
+    "S",         # bandit — security posture is a first-class concern here
+    "DTZ",       # timezone-aware datetimes — FR-MEM-13, FR-JOB-02 depend on this
+    "PTH",       # pathlib over os.path
+    "T20",       # no print — structlog only (D-26)
+    "TID",       # tidy imports
+    "ARG",       # unused arguments
+    "TRY",       # exception handling
+    "PL",        # pylint subset
+]
+ignore = [
+    "TRY003",    # long messages in exceptions — we want them descriptive
+    "PLR0913",   # many arguments — dependency injection legitimately has them
+    "PLR2004",   # magic values — too noisy before constants exist
+    "S101",      # assert — re-enabled outside tests via per-file-ignores below
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ARG001", "PLR2004"]      # asserts and fixture args are the point
+"alembic/**" = ["E501", "N999", "ARG001"]        # generated migration scaffolding
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# mypy — strict where the rules live, pragmatic at the edges
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["app", "tests"]
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+no_implicit_reexport = true
+
+# Baseline for infrastructure and presentation: typed, but not strict. Adapters wrap
+# third-party libraries whose own typing is inconsistent, and fighting that adds noise
+# without adding safety.
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+# The domain and application layers hold the business rules and the security invariants.
+# They depend on nothing external (ARCHITECTURE.md §4), so there is no excuse for looseness.
+[[tool.mypy.overrides]]
+module = ["app.domain.*", "app.application.*"]
+strict = true
+
+# Third-party packages without type information.
+[[tool.mypy.overrides]]
+module = [
+    "aioboto3.*",
+    "paddle.*",
+    "paddleocr.*",
+    "pdfplumber.*",
+    "pypdfium2.*",
+    "sentence_transformers.*",
+]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib --strict-markers --strict-config -ra"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "security: enforces a requirement from the security test suite (§64)",
+    "gate: enforces a zero-tolerance release gate (NFR-GATE-01..06)",
+    "slow: takes more than a second",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/main.py"]
+
+[tool.coverage.report]
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]

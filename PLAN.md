@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 9 of 13 |
+| Steps complete | 10 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -131,7 +131,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 7 | 0.12 | `USE_CASES.md` | L | ✅ |
 | 8 | 0.2 | Backend uv project & dependency groups | S | ✅ |
 | 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ✅ |
-| 10 | 0.4 | Backend ruff / mypy / pytest | S | ☐ |
+| 10 | 0.4 | Backend ruff / mypy / pytest | S | ✅ |
 | 11 | 0.5 | Frontend Vite/React/TS scaffold | S | ☐ |
 | 12 | 0.6 | Config schema & `.env.example` | M | ☐ |
 | 13 | 0.7 | Environment verification script | M | ☐ |
@@ -284,11 +284,40 @@ peak vram        223 MiB        headroom  5.78 GiB
 
 Two findings recorded as risks: **R-07** (6 GB ceiling) and **R-08** (compressed reranker scores).
 
-### 0.4 — Backend code-quality tooling
+### 0.4 — Backend code-quality tooling ✅
 
-- [ ] Ruff lint and format
-- [ ] mypy strict on `domain/` and `application/`
-- [ ] pytest with `pytest-asyncio` and coverage; one passing test
+- [x] Ruff lint and format — `ruff check` clean, `ruff format` applied
+- [x] mypy: `disallow_untyped_defs` everywhere, **`strict` on `app.domain.*` and
+      `app.application.*`** — those layers depend on nothing external, so there is no excuse for
+      looseness. Success on 38 source files.
+- [x] pytest with `asyncio_mode = "auto"`, coverage, and three custom markers: `security`, `gate`,
+      `slow` — so §64 tests and release gates are selectable as a suite from Phase 3 onward
+- [x] **8 tests passing**
+
+**The first tests are real, not placeholders.**
+
+`tests/unit/test_layer_boundaries.py` discharges `NFR-MNT-01` — it walks `app/domain/` and
+`app/application/`, parses each file's AST, and fails if any inner-layer module imports a framework,
+driver or vendor SDK. It also asserts those directories exist, so the rule cannot pass vacuously
+because a directory was renamed.
+
+Verified by planting a violation:
+
+```
+AssertionError: Dependency rule violated in app/domain/ — dependencies must point inward
+(ARCHITECTURE.md §4, NFR-MNT-01):
+    app\domain\_probe.py  imports  sqlalchemy, torch
+```
+
+`tests/unit/test_app_boots.py` covers the health probe, the versioned OpenAPI path (`FR-API-01`),
+and that the lifespan hook completes — the hook Phase 8 hangs model warm-up off (`FR-PRF-02`).
+
+Ruff's rule set includes **ASYNC** (D-25 makes async correctness load-bearing), **S** (bandit —
+security is a first-class concern here), and **DTZ** (timezone-aware datetimes — `FR-MEM-13` validity
+dates and `FR-JOB-02` lease timestamps are silently wrong if naive).
+
+Source files are read as `utf-8-sig` rather than `utf-8`: a BOM is easy to introduce on Windows and
+would otherwise crash the boundary check with a `SyntaxError` instead of doing its job.
 
 ### 0.5 — Frontend scaffold
 
