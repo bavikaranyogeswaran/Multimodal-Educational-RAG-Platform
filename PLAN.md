@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 4 of 13 |
+| Steps complete | 5 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -120,7 +120,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 2 | 0.13 | `PLAN.md` | S | ✅ |
 | 3 | 0.8 | `REQUIREMENTS.md` — functional | L | ✅ |
 | 4 | 0.9 | `REQUIREMENTS.md` — NFRs & release gates | M | ✅ |
-| 5 | 0.10 | `ARCHITECTURE.md` | M | ☐ |
+| 5 | 0.10 | `ARCHITECTURE.md` | M | ✅ |
 | 6 | 0.11 | ADR-001 … ADR-015 | M | ☐ |
 | 7 | 0.12 | `USE_CASES.md` | L | ☐ |
 | 8 | 0.2 | Backend uv project & dependency groups | S | ☐ |
@@ -171,12 +171,19 @@ a withdrawn requirement is marked `WITHDRAWN`, never reused.
 Latency and capacity targets are **provisional** until measured in Phase 17. Gates are checked from
 the phase that introduces each surface, not deferred to Phase 17.
 
-### 0.10 — `ARCHITECTURE.md`
+### 0.10 — `ARCHITECTURE.md` ✅
 
-- [ ] §6 architecture, §8 layer boundaries and dependency rules, §5 design principles
-- [ ] Storage responsibilities (§60) as amended by D-08 and D-13
-- [ ] §67 scaling path, `pg_partman` designated (D-15)
-- [ ] Mermaid diagrams for ingestion and query flows
+- [x] §5 design principles as the tie-breakers for later phases
+- [x] §6 architecture, §7 runtime processes, §8 layer boundaries and the dependency rule
+- [x] Layer contents table stating what each layer must **not** contain
+- [x] Ports-and-adapters table — the contract Phase 1 implements
+- [x] Storage responsibilities (§60) as amended by D-08 and D-13, with the permanent/regenerable
+      split made explicit
+- [x] Model Gateway structure (§48–§54) and the versioning model
+- [x] §67 scaling path with triggers, `pg_partman` designated (D-15)
+- [x] Six Mermaid diagrams: architecture, layer dependency, ingestion, query, scope enforcement,
+      model gateway
+- [x] Closing section on what the architecture deliberately is not
 
 ### 0.11 — Architecture decision records
 
