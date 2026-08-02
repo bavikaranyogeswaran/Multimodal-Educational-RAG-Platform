@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 2 of 13 |
+| Steps complete | 3 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -118,7 +118,7 @@ against written requirements, and the risky GPU install cannot block them.
 |---|---|---|---|---|
 | 1 | 0.1 | Repository skeleton & git | S | ✅ |
 | 2 | 0.13 | `PLAN.md` | S | ✅ |
-| 3 | 0.8 | `REQUIREMENTS.md` — functional | L | ☐ |
+| 3 | 0.8 | `REQUIREMENTS.md` — functional | L | ✅ |
 | 4 | 0.9 | `REQUIREMENTS.md` — NFRs & release gates | M | ☐ |
 | 5 | 0.10 | `ARCHITECTURE.md` | M | ☐ |
 | 6 | 0.11 | ADR-001 … ADR-015 | M | ☐ |
@@ -149,11 +149,17 @@ Additions beyond §66: `backend/scripts/`, `backend/tests/fixtures/`, `backend/a
 - [x] Findings and open risks R-01 … R-06
 - [x] Specification coverage matrix
 
-### 0.8 — Functional requirements
+### 0.8 — Functional requirements ✅
 
-- [ ] `FR-001…` extracted from all 68 sections, grouped by domain, each traced to its section
-- [ ] Domains: Knowledge Base, ingestion, retrieval, generation, memory, study content, model
-      gateway, lifecycle, observability
+- [x] Functional requirements extracted from all 68 sections, each traced to its section and to the
+      phase that implements it
+- [x] 32 domains: OBJ, AUTH, KB, DOC, JOB, ING, TBL, VIS, CHK, IDX, GRA, CNV, QRY, RET, EVD, CTX,
+      GEN, CIT, VAL, HOP, MEM, STU, PRG, MDL, PRF, CCH, VIZ, DEL, API, OBS, EVL, UI
+- [x] Coverage table confirming all 68 sections are represented
+
+IDs are **domain-prefixed** (`FR-RET-04`) rather than flat-numbered, so requirements can be inserted
+without renumbering and a test or use case referencing one is self-describing. IDs are permanent —
+a withdrawn requirement is marked `WITHDRAWN`, never reused.
 
 ### 0.9 — Non-functional requirements & release gates
 
