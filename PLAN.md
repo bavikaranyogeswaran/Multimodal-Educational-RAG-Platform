@@ -18,7 +18,7 @@ system design specification.
 | | |
 |---|---|
 | Current phase | **0 — Foundation** |
-| Steps complete | 10 of 13 |
+| Steps complete | 11 of 13 |
 | Phases complete | 0 of 21 |
 | Last updated | 2 August 2026 |
 
@@ -132,7 +132,7 @@ against written requirements, and the risky GPU install cannot block them.
 | 8 | 0.2 | Backend uv project & dependency groups | S | ✅ |
 | 9 | 0.3 | GPU/ML install & CUDA smoke test | M · risky | ✅ |
 | 10 | 0.4 | Backend ruff / mypy / pytest | S | ✅ |
-| 11 | 0.5 | Frontend Vite/React/TS scaffold | S | ☐ |
+| 11 | 0.5 | Frontend Vite/React/TS scaffold | S | ✅ |
 | 12 | 0.6 | Config schema & `.env.example` | M | ☐ |
 | 13 | 0.7 | Environment verification script | M | ☐ |
 
@@ -319,11 +319,29 @@ dates and `FR-JOB-02` lease timestamps are silently wrong if naive).
 Source files are read as `utf-8-sig` rather than `utf-8`: a BOM is easy to introduce on Windows and
 would otherwise crash the boundary check with a `SyntaxError` instead of doing its job.
 
-### 0.5 — Frontend scaffold
+### 0.5 — Frontend scaffold ✅
 
-- [ ] Vite + React + TypeScript, CSS Modules, path aliases
-- [ ] TanStack Query, Zod
-- [ ] ESLint, Prettier, Vitest, Testing Library; one passing test; dev server boots
+- [x] Vite 7 + React 19 + TypeScript 5.9, CSS Modules, `@/` path alias in both Vite and tsconfig
+- [x] TanStack Query and Zod installed; query client configured with deliberate defaults
+- [x] ESLint 9 flat config with type-aware rules, Prettier, Vitest, Testing Library
+- [x] `npm run typecheck` · `npm run lint` · `npm test` (3 passed) · `npm run build` all clean
+- [x] Dev server verified rendering in a browser with no console errors
+- [x] `.claude/launch.json` for both `frontend` and `api` processes
+
+Scaffolded **manually rather than with `create-vite`**, which would have overwritten the §66 tree
+established in 0.1.
+
+**TypeScript is strict beyond the default template** — `noUncheckedIndexedAccess`,
+`exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `erasableSyntaxOnly`. `NFR-MNT-07` requires the
+frontend to mirror the backend contract in Zod; loose typing on this side would defeat the point.
+
+**Design tokens carry semantic answer states from the start** — `--color-abstain` and
+`--color-conflict` exist in `global.css` because `NFR-UX-02` and `NFR-UX-03` require abstentions and
+source conflicts to be *visually distinct*, not styled like ordinary answers. Cheaper to establish
+now than to retrofit in Phase 19.
+
+The query client disables retry on 401 and 404, since `FR-AUTH-13` makes a foreign Knowledge Base
+return 404 by design — retrying it is pure latency.
 
 ### 0.6 — Configuration schema & `.env.example`
 
