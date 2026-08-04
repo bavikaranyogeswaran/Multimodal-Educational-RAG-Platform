@@ -126,6 +126,45 @@ class HeadingPath:
 
 
 @dataclass(frozen=True, slots=True)
+class UntrustedText:
+    """Text that came out of an uploaded document.
+
+    A student's PDF can contain anything, including sentences addressed to the model. That
+    text must reach a prompt as *evidence to be read*, never as instructions to be obeyed,
+    and the reliable way to ensure it is to make its provenance part of its type rather
+    than a rule people remember.
+
+    The safeguard is that `__str__` does not return the content. Interpolating one of these
+    into a prompt template by accident yields a harmless placeholder rather than whatever
+    the document author wrote, so the mistake is visible in output instead of silent. Code
+    that genuinely needs the characters asks for `.value`, and that call site is then an
+    explicit acknowledgement of what it is handling.
+    """
+
+    value: str
+
+    def __len__(self) -> int:
+        return len(self.value)
+
+    def __bool__(self) -> bool:
+        return bool(self.value.strip())
+
+    def __str__(self) -> str:
+        return f"<untrusted text, {len(self.value)} chars>"
+
+    def __repr__(self) -> str:
+        return f"UntrustedText(<{len(self.value)} chars>)"
+
+    def is_blank(self) -> bool:
+        return not self.value.strip()
+
+    def truncated(self, limit: int) -> UntrustedText:
+        if limit < 0:
+            raise InvariantViolationError("truncation limit must not be negative")
+        return UntrustedText(self.value[:limit])
+
+
+@dataclass(frozen=True, slots=True)
 class TokenBudget:
     """A fixed allowance and how much of it has been spent.
 

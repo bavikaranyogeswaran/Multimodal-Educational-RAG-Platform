@@ -10,7 +10,9 @@ Nothing here imports anything but the standard library.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import IntEnum, StrEnum
+from typing import Final
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +100,46 @@ class DocumentStatus(StrEnum):
     @property
     def is_terminal(self) -> bool:
         return self in {DocumentStatus.COMPLETED, DocumentStatus.FAILED}
+
+    def can_transition_to(self, target: DocumentStatus) -> bool:
+        return target in _DOCUMENT_TRANSITIONS[self]
+
+    @property
+    def successors(self) -> frozenset[DocumentStatus]:
+        return _DOCUMENT_TRANSITIONS[self]
+
+
+_DOCUMENT_TRANSITIONS: Final[Mapping[DocumentStatus, frozenset[DocumentStatus]]] = {
+    DocumentStatus.PENDING: frozenset(
+        {DocumentStatus.PROCESSING, DocumentStatus.FAILED, DocumentStatus.DELETING}
+    ),
+    DocumentStatus.PROCESSING: frozenset(
+        {DocumentStatus.COMPLETED, DocumentStatus.FAILED, DocumentStatus.DELETING}
+    ),
+    # Reprocessing an indexed document goes straight back to processing. Returning it to
+    # pending would be a lie: the work is already queued, and the document would appear
+    # never to have been ingested.
+    DocumentStatus.COMPLETED: frozenset({DocumentStatus.PROCESSING, DocumentStatus.DELETING}),
+    DocumentStatus.FAILED: frozenset(
+        {DocumentStatus.PENDING, DocumentStatus.PROCESSING, DocumentStatus.DELETING}
+    ),
+    # Absorbing. Once deletion begins there is no way back — retrieval is blocked from
+    # that moment, and a document that could return from deleting would be retrievable
+    # again after its files had gone.
+    DocumentStatus.DELETING: frozenset(),
+}
+
+
+class ExplanationLevel(StrEnum):
+    """How much prior knowledge an explanation may assume.
+
+    A property of the Knowledge Base rather than of a request: a student studying for a
+    first-year course wants the same register every time, not one they must restate.
+    """
+
+    INTRODUCTORY = "INTRODUCTORY"
+    INTERMEDIATE = "INTERMEDIATE"
+    ADVANCED = "ADVANCED"
 
 
 # ---------------------------------------------------------------------------

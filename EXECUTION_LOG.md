@@ -42,6 +42,7 @@ Unverified beliefs currently load-bearing. Each needs confirming at the phase na
 | A-038 | A Supabase round trip costs 40–120 ms from this machine | Phase 2, first real connection |
 | A-041 | A 400-page textbook yields ~1,000 child and ~300 parent chunks, ~25–35 MB of database | Phase 7 |
 | A-042 | Page renders at 200 DPI average ~250 KB each | Phase 5 |
+| A-098 | Extraction confidence below 0.6 is worth surfacing to the student as doubtful | Phase 5, against real OCR output. A placeholder with no data behind it. |
 
 Everything in this table feeds a latency or capacity target in
 [REQUIREMENTS.md](REQUIREMENTS.md). If one proves wrong, the target derived from it moves with it.
@@ -207,3 +208,23 @@ Everything in this table feeds a latency or capacity target in
 | A-085 | correction | Exception classes renamed with the `Error` suffix | Ruff's naming check enforcing the language convention. It was right. |
 | A-086 | choice | `JobType.SYNC_GRAPH_PROJECTION` has a member name that differs from its stored value `SYNC_NEO4J` | The stored value keeps schema compatibility with the specified job-type set; the member name describes what it would actually do. |
 | A-087 | correction | An enum test asserts string behaviour through `str()` and `.value` rather than direct comparison | A member whose name and value deliberately differ makes the direct comparison unprovable to the type checker, though it holds at runtime. |
+
+## Step 1.2 — Knowledge Base and document entities
+
+| ID | Kind | Entry | Why |
+|---|---|---|---|
+| A-088 | choice | `UntrustedText` introduced as a type, and `DocumentElement.text` uses it | Document text must reach a prompt as evidence, never as instruction. A type carries that provenance where a convention would not. Its `__str__` returns a placeholder rather than the content, so accidental interpolation into a prompt template produces visibly wrong output instead of handing a document author the system prompt. |
+| A-089 | choice | `app/domain/invariants.py` added for shared validation helpers | Every entity checks the same handful of things. Written once, the messages stay consistent and the checks cannot quietly diverge across six modules. |
+| A-090 | choice | `KnowledgeBase.scope` derives the scope from the entity itself | Nothing downstream should have to pair a user identifier with a Knowledge Base identifier by hand and risk pairing them wrongly. Every scoped entity now reports its own scope. |
+| A-091 | choice | `COMPLETED → PROCESSING` is permitted; `COMPLETED → PENDING` is not | Reprocessing after an embedding-model change must be possible. Returning to pending would describe an already-ingested document as never having been ingested. |
+| A-092 | choice | `DELETING` is an absorbing state with no outbound transitions | A path back would make content retrievable again after its files had been removed. |
+| A-093 | choice | Transitions take `now` as a required argument; the domain reads no clock | Behaviour stays reproducible and no test has to freeze a global. |
+| A-094 | choice | A failed document must carry a reason, and a non-failed one must not | A failure nobody can act on tells the student only that something went wrong; a stale reason on a recovered document misreports its state. |
+| A-095 | choice | A completed document must know its page count | Completion means the pipeline ran to the end, which is not describable without knowing what it covered. |
+| A-096 | choice | An element produced by OCR must carry both a bounding box and a confidence | It was read from a rendered region, so its location is known. A citation that cannot be opened at a location is not much of a citation. |
+| A-097 | choice | `ExplanationLevel` added to the enums, with three levels | The Knowledge Base carries an explanation level but the specification does not enumerate one. A free string would have no closed set to route on. |
+| A-098 | assumption | Low extraction confidence is defined as below 0.6 | A placeholder threshold with no data behind it. Should be calibrated once real OCR output exists — recorded in the open assumptions table. |
+| A-099 | discovery | mypy was not checking the test suite at all | Two `conftest.py` files without package markers collided on module name, and mypy stops after that error. Adding `__init__.py` to the test directories fixed it and immediately surfaced eleven genuine annotation gaps. |
+| A-100 | correction | Fixture factories typed with a generic `Builder[T]` protocol rather than silenced with ignore comments | The first version scattered `# type: ignore[no-untyped-def]` at every call site, which switches type checking off for the test that uses it — the opposite of what running mypy over tests is for. |
+| A-101 | correction | Test directories became packages, and their `.gitkeep` placeholders were removed | Required by the module-name fix. It also makes the relative imports between test modules legitimate rather than incidentally working. |
+| A-102 | correction | A bulk regular-expression edit across the test files produced a syntax error and several over-long lines | Multi-line signatures were not matched by a pattern written for single-line ones. Repaired by hand. Bulk edits over Python signatures are not reliable; targeted edits are. |

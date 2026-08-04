@@ -453,7 +453,7 @@ contract surface be reviewed for consistency at once rather than scattered acros
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 1.1 | Domain vocabulary — enums, value objects, `ScopeContext`, error hierarchy | M | ✅ |
-| 1.2 | Knowledge Base, Document, Page, DocumentElement | M | ☐ |
+| 1.2 | Knowledge Base, Document, Page, DocumentElement | M | ✅ |
 | 1.3 | Chunk, Evidence, Citation, RetrievalPlan | M | ☐ |
 | 1.4 | Conversation, Message, MemoryFact | M | ☐ |
 | 1.5 | GraphEntity, GraphRelationship | S | ☐ |
@@ -508,11 +508,40 @@ Two design points worth recording:
 captions with figures needs both, and geometry reimplemented at three call sites is geometry wrong
 at two of them.
 
-### 1.2 — Knowledge Base and document entities
+### 1.2 — Knowledge Base and document entities ✅
 
-- [ ] `KnowledgeBase` with the full §9 property set, `graph_enabled`, and both version pointers
-- [ ] `Document`, `DocumentPage`, `DocumentElement` with the full §16 field set
-- [ ] Status transitions as a state machine, so `COMPLETED → PENDING` is unrepresentable
+`app/domain/knowledge_base/entities.py`, `app/domain/documents/entities.py`,
+`app/domain/invariants.py`. **163 tests passing**, ruff and mypy clean.
+
+- [x] `KnowledgeBase` with the full §9 property set, `graph_enabled`, and both version pointers
+- [x] `Document`, `DocumentPage`, `DocumentElement` with the full §16 field set
+- [x] Status transitions as a state machine
+
+**The state machine refuses what would misdescribe the system.** `COMPLETED → PROCESSING` is
+allowed, because reprocessing after an embedding-model change must be possible.
+`COMPLETED → PENDING` is not, because it would describe an indexed document as never having been
+ingested. `DELETING` is **absorbing** — a path back would make content retrievable after its files
+had gone.
+
+**Every scoped entity reports its own scope.** A Knowledge Base *is* a scope, so nothing downstream
+pairs two loose identifiers and risks pairing them wrongly.
+
+**Document text is `UntrustedText`**, whose string form is a placeholder rather than the content.
+Interpolating it into a prompt template by accident yields `<untrusted text, 240 chars>` instead of
+whatever the document author wrote — so the mistake is visible in output rather than silent. Reading
+the characters requires `.value`, and that call site is then an explicit acknowledgement.
+
+Four invariants are enforced at construction: a failed document carries a reason and a recovered one
+does not; a completed document knows its page count; an OCR-derived element carries both a bounding
+box and a confidence, since a citation that cannot be opened at a location is not much of a
+citation.
+
+Transitions take `now` as an argument — the domain reads no clock, so behaviour is reproducible and
+no test freezes a global.
+
+**mypy was not checking the test suite at all.** Two `conftest.py` files collided on module name and
+mypy stops after that error. Fixing it surfaced eleven real annotation gaps, now closed with a
+generic `Builder[T]` protocol rather than ignore comments.
 
 ### 1.3 — Retrieval entities
 
