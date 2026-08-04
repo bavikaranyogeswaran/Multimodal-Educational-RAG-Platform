@@ -24,6 +24,12 @@ FORBIDDEN_INWARD_IMPORTS = frozenset(
         "starlette",
         "sse_starlette",
         "uvicorn",
+        # Validation and settings. Deliberate: the domain uses stdlib dataclasses so it
+        # depends on nothing outside the standard library. Pydantic would bring
+        # serialisation with it, and entities that already serialise leak outward into
+        # API responses, which quietly erases the presentation boundary.
+        "pydantic",
+        "pydantic_settings",
         # Persistence
         "sqlalchemy",
         "alembic",

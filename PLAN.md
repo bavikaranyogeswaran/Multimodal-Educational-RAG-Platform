@@ -12,6 +12,9 @@ system design specification.
 - Section references like `§27` point at the source system design specification.
 - The **Decisions log** below is authoritative. If this plan and a memory of a conversation
   disagree, the log wins.
+- The log holds decisions **the user chose in answer to a question**. Judgement calls made *while*
+  executing a step live in [EXECUTION_LOG.md](EXECUTION_LOG.md) as `A-xxx` entries, along with the
+  assumptions that are not yet verified. Update it at the end of every step.
 
 ## Status
 
@@ -42,6 +45,10 @@ These apply to every phase and are not revisited.
 - **Knowledge Base isolation is the security boundary.** Every scoped record carries `user_id` and
   `knowledge_base_id`; every query filters on both before ranking or traversal (§5, §10).
 - **Library fidelity.** The §65 stack is used exactly as specified. Substitutions require an ADR.
+- **Every step updates [EXECUTION_LOG.md](EXECUTION_LOG.md).** Assumptions made without asking,
+  deviations from the plan, discoveries and corrections are recorded as `A-xxx` entries as part of
+  the step, not reconstructed afterwards. Anything believed but unverified also goes in the open
+  assumptions table with the phase that will confirm it.
 - **Comments carry no cross-reference identifiers.** Code comments, docstrings, config comments and
   error messages explain the reasoning in plain language. They do not cite phase numbers, step
   numbers, requirement IDs, use-case IDs, ADR numbers or spec sections — a comment that only points
@@ -93,6 +100,9 @@ through and point at what replaced them.
 | D-26 | **structlog** for logging | `NFR-OBS-01` needs a trace ID on every line without threading it through call signatures; `NFR-OBS-02` needs 16 stage timings as queryable fields rather than formatted strings; `NFR-PRV-03` needs redaction as a central processor rather than a convention at each call site. |
 | D-27 | **PaddleOCR runs on CPU; the GPU is reserved for inference, embeddings and reranking** | The target GPU has 6 GB. Gemma 3 4B plus KV cache is ~3.5 GB, leaving no room to share with OCR. Job priority (`FR-JOB-06`) arbitrates CPU scheduling, not VRAM — two processes wanting the card would degrade chat latency regardless of priority. Ingestion is background work, so slower OCR costs little; chat latency, which the `NFR-PERF` budgets measure, is protected. Side benefit: the CPU wheel is plain `paddlepaddle` on PyPI, removing the CUDA-index problem that deferred the `ml` group from step 0.2. |
 | D-28 | **PaddleOCR-VL retained, CPU-only** | `FR-ING-11` and `FR-ING-12` stay satisfied rather than deferred. `NFR-PERF-17` already caps the VL path at under 20% of pages, so a slow fallback on a rare minority is coherent. `NFR-PERF-12` revised from 20 s to 120 s per complex page. |
+| D-30 | **Domain entities are frozen stdlib dataclasses** with validation in `__post_init__` | The domain imports nothing but the standard library — the strongest reading of the dependency rule, and it makes `NFR-MNT-01` trivially satisfiable. Pydantic in the domain would give free validation but pulls serialisation in with it, and domain models that already serialise leak outward into API responses, quietly erasing the presentation boundary. Cost accepted: hand-written validation, and conversion to Pydantic at the API edge. `pydantic` is added to the boundary test's forbidden-import list so this cannot erode. |
+| D-31 | **Ports are `typing.Protocol`**, structural rather than nominal | Adapters satisfy a port by shape, so infrastructure never imports a domain class merely to subclass it — the arrow points inward in the most literal sense. Test fakes become plain objects rather than subclasses. Cost accepted: a mismatch surfaces in mypy rather than at import, so type checking must actually run in the loop. |
+| D-32 | **Entities are immutable**, with named transition methods | State changes return a new instance — `document.mark_processing()` rather than attribute assignment — so illegal transitions are unrepresentable and no pipeline stage can mutate shared state behind a caller's back. That last point is not theoretical: retrieval stages run concurrently. Cost accepted: more allocation and frequent `dataclasses.replace`. |
 | D-29 | **Child chunk overlap is 70 tokens**, not the ~50 §19 suggests | User decision. §19 says "approximately 50 tokens where necessary", so 70 is within the spirit of an approximate figure rather than a substantive deviation. More overlap reduces the chance that a sentence spanning a chunk boundary is retrievable from neither side, at a modest cost in index size and duplicate evidence — which the deduplication stage already handles. Revisit against retrieval evaluation. |
 
 ### Quality
@@ -434,22 +444,128 @@ URL and compares the bytes. Checking that a library imports proves considerably 
 
 ## Phase 1 — Clean architecture skeleton & domain layer
 
-Covers §5, §6, §8, §51.
+Covers §5, §6, §8, §51. Frozen stdlib dataclasses (D-30), `Protocol` ports (D-31), immutable
+entities with named transitions (D-32).
 
-- [ ] All §8 domain entities: `KnowledgeBase`, `Document`, `DocumentElement`, `Chunk`, `Evidence`,
-      `Citation`, `Conversation`, `MemoryFact`, `GraphEntity`, `GraphRelationship`,
-      `RetrievalPlan`, `ModelRequest`, `ModelResponse`, `ProcessingJob`
-- [ ] Domain ports: repositories, `StoragePort`, `DenseRetriever`, `KeywordRetriever`, `GraphPort`,
-      `OcrPort`, `PdfParserPort`, `EmbeddingPort`, `RerankerPort`, `ModelGatewayPort`, `CacheStore`,
-      `ObservabilityPort`
-- [ ] `GraphPort` written to a traversal vocabulary (`neighbors`, `subgraph`), not Cypher, so a
-      Neo4j adapter can drop in later without touching callers (D-10)
-- [ ] Enums: element types, chunk types, job types, priorities, statuses, query classes, memory
-      statuses, validation decisions, coverage classes, requirement levels
-- [ ] Value objects: `BoundingBox`, `HeadingPath`, `ScopeContext(user_id, knowledge_base_id)`,
-      `TokenBudget`
-- [ ] DI container and provider wiring
-- [ ] **Import-boundary test** failing if `domain/` imports FastAPI, SQLAlchemy or any provider SDK
+Entities first, then ports, then wiring — the dependency order. Grouping the ports lets the whole
+contract surface be reviewed for consistency at once rather than scattered across entity files.
+
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 1.1 | Domain vocabulary — enums, value objects, `ScopeContext`, error hierarchy | M | ✅ |
+| 1.2 | Knowledge Base, Document, Page, DocumentElement | M | ☐ |
+| 1.3 | Chunk, Evidence, Citation, RetrievalPlan | M | ☐ |
+| 1.4 | Conversation, Message, MemoryFact | M | ☐ |
+| 1.5 | GraphEntity, GraphRelationship | S | ☐ |
+| 1.6 | ModelRequest, ModelResponse, ProcessingJob | M | ☐ |
+| 1.7 | Repository ports | M | ☐ |
+| 1.8 | Adapter ports | M | ☐ |
+| 1.9 | Model gateway port and capability registry | M | ☐ |
+| 1.10 | Composition root, DI wiring, boundary test made load-bearing | M | ☐ |
+
+### 1.1 — Domain vocabulary ✅
+
+`app/domain/enums.py`, `values.py`, `scope.py`, `errors.py`. **90 tests passing**, ruff and mypy clean.
+
+- [x] 22 enums covering ingestion, jobs, conversations, routing, validation, memory, graph and the
+      model gateway
+- [x] Value objects `BoundingBox`, `HeadingPath`, `TokenBudget`
+- [x] `ScopeContext(user_id, knowledge_base_id)`
+- [x] Domain error hierarchy; the domain never names a status code
+- [x] `pydantic` and `pydantic_settings` added to the boundary test's forbidden list, enforcing D-30
+
+**The boundary test stopped being vacuous.** Verified by planting a `pydantic` import plus an
+outward reach into `app.infrastructure` — both caught. Audited what the domain actually imports:
+
+```
+['__future__', 'app', 'dataclasses', 'enum', 'typing', 'uuid']
+```
+
+Standard library only, as D-30 requires.
+
+**Behaviour lives on the enums** rather than in scattered `if` statements, so routing rules are
+stated once and testable directly: `QueryClass.needs_decomposition`, `.benefits_from_graph`,
+`.forbids_expansion`; `DocumentStatus.is_retrievable`; `MemoryStatus.is_retrievable`;
+`ValidationDecision.is_returnable`; `CoverageStatus.needs_another_round`;
+`DataBoundary.accepts_private_content`.
+
+Two enums are `IntEnum` because their ordering is the point rather than an accident of declaration:
+`JobPriority` (workers claim by descending priority) and `RequirementLevel` (conflicts resolve by
+comparing levels). `MemoryProvenance` was added for the same reason — a correction outranking an
+assistant guess is an ordering, so it is modelled as one.
+
+Two design points worth recording:
+
+- **`NotFoundError` and `ScopeViolationError` are distinct types** even though the API answers both
+  identically. A resource the caller does not own must be indistinguishable from one that does not
+  exist, or the API becomes an oracle for guessing identifiers — but keeping them separate
+  internally is what lets a scope violation be recorded as a security event while a genuine miss is
+  not.
+- **`CoverageStatus.CONFLICTING` does not trigger another retrieval round.** More searching will not
+  resolve sources that genuinely disagree; the disagreement is the finding.
+
+`BoundingBox` carries `intersection_over_union` and `merged` now rather than later — associating
+captions with figures needs both, and geometry reimplemented at three call sites is geometry wrong
+at two of them.
+
+### 1.2 — Knowledge Base and document entities
+
+- [ ] `KnowledgeBase` with the full §9 property set, `graph_enabled`, and both version pointers
+- [ ] `Document`, `DocumentPage`, `DocumentElement` with the full §16 field set
+- [ ] Status transitions as a state machine, so `COMPLETED → PENDING` is unrepresentable
+
+### 1.3 — Retrieval entities
+
+- [ ] `Chunk` with parent link and full §19 metadata
+- [ ] `Evidence` — a chunk plus retrieval provenance; this is what carries a stable `[S1]` identifier
+- [ ] `Citation`
+- [ ] `RetrievalPlan` — the deterministic router's output: query class, retrievers to run, whether to
+      expand, whether to consult the graph, early-exit path
+
+### 1.4 — Conversation and memory entities
+
+- [ ] `Conversation` with active document, page, figure and table state
+- [ ] `Message` with role, status, rewritten query and model metadata
+- [ ] `MemoryFact` with the six statuses, provenance and validity dates — the supersession rule
+      lives on the entity, not in a service
+
+### 1.5 — Graph entities
+
+- [ ] `GraphEntity`
+- [ ] `GraphRelationship` — **cannot be constructed without `source_chunk_id`, `page_number` and
+      evidence.** Provenance becomes unrepresentable-if-absent at the type level, before the
+      database constraint backs it up in Phase 2
+
+### 1.6 — Model and job entities
+
+- [ ] `ModelRequest` and `ModelResponse` in provider-neutral form — the §54 seven-slot prompt
+      structure, not a provider payload
+- [ ] `ProcessingJob` with priority, attempt count, lease and heartbeat
+
+### 1.7 — Repository ports
+
+- [ ] Knowledge Base, document, chunk, conversation, memory, graph and job repositories
+- [ ] Every method takes `ScopeContext` as its first parameter, so an unscoped query does not
+      type-check — the scoping requirement expressed in the signature rather than in a comment
+
+### 1.8 — Adapter ports
+
+- [ ] `StoragePort`, `PdfParserPort`, `OcrPort`, `EmbeddingPort`, `RerankerPort`
+- [ ] `DenseRetriever`, `KeywordRetriever`, `GraphPort`, `CacheStore`, `ObservabilityPort`
+- [ ] `GraphPort` in traversal vocabulary — `neighbors(...)`, `subgraph(...)` — never a query
+      language, so a graph database can be introduced later without touching callers (D-10)
+
+### 1.9 — Model gateway port
+
+- [ ] The four capability interfaces: text generation, multimodal, embeddings, reranking
+- [ ] Capability metadata and the ten model tasks
+- [ ] The `data_boundary` type that makes the privacy pre-flight expressible
+
+### 1.10 — Composition root and wiring
+
+- [ ] DI container and adapter registration
+- [ ] Lifespan integration
+- [ ] **The boundary test stops passing vacuously here** — this is where it starts earning its place
 
 ## Phase 2 — Data model, migrations & Row-Level Security
 

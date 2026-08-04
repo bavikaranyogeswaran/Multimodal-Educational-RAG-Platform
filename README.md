@@ -37,6 +37,7 @@ scoped to a `(user_id, knowledge_base_id)` pair.
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Functional and non-functional requirements register |
 | [USE_CASES.md](USE_CASES.md) | Use cases with flows and acceptance criteria |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Layers, dependency rules and data flows |
+| [EXECUTION_LOG.md](EXECUTION_LOG.md) | Assumptions and judgement calls made during each step |
 | [docs/adr/](docs/adr/) | Architecture decision records |
 
 ## Repository layout
