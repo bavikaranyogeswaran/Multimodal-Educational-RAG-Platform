@@ -454,7 +454,7 @@ contract surface be reviewed for consistency at once rather than scattered acros
 |---|---|---|---|
 | 1.1 | Domain vocabulary — enums, value objects, `ScopeContext`, error hierarchy | M | ✅ |
 | 1.2 | Knowledge Base, Document, Page, DocumentElement | M | ✅ |
-| 1.3 | Chunk, Evidence, Citation, RetrievalPlan | M | ☐ |
+| 1.3 | Chunk, Evidence, Citation, RetrievalPlan | M | ✅ |
 | 1.4 | Conversation, Message, MemoryFact | M | ☐ |
 | 1.5 | GraphEntity, GraphRelationship | S | ☐ |
 | 1.6 | ModelRequest, ModelResponse, ProcessingJob | M | ☐ |
@@ -543,13 +543,37 @@ no test freezes a global.
 mypy stops after that error. Fixing it surfaced eleven real annotation gaps, now closed with a
 generic `Builder[T]` protocol rather than ignore comments.
 
-### 1.3 — Retrieval entities
+### 1.3 — Retrieval entities ✅
 
-- [ ] `Chunk` with parent link and full §19 metadata
-- [ ] `Evidence` — a chunk plus retrieval provenance; this is what carries a stable `[S1]` identifier
-- [ ] `Citation`
-- [ ] `RetrievalPlan` — the deterministic router's output: query class, retrievers to run, whether to
-      expand, whether to consult the graph, early-exit path
+`app/domain/documents/chunks.py`, `app/domain/retrieval/entities.py`. **236 tests passing**, ruff and
+mypy clean.
+
+- [x] `Chunk` with parent link and full §19 metadata
+- [x] `EvidenceLabel`, `Evidence`, `EvidenceSet`
+- [x] `Citation`
+- [x] `RetrievalFilters` and `RetrievalPlan`, derived from the query class
+
+**The fabricated-citation gate is now structural.** The chain is: retrieval produces evidence,
+evidence carries a positional label, the model may cite only those labels, and validation resolves
+each citation through `EvidenceSet.require` — *the same set that was put in front of the model*.
+
+That last point is the one that matters. A chunk can be entirely real, belong to the right student
+and the right Knowledge Base, and still not have been supplied for this question. Resolving a
+citation against the database would wave it through; resolving against the supplied set does not.
+
+**`EvidenceSet` refuses to span more than one scope**, at construction. Mixed evidence is a leak that
+has already happened by the time anyone inspects it, so it is refused where it would be assembled.
+
+**`RetrievalFilters` deliberately omits the mandatory filters.** It holds only optional narrowing —
+user, Knowledge Base and completed-status predicates come from the scope, because a field can be
+left unset and those must not be.
+
+**`RetrievalPlan.for_query` applies the routing properties already on `QueryClass`** rather than
+restating them, so a second set of rules cannot drift from the first. It also drops an early exit
+when the object it depends on was not actually selected: asking about "the table on page 67" without
+having selected one still needs a search to find out which table that is.
+
+**A duplicate `EarlyExitPath` was found and reconciled** — see A-114.
 
 ### 1.4 — Conversation and memory entities
 

@@ -270,6 +270,19 @@ class QueryClass(StrEnum):
         }
 
 
+class EarlyExitPath(StrEnum):
+    """A shortcut past the full retrieval pipeline.
+
+    Taken when the question has already resolved what it is about. Searching broadly for
+    a table the student has selected and is pointing at wastes time and can only make the
+    answer worse by surfacing something else.
+    """
+
+    TABLE_LOOKUP = "TABLE_LOOKUP"
+    VISUAL_LOOKUP = "VISUAL_LOOKUP"
+    EXACT_LOOKUP = "EXACT_LOOKUP"
+
+
 class RetrieverKind(StrEnum):
     """Which retriever produced a ranked list.
 

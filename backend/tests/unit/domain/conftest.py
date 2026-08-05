@@ -15,9 +15,11 @@ from uuid import uuid4
 
 import pytest
 
+from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
-from app.domain.enums import ElementType, PageKind, ProcessingMethod
+from app.domain.enums import ChunkType, ElementType, PageKind, ProcessingMethod, RetrieverKind
 from app.domain.knowledge_base.entities import KnowledgeBase
+from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, UntrustedText
 
@@ -119,6 +121,44 @@ def ocr_element(make_element: Builder[DocumentElement]) -> Builder[DocumentEleme
             "confidence": 0.94,
         }
         return make_element(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_chunk(scope: ScopeContext) -> Builder[Chunk]:
+    def build(**overrides: Any) -> Chunk:
+        defaults: dict[str, Any] = {
+            "id": uuid4(),
+            "user_id": scope.user_id,
+            "knowledge_base_id": scope.knowledge_base_id,
+            "document_id": uuid4(),
+            "chunk_type": ChunkType.TEXT,
+            "text": UntrustedText("At high light intensity another factor becomes limiting."),
+            "token_count": 380,
+            "ordinal": 12,
+            "page_start": 67,
+            "page_end": 67,
+            "index_version": 1,
+            "created_at": NOW,
+        }
+        return Chunk(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_evidence(make_chunk: Builder[Chunk]) -> Builder[Evidence]:
+    def build(**overrides: Any) -> Evidence:
+        chunk_overrides = overrides.pop("chunk_overrides", {})
+        defaults: dict[str, Any] = {
+            "label": EvidenceLabel(1),
+            "chunk": overrides.pop("chunk", None) or make_chunk(**chunk_overrides),
+            "retrievers": frozenset({RetrieverKind.DENSE}),
+            "rank": 0,
+            "rerank_score": -10.58,
+        }
+        return Evidence(**{**defaults, **overrides})
 
     return build
 
