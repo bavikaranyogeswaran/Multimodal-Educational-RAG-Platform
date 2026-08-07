@@ -180,6 +180,27 @@ class JobStatus(StrEnum):
             JobStatus.CANCELLED,
         }
 
+    def can_transition_to(self, target: JobStatus) -> bool:
+        return target in _JOB_TRANSITIONS[self]
+
+    @property
+    def successors(self) -> frozenset[JobStatus]:
+        return _JOB_TRANSITIONS[self]
+
+
+_JOB_TRANSITIONS: Final[Mapping[JobStatus, frozenset[JobStatus]]] = {
+    JobStatus.PENDING: frozenset({JobStatus.RUNNING, JobStatus.CANCELLED}),
+    JobStatus.RUNNING: frozenset(
+        {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.DEAD_LETTER, JobStatus.CANCELLED}
+    ),
+    # A failed job can be requeued (if attempts remain) or cancelled.
+    JobStatus.FAILED: frozenset({JobStatus.PENDING, JobStatus.CANCELLED}),
+    # An admin action can cancel a dead-lettered job; it can never be retried.
+    JobStatus.DEAD_LETTER: frozenset({JobStatus.CANCELLED}),
+    JobStatus.COMPLETED: frozenset(),
+    JobStatus.CANCELLED: frozenset(),
+}
+
 
 class JobPriority(IntEnum):
     """Claim order for the queue.

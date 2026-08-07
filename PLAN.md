@@ -20,14 +20,15 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **0 complete — next is 1, clean architecture skeleton** |
+| Current phase | **1 — clean architecture skeleton (steps 1.1–1.6 done)** |
 | Phase 0 steps | 13 of 13 ✅ |
-| Phases complete | 1 of 21 |
-| Last updated | 2 August 2026 |
+| Phase 1 steps | 6 of 10 done (1.7–1.10 remain) |
+| Phases complete | 0 of 21 (Phase 1 in progress) |
+| Last updated | 7 August 2026 |
 
-Phase 0 is finished. Backend: ruff, mypy and 29 tests green. Frontend: typecheck, lint, 3 tests and a
-production build green. `uv run python scripts/verify_environment.py` reports the machine's real
-state — currently 3 pass, 1 fail (Ollama not installed), 2 skip (credentials not supplied).
+Phase 0 is finished. Phase 1 is in progress: steps 1.1–1.6 complete. 370 domain unit tests passing,
+ruff and mypy clean. Steps 1.7–1.10 (repository ports, adapter ports, model gateway port, composition
+root) remain before Phase 1 is done.
 
 ---
 
@@ -589,11 +590,11 @@ having selected one still needs a search to find out which table that is.
       evidence.** Provenance becomes unrepresentable-if-absent at the type level, before the
       database constraint backs it up in Phase 2
 
-### 1.6 — Model and job entities
+### 1.6 — Model and job entities ☑
 
-- [ ] `ModelRequest` and `ModelResponse` in provider-neutral form — the §54 seven-slot prompt
+- [x] `ModelRequest` and `ModelResponse` in provider-neutral form — the §54 seven-slot prompt
       structure, not a provider payload
-- [ ] `ProcessingJob` with priority, attempt count, lease and heartbeat
+- [x] `ProcessingJob` with priority, attempt count, lease and heartbeat
 
 ### 1.7 — Repository ports
 

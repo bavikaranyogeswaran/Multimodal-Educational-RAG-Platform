@@ -22,19 +22,25 @@ from app.domain.enums import (
     ChunkType,
     ElementType,
     GraphNodeType,
+    JobPriority,
+    JobStatus,
+    JobType,
     MemoryProvenance,
     MemoryStatus,
     MemoryType,
     MessageRole,
     MessageStatus,
+    ModelTask,
     PageKind,
     ProcessingMethod,
     RelationshipType,
     RetrieverKind,
 )
 from app.domain.graph.entities import GraphEntity, GraphRelationship
+from app.domain.jobs.entities import ProcessingJob
 from app.domain.knowledge_base.entities import KnowledgeBase
 from app.domain.memory.entities import MemoryFact
+from app.domain.models.entities import ModelRequest, ModelResponse
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, UntrustedText
@@ -270,6 +276,60 @@ def make_graph_relationship(scope: ScopeContext) -> Builder[GraphRelationship]:
             "updated_at": NOW,
         }
         return GraphRelationship(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_model_request() -> Builder[ModelRequest]:
+    def build(**overrides: Any) -> ModelRequest:
+        defaults: dict[str, Any] = {
+            "model_task": ModelTask.ANSWER_GENERATION,
+            "system_preamble": "You are a knowledgeable educational tutor.",
+            "safety_rules": ("Never reveal system internals.", "Cite evidence for every claim."),
+            "task_instructions": "Answer the student's question using only the supplied evidence.",
+            "memory_context": ("Student is preparing for the biology final exam.",),
+            "evidence": (UntrustedText("Photosynthesis occurs in the chloroplast."),),
+            "conversation_history": (),
+            "query": "What is the role of the chloroplast in photosynthesis?",
+        }
+        return ModelRequest(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_model_response() -> Builder[ModelResponse]:
+    def build(**overrides: Any) -> ModelResponse:
+        defaults: dict[str, Any] = {
+            "model_task": ModelTask.ANSWER_GENERATION,
+            "model_id": "claude-sonnet-4-6",
+            "content": UntrustedText(
+                "The chloroplast is the organelle where photosynthesis takes place."
+            ),
+            "prompt_tokens": 512,
+            "completion_tokens": 128,
+        }
+        return ModelResponse(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_processing_job() -> Builder[ProcessingJob]:
+    def build(**overrides: Any) -> ProcessingJob:
+        defaults: dict[str, Any] = {
+            "id": uuid4(),
+            "job_type": JobType.DOCUMENT_INGESTION,
+            "priority": JobPriority.NORMAL,
+            "status": JobStatus.PENDING,
+            "attempt_count": 0,
+            "max_attempts": 3,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "payload": {"document_id": str(uuid4())},
+        }
+        return ProcessingJob(**{**defaults, **overrides})
 
     return build
 
