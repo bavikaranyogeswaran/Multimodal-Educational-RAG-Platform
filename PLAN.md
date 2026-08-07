@@ -20,9 +20,9 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **1 — clean architecture skeleton (steps 1.1–1.6 done)** |
+| Current phase | **1 — clean architecture skeleton (steps 1.1–1.7 done)** |
 | Phase 0 steps | 13 of 13 ✅ |
-| Phase 1 steps | 6 of 10 done (1.7–1.10 remain) |
+| Phase 1 steps | 7 of 10 done (1.8–1.10 remain) |
 | Phases complete | 0 of 21 (Phase 1 in progress) |
 | Last updated | 7 August 2026 |
 
@@ -596,10 +596,10 @@ having selected one still needs a search to find out which table that is.
       structure, not a provider payload
 - [x] `ProcessingJob` with priority, attempt count, lease and heartbeat
 
-### 1.7 — Repository ports
+### 1.7 — Repository ports ☑
 
-- [ ] Knowledge Base, document, chunk, conversation, memory, graph and job repositories
-- [ ] Every method takes `ScopeContext` as its first parameter, so an unscoped query does not
+- [x] Knowledge Base, document, chunk, conversation, memory, graph and job repositories
+- [x] Every method takes `ScopeContext` as its first parameter, so an unscoped query does not
       type-check — the scoping requirement expressed in the signature rather than in a comment
 
 ### 1.8 — Adapter ports
