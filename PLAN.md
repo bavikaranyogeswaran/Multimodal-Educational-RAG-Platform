@@ -456,7 +456,7 @@ contract surface be reviewed for consistency at once rather than scattered acros
 | 1.2 | Knowledge Base, Document, Page, DocumentElement | M | ✅ |
 | 1.3 | Chunk, Evidence, Citation, RetrievalPlan | M | ✅ |
 | 1.4 | Conversation, Message, MemoryFact | M | ☑ |
-| 1.5 | GraphEntity, GraphRelationship | S | ☐ |
+| 1.5 | GraphEntity, GraphRelationship | S | ☑ |
 | 1.6 | ModelRequest, ModelResponse, ProcessingJob | M | ☐ |
 | 1.7 | Repository ports | M | ☐ |
 | 1.8 | Adapter ports | M | ☐ |
@@ -584,8 +584,8 @@ having selected one still needs a search to find out which table that is.
 
 ### 1.5 — Graph entities
 
-- [ ] `GraphEntity`
-- [ ] `GraphRelationship` — **cannot be constructed without `source_chunk_id`, `page_number` and
+- [x] `GraphEntity`
+- [x] `GraphRelationship` — **cannot be constructed without `source_chunk_id`, `page_number` and
       evidence.** Provenance becomes unrepresentable-if-absent at the type level, before the
       database constraint backs it up in Phase 2
 

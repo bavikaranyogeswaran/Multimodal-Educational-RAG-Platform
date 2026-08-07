@@ -21,6 +21,7 @@ from app.domain.documents.entities import Document, DocumentElement, DocumentPag
 from app.domain.enums import (
     ChunkType,
     ElementType,
+    GraphNodeType,
     MemoryProvenance,
     MemoryStatus,
     MemoryType,
@@ -28,8 +29,10 @@ from app.domain.enums import (
     MessageStatus,
     PageKind,
     ProcessingMethod,
+    RelationshipType,
     RetrieverKind,
 )
+from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.knowledge_base.entities import KnowledgeBase
 from app.domain.memory.entities import MemoryFact
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
@@ -227,6 +230,46 @@ def make_memory_fact(scope: ScopeContext) -> Builder[MemoryFact]:
             "valid_from": NOW,
         }
         return MemoryFact(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_graph_entity(scope: ScopeContext) -> Builder[GraphEntity]:
+    def build(**overrides: Any) -> GraphEntity:
+        defaults: dict[str, Any] = {
+            "id": uuid4(),
+            "user_id": scope.user_id,
+            "knowledge_base_id": scope.knowledge_base_id,
+            "entity_type": GraphNodeType.CONCEPT,
+            "name": "Photosynthesis",
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        return GraphEntity(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_graph_relationship(scope: ScopeContext) -> Builder[GraphRelationship]:
+    def build(**overrides: Any) -> GraphRelationship:
+        defaults: dict[str, Any] = {
+            "id": uuid4(),
+            "user_id": scope.user_id,
+            "knowledge_base_id": scope.knowledge_base_id,
+            "source_entity_id": uuid4(),
+            "target_entity_id": uuid4(),
+            "relationship_type": RelationshipType.RELATED_TO,
+            "source_chunk_id": uuid4(),
+            "page_number": 67,
+            "evidence": UntrustedText(
+                "Photosynthesis is directly related to the light reactions described here."
+            ),
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        return GraphRelationship(**{**defaults, **overrides})
 
     return build
 
