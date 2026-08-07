@@ -455,7 +455,7 @@ contract surface be reviewed for consistency at once rather than scattered acros
 | 1.1 | Domain vocabulary — enums, value objects, `ScopeContext`, error hierarchy | M | ✅ |
 | 1.2 | Knowledge Base, Document, Page, DocumentElement | M | ✅ |
 | 1.3 | Chunk, Evidence, Citation, RetrievalPlan | M | ✅ |
-| 1.4 | Conversation, Message, MemoryFact | M | ☐ |
+| 1.4 | Conversation, Message, MemoryFact | M | ☑ |
 | 1.5 | GraphEntity, GraphRelationship | S | ☐ |
 | 1.6 | ModelRequest, ModelResponse, ProcessingJob | M | ☐ |
 | 1.7 | Repository ports | M | ☐ |
@@ -577,9 +577,9 @@ having selected one still needs a search to find out which table that is.
 
 ### 1.4 — Conversation and memory entities
 
-- [ ] `Conversation` with active document, page, figure and table state
-- [ ] `Message` with role, status, rewritten query and model metadata
-- [ ] `MemoryFact` with the six statuses, provenance and validity dates — the supersession rule
+- [x] `Conversation` with active document, page, figure and table state
+- [x] `Message` with role, status, rewritten query and model metadata
+- [x] `MemoryFact` with the six statuses, provenance and validity dates — the supersession rule
       lives on the entity, not in a service
 
 ### 1.5 — Graph entities

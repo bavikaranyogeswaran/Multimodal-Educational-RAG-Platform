@@ -15,10 +15,23 @@ from uuid import uuid4
 
 import pytest
 
+from app.domain.conversations.entities import Conversation, Message
 from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
-from app.domain.enums import ChunkType, ElementType, PageKind, ProcessingMethod, RetrieverKind
+from app.domain.enums import (
+    ChunkType,
+    ElementType,
+    MemoryProvenance,
+    MemoryStatus,
+    MemoryType,
+    MessageRole,
+    MessageStatus,
+    PageKind,
+    ProcessingMethod,
+    RetrieverKind,
+)
 from app.domain.knowledge_base.entities import KnowledgeBase
+from app.domain.memory.entities import MemoryFact
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, UntrustedText
@@ -159,6 +172,61 @@ def make_evidence(make_chunk: Builder[Chunk]) -> Builder[Evidence]:
             "rerank_score": -10.58,
         }
         return Evidence(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_conversation(scope: ScopeContext) -> Builder[Conversation]:
+    def build(**overrides: Any) -> Conversation:
+        defaults: dict[str, Any] = {
+            "id": uuid4(),
+            "user_id": scope.user_id,
+            "knowledge_base_id": scope.knowledge_base_id,
+            "title": "Biology Finals Study",
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        return Conversation(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_message(scope: ScopeContext) -> Builder[Message]:
+    def build(**overrides: Any) -> Message:
+        defaults: dict[str, Any] = {
+            "id": uuid4(),
+            "conversation_id": uuid4(),
+            "user_id": scope.user_id,
+            "knowledge_base_id": scope.knowledge_base_id,
+            "role": MessageRole.USER,
+            "status": MessageStatus.RECEIVED,
+            "content": UntrustedText("What is the role of ATP in cellular respiration?"),
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        return Message(**{**defaults, **overrides})
+
+    return build
+
+
+@pytest.fixture
+def make_memory_fact(scope: ScopeContext) -> Builder[MemoryFact]:
+    def build(**overrides: Any) -> MemoryFact:
+        defaults: dict[str, Any] = {
+            "id": uuid4(),
+            "user_id": scope.user_id,
+            "knowledge_base_id": scope.knowledge_base_id,
+            "memory_type": MemoryType.GOAL,
+            "content": "Student wants to focus on photosynthesis before the exam.",
+            "provenance": MemoryProvenance.USER_STATEMENT,
+            "status": MemoryStatus.ACTIVE,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "valid_from": NOW,
+        }
+        return MemoryFact(**{**defaults, **overrides})
 
     return build
 

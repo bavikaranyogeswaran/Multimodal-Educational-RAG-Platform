@@ -211,6 +211,26 @@ class MessageStatus(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
+    @property
+    def is_terminal(self) -> bool:
+        return self in {MessageStatus.COMPLETED, MessageStatus.FAILED}
+
+    def can_transition_to(self, target: MessageStatus) -> bool:
+        return target in _MESSAGE_TRANSITIONS[self]
+
+    @property
+    def successors(self) -> frozenset[MessageStatus]:
+        return _MESSAGE_TRANSITIONS[self]
+
+
+_MESSAGE_TRANSITIONS: Final[Mapping[MessageStatus, frozenset[MessageStatus]]] = {
+    MessageStatus.RECEIVED: frozenset({MessageStatus.PROCESSING}),
+    MessageStatus.PROCESSING: frozenset({MessageStatus.COMPLETED, MessageStatus.FAILED}),
+    # Generation completed or failed — both are absorbing.
+    MessageStatus.COMPLETED: frozenset(),
+    MessageStatus.FAILED: frozenset(),
+}
+
 
 # ---------------------------------------------------------------------------
 # Query routing and retrieval
