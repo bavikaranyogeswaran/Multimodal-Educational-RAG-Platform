@@ -20,14 +20,15 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **1 — clean architecture skeleton (steps 1.1–1.9 done)** |
+| Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
-| Phase 1 steps | 9 of 10 done (1.10 remains) |
-| Phases complete | 0 of 21 (Phase 1 in progress) |
+| Phase 1 steps | 10 of 10 ✅ |
+| Phases complete | 1 of 21 |
 | Last updated | 9 August 2026 |
 
-Phase 0 is finished. Phase 1 is in progress: steps 1.1–1.9 complete. 478 domain unit tests passing,
-ruff and mypy clean. Step 1.10 (composition root, DI wiring, boundary test made load-bearing) remains before Phase 1 is done.
+Phase 0 and Phase 1 are complete. 481 unit tests passing, ruff and mypy clean across 88 source files.
+The boundary test is non-vacuous: `app/application/use_case.py` is the first real application-layer
+module and is actively scanned. Phase 2 (data model, migrations, RLS) is next.
 root) remain before Phase 1 is done.
 
 ---
@@ -462,7 +463,7 @@ contract surface be reviewed for consistency at once rather than scattered acros
 | 1.7 | Repository ports | M | ☐ |
 | 1.8 | Adapter ports | M | ☐ |
 | 1.9 | Model gateway port and capability registry | M | ☑ |
-| 1.10 | Composition root, DI wiring, boundary test made load-bearing | M | ☐ |
+| 1.10 | Composition root, DI wiring, boundary test made load-bearing | M | ☑ |
 
 ### 1.1 — Domain vocabulary ✅
 
@@ -617,9 +618,9 @@ having selected one still needs a search to find out which table that is.
 
 ### 1.10 — Composition root and wiring
 
-- [ ] DI container and adapter registration
-- [ ] Lifespan integration
-- [ ] **The boundary test stops passing vacuously here** — this is where it starts earning its place
+- [x] DI container and adapter registration
+- [x] Lifespan integration
+- [x] **The boundary test stops passing vacuously here** — this is where it starts earning its place
 
 ## Phase 2 — Data model, migrations & Row-Level Security
 
