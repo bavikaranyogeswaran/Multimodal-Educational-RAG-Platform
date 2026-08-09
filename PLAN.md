@@ -20,9 +20,9 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **1 — clean architecture skeleton (steps 1.1–1.7 done)** |
+| Current phase | **1 — clean architecture skeleton (steps 1.1–1.8 done)** |
 | Phase 0 steps | 13 of 13 ✅ |
-| Phase 1 steps | 7 of 10 done (1.8–1.10 remain) |
+| Phase 1 steps | 8 of 10 done (1.9–1.10 remain) |
 | Phases complete | 0 of 21 (Phase 1 in progress) |
 | Last updated | 7 August 2026 |
 
@@ -602,11 +602,11 @@ having selected one still needs a search to find out which table that is.
 - [x] Every method takes `ScopeContext` as its first parameter, so an unscoped query does not
       type-check — the scoping requirement expressed in the signature rather than in a comment
 
-### 1.8 — Adapter ports
+### 1.8 — Adapter ports ☑
 
-- [ ] `StoragePort`, `PdfParserPort`, `OcrPort`, `EmbeddingPort`, `RerankerPort`
-- [ ] `DenseRetriever`, `KeywordRetriever`, `GraphPort`, `CacheStore`, `ObservabilityPort`
-- [ ] `GraphPort` in traversal vocabulary — `neighbors(...)`, `subgraph(...)` — never a query
+- [x] `StoragePort`, `PdfParserPort`, `OcrPort`, `EmbeddingPort`, `RerankerPort`
+- [x] `DenseRetriever`, `KeywordRetriever`, `GraphPort`, `CacheStore`, `ObservabilityPort`
+- [x] `GraphPort` in traversal vocabulary — `neighbors(...)`, `subgraph(...)` — never a query
       language, so a graph database can be introduced later without touching callers (D-10)
 
 ### 1.9 — Model gateway port
