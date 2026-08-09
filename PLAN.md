@@ -20,14 +20,14 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **1 — clean architecture skeleton (steps 1.1–1.8 done)** |
+| Current phase | **1 — clean architecture skeleton (steps 1.1–1.9 done)** |
 | Phase 0 steps | 13 of 13 ✅ |
-| Phase 1 steps | 8 of 10 done (1.9–1.10 remain) |
+| Phase 1 steps | 9 of 10 done (1.10 remains) |
 | Phases complete | 0 of 21 (Phase 1 in progress) |
-| Last updated | 7 August 2026 |
+| Last updated | 9 August 2026 |
 
-Phase 0 is finished. Phase 1 is in progress: steps 1.1–1.6 complete. 370 domain unit tests passing,
-ruff and mypy clean. Steps 1.7–1.10 (repository ports, adapter ports, model gateway port, composition
+Phase 0 is finished. Phase 1 is in progress: steps 1.1–1.9 complete. 478 domain unit tests passing,
+ruff and mypy clean. Step 1.10 (composition root, DI wiring, boundary test made load-bearing) remains before Phase 1 is done.
 root) remain before Phase 1 is done.
 
 ---
@@ -461,7 +461,7 @@ contract surface be reviewed for consistency at once rather than scattered acros
 | 1.6 | ModelRequest, ModelResponse, ProcessingJob | M | ☐ |
 | 1.7 | Repository ports | M | ☐ |
 | 1.8 | Adapter ports | M | ☐ |
-| 1.9 | Model gateway port and capability registry | M | ☐ |
+| 1.9 | Model gateway port and capability registry | M | ☑ |
 | 1.10 | Composition root, DI wiring, boundary test made load-bearing | M | ☐ |
 
 ### 1.1 — Domain vocabulary ✅
@@ -611,9 +611,9 @@ having selected one still needs a search to find out which table that is.
 
 ### 1.9 — Model gateway port
 
-- [ ] The four capability interfaces: text generation, multimodal, embeddings, reranking
-- [ ] Capability metadata and the ten model tasks
-- [ ] The `data_boundary` type that makes the privacy pre-flight expressible
+- [x] The four capability interfaces: text generation, multimodal, embeddings, reranking
+- [x] Capability metadata and the ten model tasks
+- [x] The `data_boundary` type that makes the privacy pre-flight expressible
 
 ### 1.10 — Composition root and wiring
 
