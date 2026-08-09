@@ -23,13 +23,13 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
+| Phase 2 steps | 1 of 12 |
 | Phases complete | 1 of 21 |
 | Last updated | 9 August 2026 |
 
-Phase 0 and Phase 1 are complete. 481 unit tests passing, ruff and mypy clean across 88 source files.
-The boundary test is non-vacuous: `app/application/use_case.py` is the first real application-layer
-module and is actively scanned. Phase 2 (data model, migrations, RLS) is next.
-root) remain before Phase 1 is done.
+Phase 0 and Phase 1 are complete. Phase 2 is underway. 490 unit tests passing, ruff and mypy clean
+across 91 source files. Alembic is configured with the psycopg3 async driver; the extension activation
+migration is ready to run against Supabase (`alembic upgrade head` from `backend/`).
 
 ---
 
@@ -626,20 +626,136 @@ having selected one still needs a search to find out which table that is.
 
 Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
-- [ ] Alembic against Supabase; `vector`, `rum`, `pg_cron`, `pg_trgm` extensions
-- [ ] All 30 §59 tables
-- [ ] Every scoped table carries `user_id` and `knowledge_base_id` (§5)
-- [ ] All six §59 composite indexes, HNSW vector indexes, `rum` full-text indexes (D-12)
-- [ ] Graph traversal indexes on `graph_relationships` in both directions, plus canonical-name
-      lookup on `graph_entities` (D-10)
-- [ ] **RLS policies on every scoped table**, keyed to `auth.uid()`
-- [ ] `tsvector` generated columns and triggers
-- [ ] Versioning columns: `embedding_model_id`, `embedding_dimension`, `embedding_version`,
-      `active_index_version`, `active_graph_version`, `graph_version`
-- [ ] `cache_entries` UNLOGGED with a partial index on expiry (D-14)
-- [ ] `messages` and `conversation_retrieval_chunks` designed partition-ready (D-15)
-- [ ] SQLAlchemy models and a scoped repository base that cannot query without a `ScopeContext`
-- [ ] Migration round-trip test from an empty database
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 2.1 | Alembic setup + extension activation migration | S | ☑ |
+| 2.2 | Knowledge Base, Document & Page SQLAlchemy models + migration | M | ☐ |
+| 2.3 | Chunk models, pgvector column, tsvector column, versioning columns + migration | M | ☐ |
+| 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ☐ |
+| 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ☐ |
+| 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ☐ |
+| 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ☐ |
+| 2.8 | Row-Level Security policies on all scoped tables | M | ☐ |
+| 2.9 | Async session factory + ScopedRepository base | M | ☐ |
+| 2.10 | KnowledgeBaseRepository, DocumentRepository & ChunkRepository implementations | M | ☐ |
+| 2.11 | ConversationRepository, MemoryRepository, GraphRepository & JobRepository implementations | M | ☐ |
+| 2.12 | Migration round-trip test + per-table smoke integration | S | ☐ |
+
+### 2.1 — Alembic setup and extension activation ☑
+
+- [x] `alembic.ini`, `alembic/env.py`, `alembic/script.py.mako`; `env.py` wired to `DATABASE_URL`
+      from application settings using the `psycopg` (psycopg3) async dialect
+- [x] `app/infrastructure/database/base.py` — single `Base(DeclarativeBase)` used by all ORM models;
+      `alembic/env.py` points `target_metadata` at `Base.metadata`
+- [x] `alembic/versions/0001_activate_extensions.py` — `CREATE EXTENSION IF NOT EXISTS` for
+      `vector`, `rum`, `pg_cron`, `pg_trgm`; downgrade is an intentional no-op
+- [ ] `alembic upgrade head` and `alembic downgrade base` succeed against a clean Supabase database
+      (verified by the user; integration round-trip test is step 2.12)
+
+### 2.2 — Knowledge Base, Document & Page models
+
+- [ ] `knowledge_bases`: `id`, `user_id`, `name`, `graph_enabled`, `explanation_level`,
+      `preferred_language`, `optional_exam_date`, `created_at`, `updated_at`
+- [ ] `documents`: `id`, `user_id`, `knowledge_base_id`, `title`, `status`, `mime_type`,
+      `storage_key`, `page_count`, `error_message`, `created_at`, `updated_at`
+- [ ] `pages`: `id`, `document_id`, `page_number`, `classification`, `created_at`
+- [ ] Every scoped table carries `user_id` + `knowledge_base_id` (§5)
+- [ ] Migration with FK constraints and `ON DELETE CASCADE` where appropriate
+
+### 2.3 — Chunk models, embedding column, tsvector column, versioning columns
+
+- [ ] `chunks`: core columns plus `embedding` vector column (pgvector `VECTOR` type),
+      `tsv` generated tsvector column populated by trigger
+- [ ] Versioning columns on `chunks`: `embedding_model_id`, `embedding_dimension`,
+      `embedding_version`, `active_index_version`
+- [ ] `document_elements`: bounding box, element type, page reference, confidence
+- [ ] `chunk_elements` join table linking chunks to their source elements
+- [ ] Migration including the tsvector trigger DDL
+
+### 2.4 — Retrieval indexes
+
+- [ ] HNSW index on `chunks.embedding` using pgvector's `vector_cosine_ops` operator class
+- [ ] `rum` index on `chunks.tsv` for BM25-style full-text retrieval (D-12)
+- [ ] Six composite scoped indexes on `(user_id, knowledge_base_id, ...)` covering the six
+      primary retrieval and filtering patterns from §59
+- [ ] All indexes in a dedicated migration so they can be rebuilt without touching table DDL
+
+### 2.5 — Conversation, Message & Memory models
+
+- [ ] `conversations`: `id`, `user_id`, `knowledge_base_id`, active document/page/figure/table
+      state, `created_at`, `updated_at`
+- [ ] `messages`: `id`, `conversation_id`, `role`, `status`, `content`, `rewritten_query`,
+      `model_metadata` (JSONB), `created_at`
+- [ ] `conversation_retrieval_chunks` join table — designed partition-ready (D-15),
+      carrying chunk rank and score
+- [ ] `memory_facts`: `id`, `user_id`, `knowledge_base_id`, `status`, `fact_text`,
+      `provenance` (JSONB), `valid_from`, `valid_until`, `superseded_by`
+- [ ] Migration
+
+### 2.6 — Graph models and traversal indexes
+
+- [ ] `graph_entities`: `id`, `user_id`, `knowledge_base_id`, `canonical_name`, `entity_type`,
+      `active_graph_version`, `graph_version`
+- [ ] `graph_relationships`: `id`, `source_entity_id`, `target_entity_id`, `relation_type`,
+      `source_chunk_id`, `page_number`, `evidence` (TEXT) — `source_chunk_id` NOT NULL so
+      provenance is unrepresentable-if-absent at the schema level (D-10)
+- [ ] Bidirectional traversal indexes: `(source_entity_id)` and `(target_entity_id)` on
+      `graph_relationships`
+- [ ] Canonical-name lookup index on `graph_entities.(user_id, knowledge_base_id, canonical_name)`
+- [ ] Migration
+
+### 2.7 — Job queue, cache and pg_cron sweep
+
+- [ ] `processing_jobs`: `id`, `type`, `status`, `priority`, `payload` (JSONB),
+      `attempt_count`, `max_attempts`, `lease_expires_at`, `last_heartbeat_at`,
+      `created_at`, `updated_at`, `error_message`
+- [ ] `cache_entries` as an UNLOGGED table: `key`, `value` (BYTEA), `expires_at`; partial
+      index on `(expires_at) WHERE expires_at IS NOT NULL` (D-14)
+- [ ] `pg_cron` schedule registered in migration to sweep expired cache rows once per minute
+- [ ] Migration
+
+### 2.8 — Row-Level Security policies
+
+- [ ] `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` on every scoped table
+- [ ] `CREATE POLICY` for SELECT, INSERT, UPDATE and DELETE keyed to `auth.uid()` on each table,
+      matching both `user_id` and, where applicable, `knowledge_base_id`
+- [ ] **RLS policies on every scoped table** — all in a single migration so the full policy set
+      is atomic
+- [ ] No service-role bypass at this phase; that decision defers to Phase 3 when auth lands
+
+### 2.9 — Async session factory and ScopedRepository base
+
+- [ ] `AsyncEngine` built from `DATABASE_URL` with `asyncpg` driver, exposed via `Settings`
+- [ ] `AsyncSession` factory with `expire_on_commit=False`
+- [ ] `ScopedRepository` abstract base: stores `ScopeContext`, injects `user_id` +
+      `knowledge_base_id` filter on every SELECT so an unscoped query cannot be issued
+- [ ] Raises a domain error (not a SQLAlchemy error) if constructed without a valid `ScopeContext`
+- [ ] `get_session` FastAPI dependency yielding an `AsyncSession` for use in Phase 3 routes
+
+### 2.10 — KnowledgeBaseRepository, DocumentRepository & ChunkRepository
+
+- [ ] SQLAlchemy implementations of the three repository protocols defined in Phase 1
+- [ ] All methods receive `ScopeContext` as first argument and delegate filtering to `ScopedRepository`
+- [ ] `ChunkRepository.upsert_embedding` updates `embedding`, `embedding_model_id`,
+      `embedding_dimension` and `embedding_version` atomically
+- [ ] Tests use `pytest-asyncio` with an async SQLite in-memory engine for fast isolation
+
+### 2.11 — ConversationRepository, MemoryRepository, GraphRepository & JobRepository
+
+- [ ] SQLAlchemy implementations of the remaining four repository protocols from Phase 1
+- [ ] `GraphRepository` uses SQLAlchemy Core for bidirectional traversal queries matching the
+      `neighbors(...)` and `subgraph(...)` signatures from `GraphPort` (D-10)
+- [ ] `JobRepository.claim_next` implements `FOR UPDATE SKIP LOCKED` lease acquisition
+- [ ] Tests mirror the pattern in 2.10
+
+### 2.12 — Migration round-trip test and per-table smoke integration
+
+- [ ] Start from an empty database: `alembic upgrade head`, then `alembic downgrade base`,
+      then `alembic upgrade head` again — all three succeed
+- [ ] Per-table smoke: insert one row through the SQLAlchemy model, select it back, assert equality
+- [ ] Verify RLS is active: `SET LOCAL role = anon` in the test transaction, assert that a
+      cross-user query returns zero rows
+- [ ] Tests marked `integration` and skipped when `TEST_DATABASE_URL` is not set
 
 ## Phase 3 — Authentication, Knowledge Base CRUD & API surface
 
