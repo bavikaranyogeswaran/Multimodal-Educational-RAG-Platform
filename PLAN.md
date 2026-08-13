@@ -23,7 +23,7 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 5 of 12 |
+| Phase 2 steps | 6 of 12 |
 | Phases complete | 1 of 21 |
 | Last updated | 13 August 2026 (step 2.5) |
 
@@ -633,7 +633,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.3 | Chunk models, pgvector column, tsvector column, versioning columns + migration | M | ✅ |
 | 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ✅ |
 | 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ✅ |
-| 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ☐ |
+| 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ✅ |
 | 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ☐ |
 | 2.8 | Row-Level Security policies on all scoped tables | M | ☐ |
 | 2.9 | Async session factory + ScopedRepository base | M | ☐ |
@@ -723,15 +723,18 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 ### 2.6 — Graph models and traversal indexes
 
-- [ ] `graph_entities`: `id`, `user_id`, `knowledge_base_id`, `canonical_name`, `entity_type`,
-      `active_graph_version`, `graph_version`
-- [ ] `graph_relationships`: `id`, `source_entity_id`, `target_entity_id`, `relation_type`,
-      `source_chunk_id`, `page_number`, `evidence` (TEXT) — `source_chunk_id` NOT NULL so
-      provenance is unrepresentable-if-absent at the schema level (D-10)
-- [ ] Bidirectional traversal indexes: `(source_entity_id)` and `(target_entity_id)` on
-      `graph_relationships`
-- [ ] Canonical-name lookup index on `graph_entities.(user_id, knowledge_base_id, canonical_name)`
-- [ ] Migration
+- [x] `graph_entities`: `id`, `user_id`, `knowledge_base_id`, `entity_type`, `name`,
+      `description`, `source_document_id`, `source_chunk_id`, `page_number` (all nullable
+      for structural nodes), `graph_version` (server_default=1), `created_at`, `updated_at`
+- [x] `graph_relationships`: `id`, `user_id`/`knowledge_base_id` (denormalized for RLS),
+      `source_entity_id`, `target_entity_id`, `relationship_type`, `source_chunk_id`,
+      `page_number`, `evidence` — all three provenance columns NOT NULL at the schema level;
+      `weight` (Float, default 1.0), `extraction_confidence` (nullable), `graph_version`
+- [x] Bidirectional traversal indexes: `ix_graph_rels_source_entity_id` and
+      `ix_graph_rels_target_entity_id` on `graph_relationships`
+- [x] Canonical-name lookup index `ix_graph_entities_scope_name` on
+      `(user_id, knowledge_base_id, name)`
+- [x] Migration `0006` applied at `0006 (head)`; 27 unit tests; 634/634 suite passing
 
 ### 2.7 — Job queue, cache and pg_cron sweep
 

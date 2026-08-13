@@ -390,3 +390,13 @@ Everything in this table feeds a latency or capacity target in
 | A-202 | choice | `memory_facts.provenance` stored as `INTEGER` (the ordinal of the `MemoryProvenance` `IntEnum`) | `MemoryProvenance` is an `IntEnum` where the ordering is load-bearing (higher = more trusted). Storing the integer value makes trust-ordered queries and comparisons native to the column without a lookup table. |
 | A-203 | choice | `active_figure_id` and `active_table_id` on `conversations` carry no FK constraint | The visual-element tables (figures, tables) are defined in Phase 6. Adding FK constraints now would introduce a circular dependency on tables that do not yet exist. FKs will be backfilled in Phase 6 if needed, or left as application-enforced references. |
 | A-204 | choice | `PLC0415` added to the `tests/**` ruff per-file-ignores | In-method imports are used across all existing test files to control SQLAlchemy mapper registration order — the models register themselves on import, and test isolation sometimes requires controlling when that happens. The rule was already violated in `test_model_gateway.py` and `test_container.py`; adding the ignore resolves the whole class consistently. |
+
+## Step 2.6 — Graph models and traversal indexes
+
+| ID | Kind | Entry | Why |
+|---|---|---|---|
+| A-205 | step | Step 2.6 — two ORM models in `graph.py`, migration `0006_graph_entities_relationships.py`, 27 unit tests, `0006 (head)` | `GraphEntityModel` and `GraphRelationshipModel`. |
+| A-206 | deviation | `canonical_name` (plan) renamed to `name` to match the domain entity | The domain entity uses `name`; the plan's `canonical_name` was a description of the semantics, not the actual field name. The scope+name index still serves as the canonical-name lookup index. |
+| A-207 | deviation | `active_graph_version` omitted from `graph_entities` | Only `graph_version` was added, per user decision. `active_graph_version` is a KB-level property (already on `knowledge_bases`); duplicating it on every entity would create a consistency hazard with no retrieval benefit. |
+| A-208 | choice | `graph_relationships.source_chunk_id` FK is `ON DELETE CASCADE` | Deleting the source chunk removes the provenance that justified the edge; the edge should not outlive its evidence. `SET NULL` is not available because the column is NOT NULL (provenance invariant). `RESTRICT` would block document-level cascade deletes unnecessarily. |
+| A-209 | choice | `user_id`/`knowledge_base_id` denormalized onto `graph_relationships` | The domain entity already carries these fields; storing them directly avoids a join through `graph_entities` in every RLS policy and retrieval query. |
