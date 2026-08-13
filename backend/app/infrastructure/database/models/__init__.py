@@ -19,9 +19,11 @@ from app.infrastructure.database.models.conversation import (
 )
 from app.infrastructure.database.models.document import DocumentModel, DocumentPageModel
 from app.infrastructure.database.models.graph import GraphEntityModel, GraphRelationshipModel
+from app.infrastructure.database.models.job import CacheEntryModel, ProcessingJobModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 
 __all__ = [
+    "CacheEntryModel",
     "ChunkElementModel",
     "ChunkModel",
     "ConversationModel",
@@ -34,4 +36,5 @@ __all__ = [
     "KnowledgeBaseModel",
     "MemoryFactModel",
     "MessageModel",
+    "ProcessingJobModel",
 ]

@@ -23,13 +23,13 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 6 of 12 |
+| Phase 2 steps | 7 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 (step 2.5) |
+| Last updated | 13 August 2026 (step 2.7) |
 
-Phase 0 and Phase 1 are complete. Phase 2 is underway. 83 infrastructure unit tests passing, ruff
-and mypy clean across all new files. Six SQLAlchemy models registered with Base.metadata; migration
-`0003` applied at `0003 (head)` against Supabase.
+Phase 0 and Phase 1 are complete. Phase 2 is underway. 660 unit tests passing, ruff and mypy clean
+across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0007`
+applied at `0007 (head)` against Supabase.
 
 ---
 
@@ -634,7 +634,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ✅ |
 | 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ✅ |
 | 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ✅ |
-| 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ☐ |
+| 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ✅ |
 | 2.8 | Row-Level Security policies on all scoped tables | M | ☐ |
 | 2.9 | Async session factory + ScopedRepository base | M | ☐ |
 | 2.10 | KnowledgeBaseRepository, DocumentRepository & ChunkRepository implementations | M | ☐ |
@@ -738,13 +738,16 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 ### 2.7 — Job queue, cache and pg_cron sweep
 
-- [ ] `processing_jobs`: `id`, `type`, `status`, `priority`, `payload` (JSONB),
-      `attempt_count`, `max_attempts`, `lease_expires_at`, `last_heartbeat_at`,
-      `created_at`, `updated_at`, `error_message`
-- [ ] `cache_entries` as an UNLOGGED table: `key`, `value` (BYTEA), `expires_at`; partial
-      index on `(expires_at) WHERE expires_at IS NOT NULL` (D-14)
-- [ ] `pg_cron` schedule registered in migration to sweep expired cache rows once per minute
-- [ ] Migration
+- [x] `processing_jobs`: `id`, `job_type`, `priority`, `status`, `attempt_count`,
+      `max_attempts`, `payload` (JSONB), `scheduled_at`, `lease_expires_at`,
+      `last_heartbeat_at`, `failure_reason`, `created_at`, `updated_at`; composite
+      `(status, priority)` claim index for `FOR UPDATE SKIP LOCKED`
+- [x] `cache_entries` as an UNLOGGED table: `key` (TEXT PK), `value` (BYTEA), `expires_at`;
+      partial index on `(expires_at) WHERE expires_at IS NOT NULL`; note: SQLAlchemy has no
+      Table kwarg for UNLOGGED so the ORM model carries no `__table_args__` — the migration's
+      raw `CREATE UNLOGGED TABLE` statement is the sole DDL source
+- [x] `pg_cron` schedule `sweep-expired-cache` registered in migration; runs every minute
+- [x] Migration `0007` applied at `0007 (head)`; 26 unit tests; 660/660 suite passing
 
 ### 2.8 — Row-Level Security policies
 

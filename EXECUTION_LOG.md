@@ -400,3 +400,13 @@ Everything in this table feeds a latency or capacity target in
 | A-207 | deviation | `active_graph_version` omitted from `graph_entities` | Only `graph_version` was added, per user decision. `active_graph_version` is a KB-level property (already on `knowledge_bases`); duplicating it on every entity would create a consistency hazard with no retrieval benefit. |
 | A-208 | choice | `graph_relationships.source_chunk_id` FK is `ON DELETE CASCADE` | Deleting the source chunk removes the provenance that justified the edge; the edge should not outlive its evidence. `SET NULL` is not available because the column is NOT NULL (provenance invariant). `RESTRICT` would block document-level cascade deletes unnecessarily. |
 | A-209 | choice | `user_id`/`knowledge_base_id` denormalized onto `graph_relationships` | The domain entity already carries these fields; storing them directly avoids a join through `graph_entities` in every RLS policy and retrieval query. |
+
+### Step 2.7 entries
+
+| ID | Kind | Summary | Detail |
+|---|---|---|---|
+| A-210 | step | Step 2.7 — two ORM models in `job.py`, migration `0007_job_queue_cache.py`, 26 unit tests, `0007 (head)` | `ProcessingJobModel` and `CacheEntryModel`. |
+| A-211 | deviation | `error_message` (plan) renamed to `failure_reason` to match the domain entity | The domain `ProcessingJob` entity uses `failure_reason`; aligning the column name eliminates a translation layer in the repository. |
+| A-212 | choice | `scheduled_at` column added to `processing_jobs` | The domain entity carries `scheduled_at`; it enables deferred jobs (queued now, claimable only after a future time) without a schema change. The plan did not list it but it is present in the domain entity. |
+| A-213 | choice | `(status, priority)` claim index landed in step 2.7 (not deferred) | The index exists exclusively to support `FOR UPDATE SKIP LOCKED` claim queries; shipping it now with the table keeps DDL and usage rationale co-located. Deferring to a later step would leave the table without its primary access path. |
+| A-214 | correction | `postgresql_unlogged` is not a valid SQLAlchemy `Table` kwarg; `__table_args__` removed from `CacheEntryModel` | SQLAlchemy's `_validate_dialect_kwargs` raises `ArgumentError` for `postgresql_unlogged` because the PostgreSQL dialect does not register it as a supported Table-level option. The UNLOGGED flag is a DDL-only concern handled entirely by the migration's raw `CREATE UNLOGGED TABLE` statement. The ORM model carries no `__table_args__`; the docstring is the model-level signal. `test_table_is_declared_unlogged` updated to verify the docstring instead of `table.kwargs`. |
