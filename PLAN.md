@@ -23,13 +23,13 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 7 of 12 |
+| Phase 2 steps | 8 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 (step 2.7) |
+| Last updated | 13 August 2026 (step 2.8) |
 
-Phase 0 and Phase 1 are complete. Phase 2 is underway. 660 unit tests passing, ruff and mypy clean
-across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0007`
-applied at `0007 (head)` against Supabase.
+Phase 0 and Phase 1 are complete. Phase 2 is underway. 676 unit tests passing, ruff and mypy clean
+across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0008`
+applied at `0008 (head)` against Supabase.
 
 ---
 
@@ -635,7 +635,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ✅ |
 | 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ✅ |
 | 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ✅ |
-| 2.8 | Row-Level Security policies on all scoped tables | M | ☐ |
+| 2.8 | Row-Level Security policies on all scoped tables | M | ✅ |
 | 2.9 | Async session factory + ScopedRepository base | M | ☐ |
 | 2.10 | KnowledgeBaseRepository, DocumentRepository & ChunkRepository implementations | M | ☐ |
 | 2.11 | ConversationRepository, MemoryRepository, GraphRepository & JobRepository implementations | M | ☐ |
@@ -751,12 +751,13 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 ### 2.8 — Row-Level Security policies
 
-- [ ] `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` on every scoped table
-- [ ] `CREATE POLICY` for SELECT, INSERT, UPDATE and DELETE keyed to `auth.uid()` on each table,
-      matching both `user_id` and, where applicable, `knowledge_base_id`
-- [ ] **RLS policies on every scoped table** — all in a single migration so the full policy set
-      is atomic
-- [ ] No service-role bypass at this phase; that decision defers to Phase 3 when auth lands
+- [x] `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` on all 12 scoped tables
+- [x] `FOR ALL` policy (`USING` + `WITH CHECK`) per table keyed to `auth.uid()`; 10 direct tables
+      use `user_id = auth.uid()`, 2 bridge tables (`chunk_elements`,
+      `conversation_retrieval_chunks`) delegate via EXISTS subquery to their scoped parent
+- [x] System tables (`processing_jobs`, `cache_entries`) left untouched — no user scope
+- [x] No `FORCE ROW LEVEL SECURITY`; no service-role bypass — deferred to Phase 3
+- [x] Migration `0008` applied at `0008 (head)`; 16 unit tests; 676/676 suite passing
 
 ### 2.9 — Async session factory and ScopedRepository base
 
