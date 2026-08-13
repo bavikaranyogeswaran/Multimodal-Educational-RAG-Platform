@@ -1,12 +1,16 @@
 """Shared fixtures for infrastructure unit tests.
 
 The `sqlite_session` fixture provides an in-memory SQLite database for repositories
-whose ORM models contain no PostgreSQL-specific column types. Only three tables are
-created: knowledge_bases, documents, and document_pages — all of which use standard
-SQL types (UUID stored as CHAR, DateTime, Boolean, etc.) that SQLite handles natively.
+whose ORM models contain no PostgreSQL-specific column types. The following tables are
+created: knowledge_bases, documents, document_pages, conversations, messages,
+memory_facts, graph_entities, and graph_relationships — all standard SQL types.
 
 DocumentElementModel (ARRAY) and ChunkModel (Vector + ARRAY + TSVECTOR) are not
 created in SQLite. Tests for those repository methods use AsyncMock sessions instead.
+ProcessingJobModel (JSONB) is also excluded; all job tests use AsyncMock sessions.
+
+SQLite does not enforce foreign keys by default, so FK references to the excluded
+tables (e.g. chunks) in graph models are accepted at DDL time without error.
 """
 
 from __future__ import annotations
@@ -17,7 +21,13 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.infrastructure.database.base import Base
+from app.infrastructure.database.models.conversation import (
+    ConversationModel,
+    MemoryFactModel,
+    MessageModel,
+)
 from app.infrastructure.database.models.document import DocumentModel, DocumentPageModel
+from app.infrastructure.database.models.graph import GraphEntityModel, GraphRelationshipModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 
 
@@ -25,8 +35,9 @@ from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 async def sqlite_session() -> AsyncIterator[AsyncSession]:
     """Fresh in-memory SQLite session for each test.
 
-    Knowledge-bases, documents, and document-pages are created; the session is
-    disposed after the test completes, so state never leaks across tests.
+    All SQLite-compatible tables are created; the session is disposed after the test
+    completes so state never leaks across tests. SQLAlchemy sorts the tables by FK
+    dependency before issuing CREATE TABLE statements.
     """
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     tables = [
@@ -35,6 +46,11 @@ async def sqlite_session() -> AsyncIterator[AsyncSession]:
         Base.metadata.tables[KnowledgeBaseModel.__tablename__],
         Base.metadata.tables[DocumentModel.__tablename__],
         Base.metadata.tables[DocumentPageModel.__tablename__],
+        Base.metadata.tables[ConversationModel.__tablename__],
+        Base.metadata.tables[MessageModel.__tablename__],
+        Base.metadata.tables[MemoryFactModel.__tablename__],
+        Base.metadata.tables[GraphEntityModel.__tablename__],
+        Base.metadata.tables[GraphRelationshipModel.__tablename__],
     ]
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all, tables=tables)

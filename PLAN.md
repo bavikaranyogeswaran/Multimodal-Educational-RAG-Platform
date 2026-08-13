@@ -25,7 +25,7 @@ system design specification.
 | Phase 1 steps | 10 of 10 ✅ |
 | Phase 2 steps | 10 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 (step 2.10) |
+| Last updated | 13 August 2026 (step 2.11) |
 
 Phase 0 and Phase 1 are complete. Phase 2 is underway. 771 unit tests passing, ruff and mypy clean
 across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0008`
@@ -637,8 +637,8 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ✅ |
 | 2.8 | Row-Level Security policies on all scoped tables | M | ✅ |
 | 2.9 | Async session factory + ScopedRepository base | M | ✅ |
-| 2.10 | KnowledgeBaseRepository, DocumentRepository & ChunkRepository implementations | M | ☐ |
-| 2.11 | ConversationRepository, MemoryRepository, GraphRepository & JobRepository implementations | M | ☐ |
+| 2.10 | KnowledgeBaseRepository, DocumentRepository & ChunkRepository implementations | M | ✅ |
+| 2.11 | ConversationRepository, MemoryRepository, GraphRepository & JobRepository implementations | M | ✅ |
 | 2.12 | Migration round-trip test + per-table smoke integration | S | ☐ |
 
 ### 2.1 — Alembic setup and extension activation ☑
@@ -783,13 +783,16 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 - [x] `ChunkRepository.save_batch` stores chunks without embeddings; embedding worker populates them later
 - [x] Tests use `pytest-asyncio` with an async SQLite in-memory engine (KB, Doc, Page) and mock session (Element, Chunk) for fast isolation
 
-### 2.11 — ConversationRepository, MemoryRepository, GraphRepository & JobRepository
+### 2.11 — ConversationRepository, MemoryRepository, GraphRepository & JobRepository ✅
 
-- [ ] SQLAlchemy implementations of the remaining four repository protocols from Phase 1
-- [ ] `GraphRepository` uses SQLAlchemy Core for bidirectional traversal queries matching the
-      `neighbors(...)` and `subgraph(...)` signatures from `GraphPort` (D-10)
-- [ ] `JobRepository.claim_next` implements `FOR UPDATE SKIP LOCKED` lease acquisition
-- [ ] Tests mirror the pattern in 2.10
+- [x] SQLAlchemy implementations of all four remaining repository protocols from Phase 1
+- [x] `SqlJobRepository` is a plain class (no `ScopedRepository` base); worker methods have no scope
+- [x] `JobRepository.claim_next` uses `SELECT ... FOR UPDATE SKIP LOCKED` (PostgreSQL-specific)
+- [x] `JobRepository.list_for_scope` filters by `payload["knowledge_base_id"]` JSONB access
+- [x] `SqlGraphRepository.delete_for_document` deletes entities; relationships cascade at DB level
+- [x] SQLite tests for Conversation, Memory, and Graph (all use standard SQL types); mock tests for Job (JSONB payload)
+- [x] `sqlite_session` fixture extended with conversations, messages, memory_facts, graph_entities, graph_relationships tables
+- [x] 129 repository tests total across all seven repository test files (steps 2.10 + 2.11)
 
 ### 2.12 — Migration round-trip test and per-table smoke integration
 
