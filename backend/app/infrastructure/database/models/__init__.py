@@ -11,14 +11,24 @@ from app.infrastructure.database.models.chunk import (
     ChunkModel,
     DocumentElementModel,
 )
+from app.infrastructure.database.models.conversation import (
+    ConversationModel,
+    ConversationRetrievalChunkModel,
+    MemoryFactModel,
+    MessageModel,
+)
 from app.infrastructure.database.models.document import DocumentModel, DocumentPageModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 
 __all__ = [
     "ChunkElementModel",
     "ChunkModel",
+    "ConversationModel",
+    "ConversationRetrievalChunkModel",
     "DocumentElementModel",
     "DocumentModel",
     "DocumentPageModel",
     "KnowledgeBaseModel",
+    "MemoryFactModel",
+    "MessageModel",
 ]

@@ -23,9 +23,9 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 4 of 12 |
+| Phase 2 steps | 5 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 |
+| Last updated | 13 August 2026 (step 2.5) |
 
 Phase 0 and Phase 1 are complete. Phase 2 is underway. 83 infrastructure unit tests passing, ruff
 and mypy clean across all new files. Six SQLAlchemy models registered with Base.metadata; migration
@@ -632,7 +632,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.2 | Knowledge Base, Document & Page SQLAlchemy models + migration | M | ✅ |
 | 2.3 | Chunk models, pgvector column, tsvector column, versioning columns + migration | M | ✅ |
 | 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ✅ |
-| 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ☐ |
+| 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ✅ |
 | 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ☐ |
 | 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ☐ |
 | 2.8 | Row-Level Security policies on all scoped tables | M | ☐ |
@@ -706,15 +706,20 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 ### 2.5 — Conversation, Message & Memory models
 
-- [ ] `conversations`: `id`, `user_id`, `knowledge_base_id`, active document/page/figure/table
-      state, `created_at`, `updated_at`
-- [ ] `messages`: `id`, `conversation_id`, `role`, `status`, `content`, `rewritten_query`,
-      `model_metadata` (JSONB), `created_at`
-- [ ] `conversation_retrieval_chunks` join table — designed partition-ready (D-15),
-      carrying chunk rank and score
-- [ ] `memory_facts`: `id`, `user_id`, `knowledge_base_id`, `status`, `fact_text`,
-      `provenance` (JSONB), `valid_from`, `valid_until`, `superseded_by`
-- [ ] Migration
+- [x] `conversations`: `id`, `user_id`, `knowledge_base_id`, `title`, active document /
+      page / figure / table UUIDs, `rolling_summary` (nullable TEXT), `created_at`,
+      `updated_at`; FK to `knowledge_bases` and `documents`
+- [x] `messages`: `id`, `conversation_id`, `user_id` and `knowledge_base_id` (denormalized for
+      RLS), `role`, `status`, `content`, `rewritten_query`, and four separate model-metadata
+      columns (`model_id`, `prompt_tokens`, `completion_tokens`, `finish_reason`)
+- [x] `conversation_retrieval_chunks` join table — composite PK `(message_id, chunk_id)`,
+      `rank`, `score`, `created_at` for future range partitioning (D-15); no `PARTITION BY`
+      declared yet
+- [x] `memory_facts`: `id`, `user_id`, `knowledge_base_id`, `memory_type`, `content`,
+      `provenance` (INTEGER ordinal of `MemoryProvenance` IntEnum), `status`, `valid_from`,
+      `valid_until`, `superseded_by` (self-referential FK ON DELETE SET NULL), `created_at`,
+      `updated_at`; scope + status composite index for retrieval
+- [x] Migration `0005` applied at `0005 (head)`; 33 unit tests; 607/607 suite passing
 
 ### 2.6 — Graph models and traversal indexes
 
