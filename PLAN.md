@@ -23,7 +23,7 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 3 of 12 |
+| Phase 2 steps | 4 of 12 |
 | Phases complete | 1 of 21 |
 | Last updated | 13 August 2026 |
 
@@ -631,7 +631,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.1 | Alembic setup + extension activation migration | S | ✅ |
 | 2.2 | Knowledge Base, Document & Page SQLAlchemy models + migration | M | ✅ |
 | 2.3 | Chunk models, pgvector column, tsvector column, versioning columns + migration | M | ✅ |
-| 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ☐ |
+| 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ✅ |
 | 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ☐ |
 | 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ☐ |
 | 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ☐ |
@@ -696,11 +696,13 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 ### 2.4 — Retrieval indexes
 
-- [ ] HNSW index on `chunks.embedding` using pgvector's `vector_cosine_ops` operator class
-- [ ] `rum` index on `chunks.tsv` for BM25-style full-text retrieval (D-12)
-- [ ] Six composite scoped indexes on `(user_id, knowledge_base_id, ...)` covering the six
-      primary retrieval and filtering patterns from §59
-- [ ] All indexes in a dedicated migration so they can be rebuilt without touching table DDL
+- [x] HNSW index on `chunks.embedding` using pgvector's `vector_cosine_ops` operator class
+      (`m=16, ef_construction=128`)
+- [x] `rum` index on `chunks.tsv` for BM25-style full-text retrieval (D-12)
+- [x] Six composite scoped indexes on `(user_id, knowledge_base_id, ...)`:
+      `document_id` · `chunk_type` · `index_version` · `language` · `ordinal` · `content_hash`
+- [x] All indexes in a dedicated migration (`0004`) so they can be rebuilt without touching
+      table DDL; 10 unit tests; migration applied at `0004 (head)`
 
 ### 2.5 — Conversation, Message & Memory models
 
