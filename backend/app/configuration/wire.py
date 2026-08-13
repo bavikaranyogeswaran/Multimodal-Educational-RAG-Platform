@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import NoReturn, cast
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from app.configuration.container import Container
 from app.configuration.settings import Settings
 from app.domain.ports.adapters import (
@@ -35,6 +37,7 @@ from app.domain.ports.repositories import (
     KnowledgeBaseRepository,
     MemoryRepository,
 )
+from app.infrastructure.database.session import build_engine, build_session_factory
 
 
 class _Unimplemented:
@@ -55,17 +58,28 @@ class _Unimplemented:
         )
 
 
-def build_container(settings: Settings) -> Container:  # noqa: ARG001
+def build_container(settings: Settings) -> Container:
     """Construct the application dependency container.
 
-    settings is accepted now so call sites do not change when adapters arrive.
-    Each adapter will receive the relevant settings sub-object as it is wired in.
+    The async engine and session factory are built here from database settings
+    and stored on the Container. If no DATABASE_URL is configured (local dev
+    without a database), a stub factory is placed in the slot so the Container
+    still constructs; the stub raises NotImplementedError on first use.
     """
 
     def _u(name: str) -> _Unimplemented:
         return _Unimplemented(name)
 
+    db_url = settings.database.url.get_secret_value()
+    if db_url:
+        _session_factory: async_sessionmaker[AsyncSession] = build_session_factory(
+            build_engine(settings.database)
+        )
+    else:
+        _session_factory = cast(async_sessionmaker[AsyncSession], _u("SessionFactory"))
+
     return Container(
+        session_factory=_session_factory,
         # Repository ports — wired in Phase 2 (SQLAlchemy adapters)
         knowledge_base_repository=cast(KnowledgeBaseRepository, _u("KnowledgeBaseRepository")),
         document_repository=cast(DocumentRepository, _u("DocumentRepository")),

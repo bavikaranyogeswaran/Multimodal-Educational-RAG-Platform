@@ -23,11 +23,11 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 8 of 12 |
+| Phase 2 steps | 9 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 (step 2.8) |
+| Last updated | 13 August 2026 (step 2.9) |
 
-Phase 0 and Phase 1 are complete. Phase 2 is underway. 676 unit tests passing, ruff and mypy clean
+Phase 0 and Phase 1 are complete. Phase 2 is underway. 701 unit tests passing, ruff and mypy clean
 across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0008`
 applied at `0008 (head)` against Supabase.
 
@@ -636,7 +636,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ✅ |
 | 2.7 | Job queue & cache models, UNLOGGED cache_entries, pg_cron sweep + migration | S | ✅ |
 | 2.8 | Row-Level Security policies on all scoped tables | M | ✅ |
-| 2.9 | Async session factory + ScopedRepository base | M | ☐ |
+| 2.9 | Async session factory + ScopedRepository base | M | ✅ |
 | 2.10 | KnowledgeBaseRepository, DocumentRepository & ChunkRepository implementations | M | ☐ |
 | 2.11 | ConversationRepository, MemoryRepository, GraphRepository & JobRepository implementations | M | ☐ |
 | 2.12 | Migration round-trip test + per-table smoke integration | S | ☐ |
@@ -761,12 +761,18 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 ### 2.9 — Async session factory and ScopedRepository base
 
-- [ ] `AsyncEngine` built from `DATABASE_URL` with `asyncpg` driver, exposed via `Settings`
-- [ ] `AsyncSession` factory with `expire_on_commit=False`
-- [ ] `ScopedRepository` abstract base: stores `ScopeContext`, injects `user_id` +
-      `knowledge_base_id` filter on every SELECT so an unscoped query cannot be issued
-- [ ] Raises a domain error (not a SQLAlchemy error) if constructed without a valid `ScopeContext`
-- [ ] `get_session` FastAPI dependency yielding an `AsyncSession` for use in Phase 3 routes
+- [x] `AsyncEngine` built from `DATABASE_URL` with psycopg3 async driver (not asyncpg — see A-220)
+      via `build_engine(settings.database)` in `infrastructure/database/session.py`; pool
+      parameters come from `DatabaseSettings`
+- [x] `AsyncSession` factory via `build_session_factory(engine)` with `expire_on_commit=False`;
+      wired into `Container.session_factory` in `wire.py`; stub placed there when `DATABASE_URL`
+      is absent so the Container still constructs in tests
+- [x] `ScopedRepository` abstract base in `infrastructure/database/repository.py`: stores
+      `_scope` + `_session`; raises `InvariantViolationError` if anything other than a
+      `ScopeContext` is passed; provides `_scope_filter(model)` (AND user_id + kb_id) and
+      `_user_filter(model)` (user_id only) helpers
+- [x] `get_session` FastAPI dependency in `session.py` reading `request.app.state.container.session_factory`
+- [x] No migration; 25 unit tests; 701/701 suite passing
 
 ### 2.10 — KnowledgeBaseRepository, DocumentRepository & ChunkRepository
 

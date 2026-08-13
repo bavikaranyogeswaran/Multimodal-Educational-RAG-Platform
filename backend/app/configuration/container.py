@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from app.domain.ports.adapters import (
     CacheStore,
     DenseRetriever,
@@ -44,6 +46,9 @@ class Container:
     that assigns these is wire.build_container; request handlers read them
     through FastAPI dependencies without knowing which adapter is behind each.
     """
+
+    # Infrastructure — not a domain port; owns the database connection pool
+    session_factory: async_sessionmaker[AsyncSession]
 
     # Repository ports
     knowledge_base_repository: KnowledgeBaseRepository
