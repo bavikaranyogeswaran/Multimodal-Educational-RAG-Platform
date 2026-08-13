@@ -41,6 +41,21 @@ class ScopedRepository:
         self._scope = scope
         self._session = session
 
+    def _require_scope(self, scope: ScopeContext) -> None:
+        """Reject a call whose scope differs from the one this repository holds.
+
+        Every method takes a scope as its first argument, but the filters are built
+        from the scope the repository was constructed with. Without this check the
+        two could disagree and the query would quietly run under the bound scope —
+        returning another user's rows to a caller who asked for their own. Comparing
+        them makes that disagreement a loud failure at the call site instead.
+        """
+        self._scope.require_ownership(
+            scope.user_id,
+            scope.knowledge_base_id,
+            detail=f"{type(self).__name__} is bound to a different scope",
+        )
+
     def _scope_filter(self, model: type[Any]) -> ColumnElement[bool]:
         """AND filter for tables with both user_id and knowledge_base_id columns.
 

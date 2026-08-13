@@ -15,7 +15,7 @@ from sqlalchemy import ClauseElement
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import QueuePool
 
-from app.domain.errors import InvariantViolationError
+from app.domain.errors import InvariantViolationError, ScopeViolationError
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import (
     _normalise_url,
@@ -196,6 +196,67 @@ class TestScopedRepositoryInit:
     def test_nil_knowledge_base_id_raises_invariant_error_at_scope_construction(self) -> None:
         with pytest.raises(InvariantViolationError):
             ScopeContext(user_id=uuid.uuid4(), knowledge_base_id=uuid.UUID(int=0))
+
+
+# ---------------------------------------------------------------------------
+# ScopedRepository scope guard
+# ---------------------------------------------------------------------------
+
+
+class TestScopedRepositoryRequireScope:
+    def test_same_scope_object_passes(self) -> None:
+        scope = _make_scope()
+        repo = _make_repo(scope)
+        assert repo._require_scope(scope) is None  # type: ignore[attr-defined]
+
+    def test_equal_scope_value_passes(self) -> None:
+        # Identity is not the test — a separate instance carrying the same two ids
+        # denotes the same boundary and must be accepted.
+        scope = _make_scope()
+        repo = _make_repo(scope)
+        twin = ScopeContext(
+            user_id=scope.user_id, knowledge_base_id=scope.knowledge_base_id
+        )
+        assert repo._require_scope(twin) is None  # type: ignore[attr-defined]
+
+    def test_foreign_user_raises_scope_violation(self) -> None:
+        scope = _make_scope()
+        repo = _make_repo(scope)
+        intruder = ScopeContext(
+            user_id=uuid.uuid4(), knowledge_base_id=scope.knowledge_base_id
+        )
+        with pytest.raises(ScopeViolationError):
+            repo._require_scope(intruder)  # type: ignore[attr-defined]
+
+    def test_foreign_knowledge_base_raises_scope_violation(self) -> None:
+        scope = _make_scope()
+        repo = _make_repo(scope)
+        other_kb = ScopeContext(user_id=scope.user_id, knowledge_base_id=uuid.uuid4())
+        with pytest.raises(ScopeViolationError):
+            repo._require_scope(other_kb)  # type: ignore[attr-defined]
+
+    def test_violation_carries_expected_and_actual_ids(self) -> None:
+        scope = _make_scope()
+        repo = _make_repo(scope)
+        intruder = _make_scope()
+
+        with pytest.raises(ScopeViolationError) as excinfo:
+            repo._require_scope(intruder)  # type: ignore[attr-defined]
+
+        error = excinfo.value
+        assert error.expected_user_id == scope.user_id
+        assert error.expected_knowledge_base_id == scope.knowledge_base_id
+        assert error.actual_user_id == intruder.user_id
+        assert error.actual_knowledge_base_id == intruder.knowledge_base_id
+
+    def test_violation_names_the_repository_class(self) -> None:
+        scope = _make_scope()
+        repo = _make_repo(scope)
+
+        with pytest.raises(ScopeViolationError) as excinfo:
+            repo._require_scope(_make_scope())  # type: ignore[attr-defined]
+
+        assert "_Concrete" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

@@ -23,11 +23,11 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 9 of 12 |
+| Phase 2 steps | 10 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 (step 2.9) |
+| Last updated | 13 August 2026 (step 2.10) |
 
-Phase 0 and Phase 1 are complete. Phase 2 is underway. 701 unit tests passing, ruff and mypy clean
+Phase 0 and Phase 1 are complete. Phase 2 is underway. 771 unit tests passing, ruff and mypy clean
 across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0008`
 applied at `0008 (head)` against Supabase.
 
@@ -774,13 +774,14 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 - [x] `get_session` FastAPI dependency in `session.py` reading `request.app.state.container.session_factory`
 - [x] No migration; 25 unit tests; 701/701 suite passing
 
-### 2.10 — KnowledgeBaseRepository, DocumentRepository & ChunkRepository
+### 2.10 — KnowledgeBaseRepository, DocumentRepository & ChunkRepository ✅
 
-- [ ] SQLAlchemy implementations of the three repository protocols defined in Phase 1
-- [ ] All methods receive `ScopeContext` as first argument and delegate filtering to `ScopedRepository`
-- [ ] `ChunkRepository.upsert_embedding` updates `embedding`, `embedding_model_id`,
-      `embedding_dimension` and `embedding_version` atomically
-- [ ] Tests use `pytest-asyncio` with an async SQLite in-memory engine for fast isolation
+- [x] SQLAlchemy implementations of the three repository protocols defined in Phase 1
+- [x] All methods receive `ScopeContext` as first argument and delegate filtering to `ScopedRepository`
+- [x] Each scoped method checks the caller's `ScopeContext` against the one the repository was
+      constructed with, raising `ScopeViolationError` before any statement is issued
+- [x] `ChunkRepository.save_batch` stores chunks without embeddings; embedding worker populates them later
+- [x] Tests use `pytest-asyncio` with an async SQLite in-memory engine (KB, Doc, Page) and mock session (Element, Chunk) for fast isolation
 
 ### 2.11 — ConversationRepository, MemoryRepository, GraphRepository & JobRepository
 
