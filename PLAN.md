@@ -23,13 +23,13 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 2 of 12 |
+| Phase 2 steps | 3 of 12 |
 | Phases complete | 1 of 21 |
 | Last updated | 13 August 2026 |
 
-Phase 0 and Phase 1 are complete. Phase 2 is underway. 43 infrastructure unit tests passing (43 new
-in this step), ruff and mypy clean across all new files. Three SQLAlchemy models registered with
-Base.metadata; migration `0002` applied at `0002 (head)` against Supabase.
+Phase 0 and Phase 1 are complete. Phase 2 is underway. 83 infrastructure unit tests passing, ruff
+and mypy clean across all new files. Six SQLAlchemy models registered with Base.metadata; migration
+`0003` applied at `0003 (head)` against Supabase.
 
 ---
 
@@ -630,7 +630,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 |---|---|---|---|
 | 2.1 | Alembic setup + extension activation migration | S | ✅ |
 | 2.2 | Knowledge Base, Document & Page SQLAlchemy models + migration | M | ✅ |
-| 2.3 | Chunk models, pgvector column, tsvector column, versioning columns + migration | M | ☐ |
+| 2.3 | Chunk models, pgvector column, tsvector column, versioning columns + migration | M | ✅ |
 | 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ☐ |
 | 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ☐ |
 | 2.6 | Graph SQLAlchemy models, traversal indexes + migration | S | ☐ |
@@ -672,15 +672,27 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 - [x] 35 unit tests across `TestKnowledgeBaseModel`, `TestDocumentModel`, `TestDocumentPageModel`,
       `TestSchemasMigration`
 
-### 2.3 — Chunk models, embedding column, tsvector column, versioning columns
+### 2.3 — Chunk models, embedding column, tsvector column, versioning columns ☑
 
-- [ ] `chunks`: core columns plus `embedding` vector column (pgvector `VECTOR` type),
-      `tsv` generated tsvector column populated by trigger
-- [ ] Versioning columns on `chunks`: `embedding_model_id`, `embedding_dimension`,
-      `embedding_version`, `active_index_version`
-- [ ] `document_elements`: bounding box, element type, page reference, confidence
-- [ ] `chunk_elements` join table linking chunks to their source elements
-- [ ] Migration including the tsvector trigger DDL
+- [x] `DocumentElementModel` → `document_elements`: `id`, `user_id`, `knowledge_base_id`,
+      `document_id`, `page_number`, `element_type`, `text`, `reading_order`, `processing_method`,
+      bounding box (x0/y0/x1/y1), `heading_path TEXT[]`, `confidence`, `created_at`
+- [x] `ChunkModel` → `chunks`: core columns plus `embedding VECTOR(384)` (pgvector), `tsv TSVECTOR`
+      (trigger-maintained), versioning columns (`embedding_model_id`, `embedding_dimension`,
+      `embedding_version`, `index_version`), `parent_chunk_id` (self-ref FK), `source_element_id`
+      (FK → document_elements)
+- [x] `ChunkElementModel` → `chunk_elements`: composite PK `(chunk_id, element_id)`, both FK ON
+      DELETE CASCADE
+- [x] `chunks_tsv_update` trigger function + `chunks_tsv_trigger` BEFORE INSERT/UPDATE trigger
+      — tsvector maintained automatically; never written from Python
+- [x] Migration `0003_document_elements_chunks.py` applied at `0003 (head)` against Supabase
+- [x] Fix: `server_default` for `TEXT[]` columns must use `sa.text("'{}'")`  not a plain string
+      (plain strings are SQL-quoted by Alembic, turning `'{}'` into the string `'{}'` instead of
+      the array literal)
+- [x] Fix: `import sqlalchemy as sa` in `chunk.py` to access `sa.text()` without collision with the
+      `text: Mapped[str]` column attribute that shadows the `text` import inside the class body
+- [x] 40 unit tests across `TestDocumentElementModel`, `TestChunkModel`, `TestChunkElementModel`,
+      `TestChunksMigration`
 
 ### 2.4 — Retrieval indexes
 

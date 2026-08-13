@@ -6,7 +6,19 @@ alembic/env.py and from the async session factory, so that autogenerate
 and create_all see every table in one pass.
 """
 
+from app.infrastructure.database.models.chunk import (
+    ChunkElementModel,
+    ChunkModel,
+    DocumentElementModel,
+)
 from app.infrastructure.database.models.document import DocumentModel, DocumentPageModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 
-__all__ = ["DocumentModel", "DocumentPageModel", "KnowledgeBaseModel"]
+__all__ = [
+    "ChunkElementModel",
+    "ChunkModel",
+    "DocumentElementModel",
+    "DocumentModel",
+    "DocumentPageModel",
+    "KnowledgeBaseModel",
+]
