@@ -25,7 +25,7 @@ system design specification.
 | Phase 1 steps | 10 of 10 ✅ |
 | Phase 2 steps | 10 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 (step 2.11) |
+| Last updated | 13 August 2026 (step 2.12) |
 
 Phase 0 and Phase 1 are complete. Phase 2 is underway. 771 unit tests passing, ruff and mypy clean
 across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0008`
@@ -639,7 +639,7 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 | 2.9 | Async session factory + ScopedRepository base | M | ✅ |
 | 2.10 | KnowledgeBaseRepository, DocumentRepository & ChunkRepository implementations | M | ✅ |
 | 2.11 | ConversationRepository, MemoryRepository, GraphRepository & JobRepository implementations | M | ✅ |
-| 2.12 | Migration round-trip test + per-table smoke integration | S | ☐ |
+| 2.12 | Migration round-trip test + per-table smoke integration | S | ✅ |
 
 ### 2.1 — Alembic setup and extension activation ☑
 
@@ -796,12 +796,17 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 ### 2.12 — Migration round-trip test and per-table smoke integration
 
-- [ ] Start from an empty database: `alembic upgrade head`, then `alembic downgrade base`,
-      then `alembic upgrade head` again — all three succeed
-- [ ] Per-table smoke: insert one row through the SQLAlchemy model, select it back, assert equality
-- [ ] Verify RLS is active: `SET LOCAL role = anon` in the test transaction, assert that a
-      cross-user query returns zero rows
-- [ ] Tests marked `integration` and skipped when `TEST_DATABASE_URL` is not set
+- [x] `test_migrations_at_head` — non-destructive: query `alembic_version`, assert == "0008"
+- [x] `test_migration_round_trip` — destructive round-trip (`downgrade base` → `upgrade head`)
+      via subprocess; guarded by `ALLOW_DESTRUCTIVE_MIGRATION_TEST=1`
+- [x] Per-table smoke inserts (all raw SQL via `text()`, rolled-back transactions):
+      `knowledge_bases`, `documents`, `document_pages`, `chunks`, `conversations`,
+      `memory_facts`, `graph_entities`, `processing_jobs`
+- [x] RLS check: insert as postgres → `SET LOCAL ROLE anon` → `SELECT count(*) = 0`
+- [x] Tests marked `integration`, skipped when `TEST_DATABASE_URL` not set
+- [x] `integration` marker added to pyproject.toml `markers` list
+- [x] `WindowsSelectorEventLoopPolicy` set in integration conftest (psycopg3 requirement)
+- [x] 836 unit tests unaffected; 10 integration tests collect cleanly
 
 ## Phase 3 — Authentication, Knowledge Base CRUD & API surface
 

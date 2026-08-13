@@ -209,6 +209,7 @@ addopts = "--import-mode=importlib --strict-markers --strict-config -ra"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
+    "integration: requires a live PostgreSQL database (set TEST_DATABASE_URL)",
     "security: exercises an isolation or injection scenario from the security suite",
     "gate: enforces a zero-tolerance release gate",
     "slow: takes more than a second",
