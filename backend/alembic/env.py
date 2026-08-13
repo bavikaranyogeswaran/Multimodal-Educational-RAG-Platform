@@ -14,6 +14,8 @@ Run migrations from the ``backend/`` directory:
 from __future__ import annotations
 
 import asyncio
+import selectors
+import sys
 from logging.config import fileConfig
 
 from alembic import context
@@ -75,7 +77,15 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    # Windows defaults to ProactorEventLoop which psycopg async does not support.
+    # Force SelectorEventLoop on Windows so the async dialect works correctly.
+    if sys.platform == "win32":
+        asyncio.run(
+            run_async_migrations(),
+            loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector()),
+        )
+    else:
+        asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():

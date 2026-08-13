@@ -2,7 +2,6 @@
 name = "tutor-rag-backend"
 version = "0.1.0"
 description = "Multimodal Educational Tutor RAG — FastAPI backend and ingestion workers"
-readme = "../README.md"
 requires-python = "==3.12.*"
 
 # Runtime dependencies live in [dependency-groups] below rather than here, so a
