@@ -23,13 +23,13 @@ system design specification.
 | Current phase | **Phase 1 complete ✅ — Phase 2 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 1 of 12 |
+| Phase 2 steps | 2 of 12 |
 | Phases complete | 1 of 21 |
-| Last updated | 9 August 2026 |
+| Last updated | 13 August 2026 |
 
-Phase 0 and Phase 1 are complete. Phase 2 is underway. 490 unit tests passing, ruff and mypy clean
-across 91 source files. Alembic is configured with the psycopg3 async driver; the extension activation
-migration is ready to run against Supabase (`alembic upgrade head` from `backend/`).
+Phase 0 and Phase 1 are complete. Phase 2 is underway. 43 infrastructure unit tests passing (43 new
+in this step), ruff and mypy clean across all new files. Three SQLAlchemy models registered with
+Base.metadata; migration `0002` applied at `0002 (head)` against Supabase.
 
 ---
 
@@ -628,8 +628,8 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
-| 2.1 | Alembic setup + extension activation migration | S | ☑ |
-| 2.2 | Knowledge Base, Document & Page SQLAlchemy models + migration | M | ☐ |
+| 2.1 | Alembic setup + extension activation migration | S | ✅ |
+| 2.2 | Knowledge Base, Document & Page SQLAlchemy models + migration | M | ✅ |
 | 2.3 | Chunk models, pgvector column, tsvector column, versioning columns + migration | M | ☐ |
 | 2.4 | Retrieval indexes: HNSW, rum full-text, six composite scoped indexes | S | ☐ |
 | 2.5 | Conversation, Message & Memory SQLAlchemy models + migration | M | ☐ |
@@ -649,18 +649,28 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
       `alembic/env.py` points `target_metadata` at `Base.metadata`
 - [x] `alembic/versions/0001_activate_extensions.py` — `CREATE EXTENSION IF NOT EXISTS` for
       `vector`, `rum`, `pg_cron`, `pg_trgm`; downgrade is an intentional no-op
-- [ ] `alembic upgrade head` and `alembic downgrade base` succeed against a clean Supabase database
-      (verified by the user; integration round-trip test is step 2.12)
+- [x] `alembic upgrade head` confirmed at `0001 (head)` against the Supabase project — all four
+      extensions activated; `rum` and `pg_cron` were available on the free tier
 
-### 2.2 — Knowledge Base, Document & Page models
+### 2.2 — Knowledge Base, Document & Page models ☑
 
-- [ ] `knowledge_bases`: `id`, `user_id`, `name`, `graph_enabled`, `explanation_level`,
-      `preferred_language`, `optional_exam_date`, `created_at`, `updated_at`
-- [ ] `documents`: `id`, `user_id`, `knowledge_base_id`, `title`, `status`, `mime_type`,
-      `storage_key`, `page_count`, `error_message`, `created_at`, `updated_at`
-- [ ] `pages`: `id`, `document_id`, `page_number`, `classification`, `created_at`
-- [ ] Every scoped table carries `user_id` + `knowledge_base_id` (§5)
-- [ ] Migration with FK constraints and `ON DELETE CASCADE` where appropriate
+- [x] `KnowledgeBaseModel` → `knowledge_bases`: `id`, `user_id`, `name`, `description`, `subject`,
+      `learning_goal`, `preferred_language`, `explanation_level`, `exam_date`, `graph_enabled`,
+      `active_index_version`, `active_graph_version`, `created_at`, `updated_at`
+- [x] `DocumentModel` → `documents`: `id`, `user_id`, `knowledge_base_id`, `filename`,
+      `content_type`, `byte_size`, `storage_key`, `status`, `title`, `page_count`, `checksum`,
+      `language`, `failure_reason`, `created_at`, `updated_at`, `processed_at`
+- [x] `DocumentPageModel` → `document_pages`: `id`, `user_id`, `knowledge_base_id`, `document_id`,
+      `page_number`, `kind`, `width`, `height`, `rotation`, `ocr_confidence`, `processed_at`
+- [x] Every scoped table carries `user_id` + `knowledge_base_id` (§5)
+- [x] FK `documents.knowledge_base_id → knowledge_bases.id ON DELETE CASCADE`
+- [x] FK `document_pages.document_id → documents.id ON DELETE CASCADE`
+- [x] Migration `0002_knowledge_bases_documents_pages.py` applied at `0002 (head)` against Supabase
+- [x] `alembic/env.py` imports models package so autogenerate sees all tables
+- [x] `test_metadata_starts_empty` removed from `test_alembic_setup.py` (became fragile once models
+      are imported in the same pytest process)
+- [x] 35 unit tests across `TestKnowledgeBaseModel`, `TestDocumentModel`, `TestDocumentPageModel`,
+      `TestSchemasMigration`
 
 ### 2.3 — Chunk models, embedding column, tsvector column, versioning columns
 

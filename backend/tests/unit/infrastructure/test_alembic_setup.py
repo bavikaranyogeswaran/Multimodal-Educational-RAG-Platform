@@ -37,10 +37,6 @@ class TestDeclarativeBase:
     def test_base_exposes_metadata(self) -> None:
         assert isinstance(Base.metadata, sa.MetaData)
 
-    def test_metadata_starts_empty(self) -> None:
-        # No ORM models exist yet; the metadata table registry is empty.
-        assert len(Base.metadata.tables) == 0
-
 
 class TestExtensionMigration:
     def test_revision_is_0001(self) -> None:

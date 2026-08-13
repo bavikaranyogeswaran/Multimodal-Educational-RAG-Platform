@@ -23,6 +23,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import app.infrastructure.database.models  # noqa: F401
 from app.configuration.settings import Settings
 from app.infrastructure.database.base import Base
 
