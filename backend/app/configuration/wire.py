@@ -38,6 +38,7 @@ from app.domain.ports.repositories import (
     MemoryRepository,
 )
 from app.infrastructure.database.session import build_engine, build_session_factory
+from app.infrastructure.storage.r2 import build_r2_adapters
 
 
 class _Unimplemented:
@@ -78,6 +79,14 @@ def build_container(settings: Settings) -> Container:
     else:
         _session_factory = cast(async_sessionmaker[AsyncSession], _u("SessionFactory"))
 
+    _storage: StoragePort
+    _cache: CacheStore
+    if settings.storage.account_id:
+        _storage, _cache = build_r2_adapters(settings.storage)
+    else:
+        _storage = cast(StoragePort, _u("StoragePort"))
+        _cache = cast(CacheStore, _u("CacheStore"))
+
     return Container(
         session_factory=_session_factory,
         # Repository ports — wired in Phase 2 (SQLAlchemy adapters)
@@ -89,7 +98,8 @@ def build_container(settings: Settings) -> Container:
         graph_repository=cast(GraphRepository, _u("GraphRepository")),
         job_repository=cast(JobRepository, _u("JobRepository")),
         # Adapter ports — wired as their respective phases land
-        storage=cast(StoragePort, _u("StoragePort")),
+        storage=_storage,
+        cache=_cache,
         pdf_parser=cast(PdfParserPort, _u("PdfParserPort")),
         ocr=cast(OcrPort, _u("OcrPort")),
         embedder=cast(EmbeddingPort, _u("EmbeddingPort")),
@@ -97,7 +107,6 @@ def build_container(settings: Settings) -> Container:
         dense_retriever=cast(DenseRetriever, _u("DenseRetriever")),
         keyword_retriever=cast(KeywordRetriever, _u("KeywordRetriever")),
         graph=cast(GraphPort, _u("GraphPort")),
-        cache=cast(CacheStore, _u("CacheStore")),
         observability=cast(ObservabilityPort, _u("ObservabilityPort")),
         # Model gateway — wired when the Ollama adapter is implemented
         model_gateway=cast(ModelGatewayPort, _u("ModelGatewayPort")),

@@ -192,6 +192,7 @@ strict = true
 [[tool.mypy.overrides]]
 module = [
     "aioboto3.*",
+    "botocore.*",
     "paddle.*",
     "paddleocr.*",
     "pdfplumber.*",
