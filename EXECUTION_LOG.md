@@ -476,3 +476,12 @@ Everything in this table feeds a latency or capacity target in
 | A-253 | choice | `JwksClient` holds one in-process cache; no distributed cache or lock | The app is a modular monolith (D-06) with one API process. A dict keyed by `kid` with a monotonic-time expiry is sufficient. Two simultaneous cache-miss requests may both fetch; that is a harmless double-fetch, not a consistency problem. |
 | A-254 | choice | `get_current_user` raises `HTTPException(401)` directly rather than domain `AuthenticationError` | FastAPI dependencies are presentation-layer code; raising `HTTPException` is idiomatic there. The exception-to-HTTP mapping middleware (step 3.3) handles domain errors from route handlers, not from dependencies. |
 | A-255 | deviation | Test's `_make_app` initially used `= get_current_user` instead of `Depends(get_current_user)` | FastAPI requires `Depends()` wrapping to recognise a callable as a dependency. Without it every request returns 422 (unresolvable parameter). Fixed by using `Annotated[uuid.UUID, Depends(get_current_user)]` in the test route signature. |
+
+### Step 3.2 entries
+
+| ID | Kind | Summary | Detail |
+|---|---|---|---|
+| A-256 | choice | File placed at `app/api/dependencies/scope.py`, not `app/api/deps/scope.py` | PLAN step table said `deps/` but step 3.1 already established `dependencies/` as the directory. Consistency within the codebase wins over the plan text. |
+| A-257 | choice | `get_kb_scope` queries only `id` and `user_id` columns, not the full model | Loading the full `KnowledgeBaseModel` row would waste bandwidth for a check that only needs ownership. `select(KnowledgeBaseModel.id, KnowledgeBaseModel.user_id)` fetches two columns via a lightweight `Row` object. |
+| A-258 | choice | Missing and foreign KB raise identical `HTTPException(404, "Knowledge base not found")` | FR-AUTH-13 requires the two cases to be indistinguishable. A single branch `if row is None or row.user_id != user_id` enforces this at the code level — separate branches for the two cases would risk diverging error messages. Verified by `test_missing_and_foreign_responses_are_identical`. |
+| A-259 | choice | Tests use `dependency_overrides` with an async-generator override for `get_session` | `get_session` is a yielding dependency. Replacing it with a plain lambda returning the mock would work (FastAPI normalises both) but an async generator makes the override's intent explicit and mirrors the original's shape. |

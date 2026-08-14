@@ -815,7 +815,7 @@ Covers §7 (API process), §10, §61, §62 baseline, §64 first tests.
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 3.1 | Supabase JWT verification + `get_current_user` FastAPI dependency | M | ✅ |
-| 3.2 | KB ownership dependency → `ScopeContext`; 404 on foreign or missing KB | S | ☐ |
+| 3.2 | KB ownership dependency → `ScopeContext`; 404 on foreign or missing KB | S | ✅ |
 | 3.3 | Middleware: trace ID, CORS, request logging, exception-to-HTTP mapping | M | ☐ |
 | 3.4 | Observability baseline: structlog pipeline, `TraceContext`, stage timers | M | ☐ |
 | 3.5 | `/api/v1/knowledge-bases` CRUD — 5 endpoints, Pydantic schemas | M | ☐ |
