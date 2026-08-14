@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.middleware.errors import register_exception_handlers
 from app.api.middleware.logging import RequestLoggingMiddleware
 from app.api.middleware.trace import TraceIDMiddleware
+from app.api.routers.knowledge_bases import router as knowledge_bases_router
 from app.configuration.settings import get_settings
 from app.configuration.wire import build_container
 from app.infrastructure.auth.jwks import JwksClient
@@ -69,6 +70,7 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
+app.include_router(knowledge_bases_router, prefix=API_PREFIX)
 
 
 @app.get("/health", tags=["system"])
