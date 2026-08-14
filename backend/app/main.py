@@ -21,6 +21,7 @@ from app.api.middleware.trace import TraceIDMiddleware
 from app.configuration.settings import get_settings
 from app.configuration.wire import build_container
 from app.infrastructure.auth.jwks import JwksClient
+from app.infrastructure.observability.structlog_setup import configure_structlog
 
 API_PREFIX = "/api/v1"
 _settings = get_settings()
@@ -36,6 +37,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     off this context when their phases land.
     """
     settings = get_settings()
+    configure_structlog(settings)
     _app.state.container = build_container(settings)
     _app.state.jwks_client = JwksClient(
         url=settings.supabase.jwks_url,

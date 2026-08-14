@@ -15,6 +15,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.application.observability.context import TraceContext
+
 trace_id_ctx: ContextVar[str] = ContextVar("trace_id_ctx", default="")
 
 
@@ -24,6 +26,7 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         trace_id = str(uuid.uuid4())
         token = trace_id_ctx.set(trace_id)
+        TraceContext.bind(trace_id=trace_id)
         try:
             response = await call_next(request)
             response.headers["X-Trace-ID"] = trace_id
