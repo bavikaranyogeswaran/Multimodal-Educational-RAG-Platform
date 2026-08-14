@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from app.configuration.settings import get_settings
 from app.configuration.wire import build_container
+from app.infrastructure.auth.jwks import JwksClient
 
 API_PREFIX = "/api/v1"
 
@@ -24,12 +25,17 @@ API_PREFIX = "/api/v1"
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application startup and shutdown.
 
-    The dependency container is built here and stored on app.state so request
-    handlers can retrieve it through a FastAPI dependency without importing
-    global state. Model warm-up and adapter connection pools hang off this
-    context when their phases land.
+    The dependency container and the JWKS client are built here and stored on
+    app.state. Request handlers retrieve them through FastAPI dependencies rather
+    than importing global state. Model warm-up and adapter connection pools hang
+    off this context when their phases land.
     """
-    _app.state.container = build_container(get_settings())
+    settings = get_settings()
+    _app.state.container = build_container(settings)
+    _app.state.jwks_client = JwksClient(
+        url=settings.supabase.jwks_url,
+        cache_seconds=settings.supabase.jwks_cache_seconds,
+    )
     yield
 
 

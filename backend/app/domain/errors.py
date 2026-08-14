@@ -21,6 +21,14 @@ class DomainError(Exception):
     """Base for every error the domain raises deliberately."""
 
 
+class AuthenticationError(DomainError):
+    """The caller's identity could not be established.
+
+    Raised when a token is missing, malformed, expired or does not resolve to a
+    known identity. The presentation layer maps this to HTTP 401.
+    """
+
+
 class InvariantViolationError(DomainError, ValueError):
     """An entity or value object was constructed in a state it must never hold.
 

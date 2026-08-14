@@ -20,16 +20,16 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **Phase 1 complete ✅ — Phase 2 next** |
+| Current phase | **Phase 2 complete ✅ — Phase 3 next** |
 | Phase 0 steps | 13 of 13 ✅ |
 | Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 10 of 12 |
-| Phases complete | 1 of 21 |
-| Last updated | 13 August 2026 (step 2.12) |
+| Phase 2 steps | 12 of 12 ✅ |
+| Phases complete | 2 of 21 |
+| Last updated | 13 August 2026 (Phase 3 divided) |
 
-Phase 0 and Phase 1 are complete. Phase 2 is underway. 771 unit tests passing, ruff and mypy clean
-across all new files. Twelve SQLAlchemy models registered with Base.metadata; migration `0008`
-applied at `0008 (head)` against Supabase.
+Phase 0, 1 and 2 are complete. Phase 3 starts next. 836 unit tests + 9 integration tests passing,
+ruff and mypy clean across all new files. Twelve SQLAlchemy models registered with Base.metadata;
+migration `0008` applied at `0008 (head)` against Supabase.
 
 ---
 
@@ -812,15 +812,115 @@ Covers §9, §22, §41, §59, §60, and the storage half of §10.
 
 Covers §7 (API process), §10, §61, §62 baseline, §64 first tests.
 
-- [ ] Supabase JWT verification resolving `user_id`
-- [ ] KB ownership dependency producing `ScopeContext`; returns 404, not 403, on a foreign KB
-- [ ] `/api/v1/knowledge-bases` CRUD including `graph_enabled`, `explanation_level`,
-      `preferred_language`, `optional_exam_date`
-- [ ] Route skeletons for every §61 endpoint, returning 501 until their phase lands
-- [ ] Middleware: trace ID, request logging, exception-to-HTTP mapping, CORS
-- [ ] Observability baseline — `TraceContext`, stage timers, `model_invocations` writer
-- [ ] Security tests: cross-user KB access, cross-KB access, RLS bypass
-- [ ] UC-01, UC-02, UC-03
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 3.1 | Supabase JWT verification + `get_current_user` FastAPI dependency | M | ✅ |
+| 3.2 | KB ownership dependency → `ScopeContext`; 404 on foreign or missing KB | S | ☐ |
+| 3.3 | Middleware: trace ID, CORS, request logging, exception-to-HTTP mapping | M | ☐ |
+| 3.4 | Observability baseline: structlog pipeline, `TraceContext`, stage timers | M | ☐ |
+| 3.5 | `/api/v1/knowledge-bases` CRUD — 5 endpoints, Pydantic schemas | M | ☐ |
+| 3.6 | §61 route skeletons — every remaining endpoint returning 501 | S | ☐ |
+| 3.7 | Security tests: cross-user KB access, cross-KB access, unauthenticated access | M | ☐ |
+
+### 3.1 — JWT verification + auth dependency
+
+- [ ] `app/infrastructure/auth/jwt.py` — `decode_jwt(token: str) → dict`:
+      validates signature (HS256 with `SUPABASE_JWT_SECRET`), expiry, and audience
+      `"authenticated"`; raises `AuthenticationError` on any failure
+- [ ] `app/api/deps/auth.py` — `get_current_user` FastAPI dependency:
+      extracts Bearer token from `Authorization` header; calls `decode_jwt`;
+      returns `user_id: uuid.UUID` from the `sub` claim; 401 on missing or invalid token
+- [ ] `PyJWT` added to `core` dependency group
+- [ ] Tests: valid token → `user_id`, expired token → 401, wrong audience → 401, missing
+      header → 401, malformed token → 401
+
+### 3.2 — KB ownership dependency
+
+- [ ] `app/api/deps/scope.py` — `get_kb_scope` FastAPI dependency:
+      takes `kb_id: uuid.UUID` from path + `user_id` from 3.1 + `AsyncSession` from DI;
+      queries `knowledge_bases WHERE id = :kb_id`; returns 404 if not found **or** if the
+      row belongs to a different user — the two cases are indistinguishable to the caller
+      (FR-AUTH-13); returns `ScopeContext(user_id, kb_id)` on success
+- [ ] Tests: own KB → ScopeContext; foreign KB → 404; missing KB → 404
+
+### 3.3 — Middleware
+
+- [ ] `app/api/middleware/trace.py` — generates a UUID trace ID per request, stores it in a
+      `ContextVar`, adds it to the response as `X-Trace-ID`
+- [ ] `app/api/middleware/errors.py` — exception handler registered on the FastAPI app:
+      `NotFoundError` → 404, `ScopeViolationError` → 404 (never 403, FR-AUTH-13),
+      `AuthenticationError` → 401, `InvariantViolationError` → 422, unhandled → 500;
+      every response body is `{"detail": "<message>", "trace_id": "<id>"}`
+- [ ] `app/api/middleware/logging.py` — ASGI middleware that logs method, path, status code,
+      and duration via structlog on every request/response; redacts `Authorization` header value
+- [ ] CORS middleware registered in `main.py` using `CORS_ORIGINS` from settings
+- [ ] Tests: trace ID present in response headers; domain errors map to correct HTTP codes;
+      auth header value never appears in log output
+
+### 3.4 — Observability baseline
+
+- [ ] `app/application/observability/context.py` — `TraceContext`: `ContextVar` holding the
+      current trace ID and optional user ID; `bind()` and `get()` helpers used by log processors
+- [ ] `app/application/observability/timer.py` — `StageTimer`: context manager that measures
+      elapsed time for a named stage; `elapsed_ms()` returns an integer; used in Phase 9 onward
+      for the 17 §62 stage timers
+- [ ] `app/infrastructure/observability/structlog_setup.py` — call-once `configure_structlog()`:
+      adds timestamp, log level, trace ID (from `TraceContext`), and a PII redaction processor
+      that strips any key matching `prompt`, `document_text`, `model_output` in production
+      (`DEBUG_ALLOW_CONTENT_LOGGING` setting gates the exception); outputs JSON in production,
+      coloured console in development
+- [ ] `app/infrastructure/observability/invocation_log.py` — `write_model_invocation()`:
+      writes a structlog event `model_invocation` with `model_id`, `task`, `prompt_tokens`,
+      `completion_tokens`, `latency_ms`, `trace_id`; Phase 8 adds a DB write on top of this
+- [ ] `configure_structlog()` called in the FastAPI lifespan before any handlers register
+- [ ] Tests: redaction processor strips flagged keys in production mode and passes them in
+      debug mode; `StageTimer` reports correct elapsed time; `TraceContext` is request-scoped
+      (one request's trace ID does not leak to another)
+
+### 3.5 — Knowledge Base CRUD API
+
+- [ ] `app/api/schemas/knowledge_base.py` — Pydantic v2 schemas:
+      `CreateKnowledgeBaseRequest` (name required; description, subject, learning_goal,
+      preferred_language, explanation_level, optional_exam_date all optional);
+      `UpdateKnowledgeBaseRequest` (all fields optional);
+      `KnowledgeBaseResponse` (full field set including timestamps)
+- [ ] Five endpoints under `/api/v1/knowledge-bases` in `app/api/routers/knowledge_bases.py`:
+      `POST /` → create row via `KnowledgeBaseRepository`, return 201 + `KnowledgeBaseResponse`;
+      `GET /` → list all KBs for `user_id`, return 200 + list;
+      `GET /{kb_id}` → single KB via `get_kb_scope`, return 200;
+      `PATCH /{kb_id}` → partial update, return 200;
+      `DELETE /{kb_id}` → delete KB + all child rows (CASCADE in schema), return 204
+- [ ] Router registered on the FastAPI app in `main.py`
+- [ ] Every response includes `X-Trace-ID` via the trace middleware from 3.3
+- [ ] Tests: 201 on create; 200 list returns only the requesting user's KBs; 404 on get/update/delete
+      for a foreign KB; 401 when no token supplied; 422 on missing required field; 204 on delete
+
+### 3.6 — §61 route skeletons
+
+- [ ] One router file per resource group, each endpoint returning
+      `{"detail": "Not implemented", "phase": "<N>"}` with HTTP 501:
+      documents (§11, Phase 4), conversations + messages (§23, Phase 9),
+      graph (§57, Phase 12), study content (§46, Phase 15), memory (§42, Phase 14)
+- [ ] All skeleton routes wired through `get_current_user` and `get_kb_scope` so auth + scope
+      enforcement is active from day one — the 501 body is never reached without a valid token and
+      an owned KB
+- [ ] Routers registered in `main.py`; OpenAPI document lists all endpoints at their final paths
+- [ ] Test: `GET /api/v1/knowledge-bases/{kb_id}/conversations` with a valid token returns 501;
+      the same call without a token returns 401 (auth fires before the 501)
+
+### 3.7 — Security tests: authentication and KB access
+
+- [ ] `tests/security/test_kb_access.py` — marked `security` and `gate`:
+      cross-user KB access → 404 (user A's valid token, user B's KB ID);
+      unauthenticated access to any endpoint → 401;
+      expired token → 401;
+      valid token but KB does not exist → 404
+- [ ] `tests/security/test_rls_api.py` — end-to-end RLS check via the API layer:
+      create a KB as user A (direct DB insert, bypassing auth); attempt to read it as user B
+      via the API; assert 404 is returned and no KB data is disclosed in the error body
+- [ ] All security tests runnable standalone: `uv run pytest -m security`
+- [ ] UC-01 (sign-in, token issued) and UC-02 (create KB) acceptance criteria met by the CRUD
+      tests in 3.5 and the security tests here
 
 ## Phase 4 — Storage, upload flow, job queue & worker
 
