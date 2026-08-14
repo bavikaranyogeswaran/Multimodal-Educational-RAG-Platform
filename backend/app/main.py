@@ -13,12 +13,17 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.middleware.errors import register_exception_handlers
+from app.api.middleware.logging import RequestLoggingMiddleware
+from app.api.middleware.trace import TraceIDMiddleware
 from app.configuration.settings import get_settings
 from app.configuration.wire import build_container
 from app.infrastructure.auth.jwks import JwksClient
 
 API_PREFIX = "/api/v1"
+_settings = get_settings()
 
 
 @asynccontextmanager
@@ -47,6 +52,21 @@ app = FastAPI(
     docs_url="/docs",
     openapi_url=f"{API_PREFIX}/openapi.json",
 )
+
+# Middleware is applied inside-out: first-added runs outermost on requests.
+# TraceID is outermost so the trace ID is in the ContextVar before any inner
+# middleware or route handler runs.
+app.add_middleware(TraceIDMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_settings.app.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+register_exception_handlers(app)
 
 
 @app.get("/health", tags=["system"])
