@@ -1,12 +1,16 @@
-"""Ollama model gateway — non-streaming text generation via the /api/chat endpoint.
+"""Ollama model gateway — text generation via the /api/chat endpoint.
 
-Satisfies ModelGatewayPort for a locally-running Ollama server. Image inference
-is not implemented here; step 5.4 extends this class with generate_with_image.
+Satisfies ModelGatewayPort for a locally-running Ollama server. Both
+non-streaming (generate) and token-streaming (generate_stream) are supported.
+Image inference is not yet implemented (generate_with_image raises
+UnsupportedCapabilityError).
 """
 
 from __future__ import annotations
 
+import json as _json
 import time
+from collections.abc import AsyncGenerator
 
 import httpx
 
@@ -144,6 +148,51 @@ class OllamaModelGateway:
             finish_reason=data.get("done_reason"),
             latency_ms=latency_ms,
         )
+
+    async def generate_stream(
+        self, request: ModelRequest
+    ) -> AsyncGenerator[str, None]:
+        """Yield individual token strings as they arrive from the Ollama server.
+
+        Uses /api/chat with stream:true, which returns one NDJSON line per token.
+        Errors that occur before or during streaming propagate as ProviderError
+        when the caller first advances the iterator.
+        """
+        messages = _build_messages(request)
+
+        options: dict[str, object] = {}
+        if request.max_tokens is not None:
+            options["num_predict"] = request.max_tokens
+        if request.temperature is not None:
+            options["temperature"] = request.temperature
+
+        payload: dict[str, object] = {
+            "model": self._model_id,
+            "messages": messages,
+            "stream": True,
+        }
+        if options:
+            payload["options"] = options
+
+        try:
+            async with self._client.stream(
+                "POST", "/api/chat", json=payload, timeout=self._timeout
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    data = _json.loads(line)
+                    token: str = data.get("message", {}).get("content", "")
+                    if token:
+                        yield token
+                    if data.get("done"):
+                        break
+        except httpx.HTTPStatusError as exc:
+            retryable = exc.response.status_code >= 500
+            raise ProviderError("ollama", str(exc), retryable=retryable) from exc
+        except httpx.RequestError as exc:
+            raise ProviderError("ollama", str(exc), retryable=True) from exc
 
     async def generate_with_image(
         self, request: ModelRequest, image: bytes  # noqa: ARG002

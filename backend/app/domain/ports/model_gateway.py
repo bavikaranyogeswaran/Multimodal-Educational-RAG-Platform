@@ -11,6 +11,7 @@ so the gateway does not route them.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -141,6 +142,15 @@ class ModelGatewayPort(Protocol):
         Raises:
             UnsupportedCapabilityError: no configured provider supports VISUAL_QUESTION.
             DataBoundaryViolationError: same conditions as `generate`.
+        """
+        ...
+
+    def generate_stream(self, request: ModelRequest) -> AsyncIterator[str]:
+        """Yield response tokens as they arrive, one delta string at a time.
+
+        The iterator must be consumed within a single request context.
+        Errors (provider failures, timeouts) propagate as ProviderError at the
+        point the caller advances the iterator.
         """
         ...
 

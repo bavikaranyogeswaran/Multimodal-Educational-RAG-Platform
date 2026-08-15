@@ -6,12 +6,15 @@ Tests verify:
   - HTTP payload structure (model, stream, options)
   - Response mapping (content, tokens, finish_reason, latency)
   - Error translation (HTTP 4xx/5xx → ProviderError, network → ProviderError)
+  - Streaming: token iteration, done-flag stop, empty-chunk skip, error propagation
   - Unsupported capability for image input
   - Profile routing
 """
 
 from __future__ import annotations
 
+import json as _json
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -342,3 +345,202 @@ class TestCapabilities:
     def test_profile_supports_images_is_false(self) -> None:
         client = _mock_client()
         assert _gateway(client).profile.supports_images is False
+
+
+# ---------------------------------------------------------------------------
+# Streaming helpers
+# ---------------------------------------------------------------------------
+
+
+def _ndjson_chunks(texts: list[str]) -> list[str]:
+    """Build NDJSON lines matching the Ollama /api/chat stream format."""
+    lines = []
+    for i, text in enumerate(texts):
+        done = i == len(texts) - 1
+        chunk: dict = {"message": {"content": text}, "done": done}
+        if done:
+            chunk["done_reason"] = "stop"
+            chunk["prompt_eval_count"] = 10
+            chunk["eval_count"] = len(texts)
+        lines.append(_json.dumps(chunk))
+    return lines
+
+
+def _mock_stream_client(
+    texts: list[str], captured: dict | None = None
+) -> MagicMock:
+    """Return a client whose .stream() context manager yields the given texts."""
+    chunk_lines = _ndjson_chunks(texts)
+
+    async def _aiter_lines():
+        for line in chunk_lines:
+            yield line
+
+    @asynccontextmanager
+    async def _stream(*args, **kwargs):
+        if captured is not None:
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.aiter_lines = _aiter_lines
+        yield mock_resp
+
+    client = MagicMock()
+    client.stream = _stream
+    return client
+
+
+# ---------------------------------------------------------------------------
+# Streaming
+# ---------------------------------------------------------------------------
+
+
+class TestStreaming:
+    async def test_yields_token_strings_in_order(self) -> None:
+        client = _mock_stream_client(["Photo", "syn", "thesis"])
+        tokens = [t async for t in _gateway(client).generate_stream(_make_request())]
+        assert tokens == ["Photo", "syn", "thesis"]
+
+    async def test_stream_true_in_payload(self) -> None:
+        captured: dict = {}
+        client = _mock_stream_client(["hi"], captured=captured)
+        _ = [t async for t in _gateway(client).generate_stream(_make_request())]
+        assert captured["kwargs"]["json"]["stream"] is True
+
+    async def test_model_id_in_stream_payload(self) -> None:
+        captured: dict = {}
+        client = _mock_stream_client(["hi"], captured=captured)
+        _ = [t async for t in _gateway(client, "llama3:8b").generate_stream(_make_request())]
+        assert captured["kwargs"]["json"]["model"] == "llama3:8b"
+
+    async def test_max_tokens_in_stream_options(self) -> None:
+        captured: dict = {}
+        client = _mock_stream_client(["hi"], captured=captured)
+        _ = [
+            t async for t in _gateway(client).generate_stream(_make_request(max_tokens=256))
+        ]
+        assert captured["kwargs"]["json"]["options"]["num_predict"] == 256
+
+    async def test_stops_after_done_chunk(self) -> None:
+        # Simulate the done flag arriving before the last text chunk —
+        # nothing after done=True should be yielded.
+        chunks = [
+            _json.dumps({"message": {"content": "A"}, "done": False}),
+            _json.dumps({"message": {"content": "B"}, "done": True, "done_reason": "stop"}),
+            _json.dumps({"message": {"content": "C"}, "done": False}),  # must not appear
+        ]
+
+        async def _aiter_lines():
+            for line in chunks:
+                yield line
+
+        @asynccontextmanager
+        async def _stream(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.aiter_lines = _aiter_lines
+            yield mock_resp
+
+        client = MagicMock()
+        client.stream = _stream
+        tokens = [t async for t in _gateway(client).generate_stream(_make_request())]
+        assert "C" not in tokens
+        assert tokens == ["A", "B"]
+
+    async def test_skips_empty_content_chunks(self) -> None:
+        chunks = [
+            _json.dumps({"message": {"content": ""}, "done": False}),
+            _json.dumps({"message": {"content": "X"}, "done": True, "done_reason": "stop"}),
+        ]
+
+        async def _aiter_lines():
+            for line in chunks:
+                yield line
+
+        @asynccontextmanager
+        async def _stream(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.aiter_lines = _aiter_lines
+            yield mock_resp
+
+        client = MagicMock()
+        client.stream = _stream
+        tokens = [t async for t in _gateway(client).generate_stream(_make_request())]
+        assert tokens == ["X"]
+
+    async def test_skips_blank_ndjson_lines(self) -> None:
+        raw_lines = ["", "  ", _json.dumps({"message": {"content": "Y"}, "done": True})]
+
+        async def _aiter_lines():
+            for line in raw_lines:
+                yield line
+
+        @asynccontextmanager
+        async def _stream(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.aiter_lines = _aiter_lines
+            yield mock_resp
+
+        client = MagicMock()
+        client.stream = _stream
+        tokens = [t async for t in _gateway(client).generate_stream(_make_request())]
+        assert tokens == ["Y"]
+
+    async def test_http_5xx_raises_retryable_provider_error(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 503
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "503", request=MagicMock(), response=mock_resp
+        )
+
+        @asynccontextmanager
+        async def _stream(*args, **kwargs):
+            yield mock_resp
+
+        client = MagicMock()
+        client.stream = _stream
+
+        with pytest.raises(ProviderError) as exc_info:
+            async for _ in _gateway(client).generate_stream(_make_request()):
+                pass
+
+        assert exc_info.value.retryable is True
+        assert exc_info.value.provider == "ollama"
+
+    async def test_http_4xx_raises_non_retryable_provider_error(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "400", request=MagicMock(), response=mock_resp
+        )
+
+        @asynccontextmanager
+        async def _stream(*args, **kwargs):
+            yield mock_resp
+
+        client = MagicMock()
+        client.stream = _stream
+
+        with pytest.raises(ProviderError) as exc_info:
+            async for _ in _gateway(client).generate_stream(_make_request()):
+                pass
+
+        assert exc_info.value.retryable is False
+
+    async def test_request_error_raises_retryable_provider_error(self) -> None:
+        @asynccontextmanager
+        async def _error_stream(*args, **kwargs):
+            raise httpx.ConnectError("refused")
+            yield  # dead-code yield makes asynccontextmanager treat this as a generator
+
+        client = MagicMock()
+        client.stream = _error_stream
+
+        with pytest.raises(ProviderError) as exc_info:
+            async for _ in _gateway(client).generate_stream(_make_request()):
+                pass
+
+        assert exc_info.value.retryable is True
