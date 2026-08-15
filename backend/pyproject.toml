@@ -32,6 +32,7 @@ core = [
     # Web framework and serving
     "fastapi>=0.118",
     "uvicorn[standard]>=0.38",
+    "python-multipart>=0.0.20",      # multipart/form-data file uploads
     "sse-starlette>=3.0",            # streaming answers
 
     # Validation and configuration

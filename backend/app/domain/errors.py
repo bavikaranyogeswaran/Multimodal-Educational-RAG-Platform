@@ -89,6 +89,15 @@ class ConflictError(DomainError):
     """The requested change contradicts the current state."""
 
 
+class UploadValidationError(DomainError):
+    """An uploaded file did not pass content or size validation.
+
+    Raised before any persistence or storage write occurs. The presentation
+    layer maps this to HTTP 422 so the client receives a structured error
+    body rather than a raw 5xx.
+    """
+
+
 class UnsupportedCapabilityError(DomainError):
     """A model was asked for something it does not support.
 

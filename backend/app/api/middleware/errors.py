@@ -25,6 +25,7 @@ from app.domain.errors import (
     InvariantViolationError,
     NotFoundError,
     ScopeViolationError,
+    UploadValidationError,
 )
 
 _log = structlog.get_logger(__name__)
@@ -68,6 +69,10 @@ def _invariant_handler(_request: Request, exc: InvariantViolationError) -> JSONR
     return JSONResponse(status_code=422, content=_body(str(exc)))
 
 
+def _upload_validation_handler(_request: Request, exc: UploadValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content=_body(str(exc)))
+
+
 def _generic_handler(_request: Request, exc: Exception) -> JSONResponse:
     _log.error("unhandled_exception", exc_type=type(exc).__name__)
     return JSONResponse(status_code=500, content=_body("Internal server error"))
@@ -79,4 +84,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ScopeViolationError, _scope_violation_handler)  # type: ignore[arg-type]
     app.add_exception_handler(AuthenticationError, _auth_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(InvariantViolationError, _invariant_handler)  # type: ignore[arg-type]
-    app.add_exception_handler(Exception, _generic_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(UploadValidationError, _upload_validation_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(Exception, _generic_handler)
