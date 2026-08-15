@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import NoReturn, cast
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.configuration.container import Container
@@ -38,7 +39,17 @@ from app.domain.ports.repositories import (
     MemoryRepository,
 )
 from app.infrastructure.database.session import build_engine, build_session_factory
+from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.storage.r2 import build_r2_adapters
+
+
+def _build_model_gateway(settings: Settings) -> ModelGatewayPort:
+    client = httpx.AsyncClient(base_url=settings.model.ollama_base_url)
+    return OllamaModelGateway(
+        http_client=client,
+        model_id=settings.model.default_text_model,
+        timeout_seconds=settings.model.request_timeout_seconds,
+    )
 
 
 def _build_embedder(settings: Settings) -> EmbeddingPort:
@@ -123,6 +134,6 @@ def build_container(settings: Settings) -> Container:
         keyword_retriever=cast(KeywordRetriever, _u("KeywordRetriever")),
         graph=cast(GraphPort, _u("GraphPort")),
         observability=cast(ObservabilityPort, _u("ObservabilityPort")),
-        # Model gateway — wired when the Ollama adapter is implemented
-        model_gateway=cast(ModelGatewayPort, _u("ModelGatewayPort")),
+        # Model gateway
+        model_gateway=_build_model_gateway(settings),
     )
