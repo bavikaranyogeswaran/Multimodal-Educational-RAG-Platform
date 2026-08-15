@@ -17,7 +17,7 @@ application-layer use cases based on the planned phases; they grow as phases are
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
@@ -106,6 +106,23 @@ class ChunkRepository(Protocol):
     async def delete_for_document(
         self, scope: ScopeContext, document_id: UUID
     ) -> None: ...
+
+    async def set_embeddings(
+        self,
+        scope: ScopeContext,
+        embeddings: Mapping[UUID, Sequence[float]],
+        *,
+        model_id: str,
+        dimension: int,
+        version: int,
+    ) -> None:
+        """Attach embedding vectors to chunks that were saved without them.
+
+        Each key is a chunk id; the corresponding value is its dense vector.
+        Also records which model produced the vectors and its output dimension,
+        so queries can filter to chunks from a compatible index version.
+        """
+        ...
 
 
 class ConversationRepository(Protocol):

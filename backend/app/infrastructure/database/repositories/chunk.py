@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
@@ -63,6 +64,32 @@ class SqlChunkRepository(ScopedRepository):
             self._scope_filter(ChunkModel),
         )
         await self._session.execute(stmt)
+
+    async def set_embeddings(
+        self,
+        scope: ScopeContext,
+        embeddings: Mapping[UUID, Sequence[float]],
+        *,
+        model_id: str,
+        dimension: int,
+        version: int,
+    ) -> None:
+        self._require_scope(scope)
+        for chunk_id, vector in embeddings.items():
+            stmt = (
+                sa.update(ChunkModel)
+                .where(
+                    ChunkModel.id == chunk_id,
+                    self._scope_filter(ChunkModel),
+                )
+                .values(
+                    embedding=list(vector),
+                    embedding_model_id=model_id,
+                    embedding_dimension=dimension,
+                    embedding_version=version,
+                )
+            )
+            await self._session.execute(stmt)
 
 
 def _utc(dt: datetime) -> datetime:

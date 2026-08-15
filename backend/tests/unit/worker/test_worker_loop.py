@@ -1,0 +1,204 @@
+"""Unit tests for the ingestion worker loop.
+
+Tests _run_job directly with mocked container, session factory, and repos.
+The signal-handling event loop (main()) is an integration concern; unit tests
+stay focused on the per-job lifecycle.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.domain.documents.entities import Document
+from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
+from app.domain.jobs.entities import ProcessingJob
+from app.domain.scope import ScopeContext
+from app.worker.__main__ import _run_job
+
+_NOW = datetime(2025, 1, 15, tzinfo=UTC)
+_USER_ID = uuid.uuid4()
+_KB_ID = uuid.uuid4()
+_DOC_ID = uuid.uuid4()
+_JOB_ID = uuid.uuid4()
+_SCOPE = ScopeContext(user_id=_USER_ID, knowledge_base_id=_KB_ID)
+
+
+def _make_job(*, status: JobStatus = JobStatus.RUNNING) -> ProcessingJob:
+    return ProcessingJob(
+        id=_JOB_ID,
+        job_type=JobType.DOCUMENT_INGESTION,
+        priority=JobPriority.INTERACTIVE,
+        status=status,
+        attempt_count=1,
+        max_attempts=3,
+        created_at=_NOW,
+        updated_at=_NOW,
+        lease_expires_at=_NOW + timedelta(seconds=300),
+        payload={
+            "document_id": str(_DOC_ID),
+            "user_id": str(_USER_ID),
+            "knowledge_base_id": str(_KB_ID),
+        },
+    )
+
+
+def _make_doc(*, status: DocumentStatus = DocumentStatus.PENDING) -> Document:
+    return Document(
+        id=_DOC_ID,
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        filename="lecture.pdf",
+        content_type="application/pdf",
+        byte_size=1024,
+        storage_key=f"{_USER_ID}/{_KB_ID}/{_DOC_ID}/original.pdf",
+        created_at=_NOW,
+        updated_at=_NOW,
+        status=status,
+        page_count=5,
+    )
+
+
+def _make_container(doc: Document) -> MagicMock:
+    """Build a container mock whose session_factory is an async context manager."""
+    session = AsyncMock()
+    session.commit = AsyncMock()
+
+    # doc_repo returned by SqlDocumentRepository
+    doc_repo = AsyncMock()
+    doc_repo.get = AsyncMock(return_value=doc)
+    doc_repo.save = AsyncMock()
+
+    job_repo = AsyncMock()
+    job_repo.save = AsyncMock()
+
+    chunk_repo = AsyncMock()
+    chunk_repo.save_batch = AsyncMock()
+    chunk_repo.set_embeddings = AsyncMock()
+
+    storage = AsyncMock()
+    storage.get = AsyncMock(return_value=b"%PDF fake")
+
+    embedder = AsyncMock()
+    embedder.embed_documents = AsyncMock(return_value=[[0.0] * 384])
+    embedder.dimension = 384
+
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    container = MagicMock()
+    container.session_factory = MagicMock(return_value=ctx)
+    container.storage = storage
+    container.embedder = embedder
+    return container
+
+
+def _make_settings() -> MagicMock:
+    s = MagicMock()
+    s.job.heartbeat_interval_seconds = 30
+    s.job.lease_seconds = 300
+    s.embedding.model_id = "test-model"
+    s.embedding.index_version = 1
+    s.chunking.child_target_tokens = 400
+    s.chunking.child_overlap_tokens = 70
+    return s
+
+
+# ---------------------------------------------------------------------------
+# Happy path
+# ---------------------------------------------------------------------------
+
+
+class TestRunJobHappyPath:
+    async def test_marks_document_processing_then_completed(self) -> None:
+        # Covered in detail by test_does_not_raise_on_valid_job_with_empty_pdf;
+        # kept as a structural placeholder for the two-phase commit contract.
+        pass
+
+    async def test_does_not_raise_on_valid_job_with_empty_pdf(self) -> None:
+        doc = _make_doc(status=DocumentStatus.PENDING)
+        settings = _make_settings()
+        job = _make_job()
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+
+        saved_docs: list[Document] = []
+        saved_jobs: list[ProcessingJob] = []
+
+        doc_repo_mock = AsyncMock()
+        doc_repo_mock.get = AsyncMock(return_value=doc)
+        doc_repo_mock.save = AsyncMock(side_effect=lambda _scope, d: saved_docs.append(d))
+
+        job_repo_mock = AsyncMock()
+        job_repo_mock.save = AsyncMock(side_effect=saved_jobs.append)
+
+        chunk_repo_mock = AsyncMock()
+        chunk_repo_mock.save_batch = AsyncMock()
+        chunk_repo_mock.set_embeddings = AsyncMock()
+
+        storage_mock = AsyncMock()
+        storage_mock.get = AsyncMock(return_value=b"%PDF fake")
+
+        embedder_mock = AsyncMock()
+        embedder_mock.embed_documents = AsyncMock(return_value=[])
+        embedder_mock.dimension = 384
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        container = MagicMock()
+        container.session_factory = MagicMock(return_value=ctx)
+        container.storage = storage_mock
+        container.embedder = embedder_mock
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo_mock),
+            patch("app.worker.__main__.SqlChunkRepository", return_value=chunk_repo_mock),
+            patch("app.worker.__main__.SqlJobRepository", return_value=job_repo_mock),
+            patch("app.worker.__main__._extract_pdf_pages", return_value=[]),
+        ):
+            await _run_job(container, settings, job)
+
+        # document should have been saved twice: PROCESSING then COMPLETED
+        assert len(saved_docs) == 2
+        assert saved_docs[0].status == DocumentStatus.PROCESSING
+        assert saved_docs[1].status == DocumentStatus.COMPLETED
+
+        # job should have been saved as COMPLETED
+        assert any(j.status == JobStatus.COMPLETED for j in saved_jobs)
+
+
+# ---------------------------------------------------------------------------
+# Failure handling
+# ---------------------------------------------------------------------------
+
+
+class TestRunJobFailure:
+    async def test_raises_when_document_not_found(self) -> None:
+        settings = _make_settings()
+        job = _make_job()
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        container = MagicMock()
+        container.session_factory = MagicMock(return_value=ctx)
+
+        doc_repo_mock = AsyncMock()
+        doc_repo_mock.get = AsyncMock(return_value=None)
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo_mock),
+            patch("app.worker.__main__.SqlChunkRepository"),
+            patch("app.worker.__main__.SqlJobRepository"),
+            pytest.raises(RuntimeError, match="not found"),
+        ):
+            await _run_job(container, settings, job)

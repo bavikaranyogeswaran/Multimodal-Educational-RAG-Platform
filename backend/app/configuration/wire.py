@@ -41,6 +41,21 @@ from app.infrastructure.database.session import build_engine, build_session_fact
 from app.infrastructure.storage.r2 import build_r2_adapters
 
 
+def _build_embedder(settings: Settings) -> EmbeddingPort:
+    try:
+        from app.infrastructure.embeddings.sentence_transformer import (  # noqa: PLC0415
+            SentenceTransformerEmbedder,
+        )
+
+        return SentenceTransformerEmbedder(
+            model_id=settings.embedding.model_id,
+            device=settings.embedding.device,
+            batch_size=settings.embedding.batch_size,
+        )
+    except ImportError:
+        return cast(EmbeddingPort, _Unimplemented("EmbeddingPort"))
+
+
 class _Unimplemented:
     """Placeholder for an adapter that has not been wired yet.
 
@@ -102,7 +117,7 @@ def build_container(settings: Settings) -> Container:
         cache=_cache,
         pdf_parser=cast(PdfParserPort, _u("PdfParserPort")),
         ocr=cast(OcrPort, _u("OcrPort")),
-        embedder=cast(EmbeddingPort, _u("EmbeddingPort")),
+        embedder=_build_embedder(settings),
         reranker=cast(RerankerPort, _u("RerankerPort")),
         dense_retriever=cast(DenseRetriever, _u("DenseRetriever")),
         keyword_retriever=cast(KeywordRetriever, _u("KeywordRetriever")),
