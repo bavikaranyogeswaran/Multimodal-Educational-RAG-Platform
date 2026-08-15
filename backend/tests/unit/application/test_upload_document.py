@@ -28,6 +28,10 @@ _MAX_BYTES = 10 * 1024 * 1024  # 10 MB for tests
 _MAX_PAGES = 5
 
 
+def _pdf_page_counter(data: bytes) -> int:
+    return len(pypdf.PdfReader(io.BytesIO(data)).pages)
+
+
 def _make_pdf(n_pages: int = 1) -> bytes:
     writer = pypdf.PdfWriter()
     for _ in range(n_pages):
@@ -80,6 +84,7 @@ def use_case(
         storage=mock_storage,
         max_upload_bytes=_MAX_BYTES,
         max_upload_pages=_MAX_PAGES,
+        page_counter=_pdf_page_counter,
     )
 
 

@@ -137,25 +137,13 @@ class TestConversationSkeletons:
 
 
 class TestDocumentSkeletons:
-    @pytest.mark.parametrize(
-        "method,path_suffix",
-        [
-            ("POST", ""),
-            ("GET", f"/{uuid.uuid4()}"),
-            ("GET", f"/{uuid.uuid4()}/status"),
-            ("DELETE", f"/{uuid.uuid4()}"),
-        ],
-    )
-    def test_all_document_endpoints_return_501(
-        self, method: str, path_suffix: str
-    ) -> None:
+    def test_delete_document_returns_501(self) -> None:
         user_id = uuid.uuid4()
         kb_id = uuid.uuid4()
+        doc_id = uuid.uuid4()
         app = _make_app(documents_router, user_id=user_id, kb_id=kb_id)
         with TestClient(app) as client:
-            resp = client.request(
-                method, f"/api/v1/knowledge-bases/{kb_id}/documents{path_suffix}"
-            )
+            resp = client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}")
         assert resp.status_code == 501
         assert resp.json()["phase"] == "4"
 

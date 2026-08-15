@@ -8,13 +8,10 @@ same database session so a storage failure before commit leaves the DB clean.
 from __future__ import annotations
 
 import hashlib
-import io
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
-
-import pypdf
-import pypdf.errors
 
 from app.domain.documents.entities import Document
 from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
@@ -55,18 +52,24 @@ class UploadDocumentUseCase:
         *,
         max_upload_bytes: int,
         max_upload_pages: int,
+        page_counter: Callable[[bytes], int],
     ) -> None:
         self._document_repo = document_repo
         self._job_repo = job_repo
         self._storage = storage
         self._max_upload_bytes = max_upload_bytes
         self._max_upload_pages = max_upload_pages
+        self._page_counter = page_counter
 
     async def execute(self, command: UploadDocumentCommand) -> UploadDocumentResult:
         _check_content_type(command.content_type)
         _check_magic(command.data)
         _check_size(command.data, self._max_upload_bytes)
-        page_count = _count_pages(command.data, self._max_upload_pages)
+        page_count = self._page_counter(command.data)
+        if page_count > self._max_upload_pages:
+            raise UploadValidationError(
+                f"PDF has {page_count} pages; the upload limit is {self._max_upload_pages}"
+            )
 
         doc_id = uuid4()
         now = datetime.now(UTC)
@@ -141,14 +144,3 @@ def _check_size(data: bytes, max_bytes: int) -> None:
         raise UploadValidationError(f"file exceeds the {limit_mb} MB upload limit")
 
 
-def _count_pages(data: bytes, max_pages: int) -> int:
-    try:
-        reader = pypdf.PdfReader(io.BytesIO(data))
-        count = len(reader.pages)
-    except pypdf.errors.PdfReadError as exc:
-        raise UploadValidationError(f"could not read PDF: {exc}") from exc
-    if count > max_pages:
-        raise UploadValidationError(
-            f"PDF has {count} pages; the upload limit is {max_pages}"
-        )
-    return count
