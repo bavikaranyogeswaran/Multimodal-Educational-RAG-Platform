@@ -111,7 +111,6 @@ class TestConversationSkeletons:
     @pytest.mark.parametrize(
         "method,path_suffix",
         [
-            ("POST", ""),
             ("GET", ""),
             ("GET", f"/{uuid.uuid4()}"),
             ("POST", f"/{uuid.uuid4()}/stream"),
