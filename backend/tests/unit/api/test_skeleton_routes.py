@@ -99,23 +99,6 @@ class TestConversationSkeletons:
             resp = client.get(f"/api/v1/knowledge-bases/{kb_id}/conversations")
         assert resp.status_code == 404
 
-    @pytest.mark.parametrize(
-        "method,path_suffix",
-        [
-            ("POST", f"/{uuid.uuid4()}/stream"),
-        ],
-    )
-    def test_all_conversation_endpoints_return_501(
-        self, method: str, path_suffix: str
-    ) -> None:
-        user_id = uuid.uuid4()
-        kb_id = uuid.uuid4()
-        app = _make_app(conversations_router, user_id=user_id, kb_id=kb_id)
-        with TestClient(app) as client:
-            resp = client.request(
-                method, f"/api/v1/knowledge-bases/{kb_id}/conversations{path_suffix}"
-            )
-        assert resp.status_code == 501
 
 
 # ---------------------------------------------------------------------------

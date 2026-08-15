@@ -1,4 +1,3 @@
-# ruff: noqa: ARG001
 """Conversation and message resource endpoints."""
 
 from __future__ import annotations
@@ -8,14 +7,18 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies.answer import get_answer_use_case
 from app.api.dependencies.scope import get_kb_scope
 from app.api.schemas.conversation import (
     ConversationResponse,
     CreateConversationRequest,
     MessageResponse,
+    StreamRequest,
 )
+from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
@@ -27,7 +30,6 @@ router = APIRouter(
     dependencies=[Depends(get_kb_scope)],
 )
 
-_PHASE = "9"
 _404_CONVERSATION = "Conversation not found"
 
 
@@ -109,9 +111,32 @@ async def get_conversation(
     return _conv_response(conversation)
 
 
-@router.post("/{conversation_id}/stream", status_code=501)
-async def stream_response(conversation_id: uuid.UUID) -> dict[str, str]:
-    return {"detail": "Not implemented", "phase": _PHASE}
+@router.post("/{conversation_id}/stream", status_code=200)
+async def stream_response(
+    conversation_id: uuid.UUID,
+    body: StreamRequest,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    use_case: Annotated[AnswerUseCase, Depends(get_answer_use_case)],
+) -> StreamingResponse:
+    repo = SqlConversationRepository(scope=scope, session=session)
+    conversation = await repo.get(scope, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail=_404_CONVERSATION)
+
+    command = AnswerCommand(
+        scope=scope,
+        conversation_id=conversation_id,
+        query=body.query,
+    )
+    stream = await use_case.execute(command)
+
+    async def _event_stream():
+        async for token in stream:
+            yield f"data: {token}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
 
 @router.get("/{conversation_id}/messages", status_code=200)

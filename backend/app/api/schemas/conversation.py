@@ -30,6 +30,10 @@ class ConversationResponse(BaseModel):
     active_table_id: UUID | None = None
 
 
+class StreamRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=4000)
+
+
 class MessageResponse(BaseModel):
     id: UUID
     conversation_id: UUID
