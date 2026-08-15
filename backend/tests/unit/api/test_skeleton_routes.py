@@ -79,15 +79,6 @@ def _make_app(
 
 
 class TestConversationSkeletons:
-    def test_list_conversations_returns_501_with_valid_token(self) -> None:
-        user_id = uuid.uuid4()
-        kb_id = uuid.uuid4()
-        app = _make_app(conversations_router, user_id=user_id, kb_id=kb_id)
-        with TestClient(app) as client:
-            resp = client.get(f"/api/v1/knowledge-bases/{kb_id}/conversations")
-        assert resp.status_code == 501
-        assert resp.json() == {"detail": "Not implemented", "phase": "9"}
-
     def test_list_conversations_returns_401_without_token(self) -> None:
         user_id = uuid.uuid4()
         kb_id = uuid.uuid4()
@@ -111,10 +102,7 @@ class TestConversationSkeletons:
     @pytest.mark.parametrize(
         "method,path_suffix",
         [
-            ("GET", ""),
-            ("GET", f"/{uuid.uuid4()}"),
             ("POST", f"/{uuid.uuid4()}/stream"),
-            ("GET", f"/{uuid.uuid4()}/messages"),
         ],
     )
     def test_all_conversation_endpoints_return_501(
