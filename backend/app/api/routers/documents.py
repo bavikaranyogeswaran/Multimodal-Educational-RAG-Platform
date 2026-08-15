@@ -83,6 +83,15 @@ async def upload_document(
     )
 
 
+@router.get("", status_code=200)
+async def list_documents(
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[DocumentResponse]:
+    docs = await SqlDocumentRepository(scope, session).list(scope)
+    return [DocumentResponse.model_validate(doc) for doc in docs]
+
+
 @router.get("/{document_id}")
 async def get_document(
     document_id: uuid.UUID,

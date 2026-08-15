@@ -57,6 +57,14 @@ def _doc_row(
     return row
 
 
+def _session_for_list(rows: list) -> AsyncMock:
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
 def _session_for_get(row: MagicMock | None) -> AsyncMock:
     result = MagicMock()
     result.scalar_one_or_none.return_value = row
@@ -226,4 +234,52 @@ class TestGetDocumentStatus:
         session = _session_for_get(None)
         with TestClient(_make_app(session, scope_raises_404=True)) as client:
             resp = client.get(_status_url(uuid.uuid4()))
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /
+# ---------------------------------------------------------------------------
+
+_LIST_URL = f"/api/v1/knowledge-bases/{_KB_ID}/documents"
+
+
+class TestListDocuments:
+    def test_returns_200_with_empty_list(self) -> None:
+        with TestClient(_make_app(_session_for_list([]))) as client:
+            resp = client.get(_LIST_URL)
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_returns_list_of_documents(self) -> None:
+        rows = [_doc_row(doc_id=uuid.uuid4()), _doc_row(doc_id=uuid.uuid4())]
+        with TestClient(_make_app(_session_for_list(rows))) as client:
+            body = client.get(_LIST_URL).json()
+        assert len(body) == 2
+
+    def test_response_fields(self) -> None:
+        doc_id = uuid.uuid4()
+        with TestClient(_make_app(_session_for_list([_doc_row(doc_id=doc_id, page_count=5)]))) as client:
+            body = client.get(_LIST_URL).json()
+        item = body[0]
+        assert item["id"] == str(doc_id)
+        assert item["knowledge_base_id"] == str(_KB_ID)
+        assert item["filename"] == "lecture.pdf"
+        assert item["status"] == "PENDING"
+        assert item["page_count"] == 5
+        assert item["language"] == "en"
+
+    def test_storage_key_not_in_response(self) -> None:
+        with TestClient(_make_app(_session_for_list([_doc_row()]))) as client:
+            body = client.get(_LIST_URL).json()
+        assert "storage_key" not in body[0]
+
+    def test_returns_401_without_auth(self) -> None:
+        with TestClient(_make_app(_session_for_list([]), auth_raises_401=True)) as client:
+            resp = client.get(_LIST_URL)
+        assert resp.status_code == 401
+
+    def test_returns_404_for_foreign_kb(self) -> None:
+        with TestClient(_make_app(_session_for_list([]), scope_raises_404=True)) as client:
+            resp = client.get(_LIST_URL)
         assert resp.status_code == 404
