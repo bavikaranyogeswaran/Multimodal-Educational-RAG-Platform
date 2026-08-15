@@ -107,16 +107,6 @@ class TestConversationSkeletons:
 
 
 class TestDocumentSkeletons:
-    def test_delete_document_returns_501(self) -> None:
-        user_id = uuid.uuid4()
-        kb_id = uuid.uuid4()
-        doc_id = uuid.uuid4()
-        app = _make_app(documents_router, user_id=user_id, kb_id=kb_id)
-        with TestClient(app) as client:
-            resp = client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}")
-        assert resp.status_code == 501
-        assert resp.json()["phase"] == "4"
-
     def test_documents_returns_401_without_token(self) -> None:
         user_id = uuid.uuid4()
         kb_id = uuid.uuid4()

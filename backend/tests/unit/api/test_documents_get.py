@@ -65,6 +65,14 @@ def _session_for_list(rows: list) -> AsyncMock:
     return session
 
 
+def _session_for_delete(row: MagicMock | None) -> AsyncMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = row
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
 def _session_for_get(row: MagicMock | None) -> AsyncMock:
     result = MagicMock()
     result.scalar_one_or_none.return_value = row
@@ -282,4 +290,56 @@ class TestListDocuments:
     def test_returns_404_for_foreign_kb(self) -> None:
         with TestClient(_make_app(_session_for_list([]), scope_raises_404=True)) as client:
             resp = client.get(_LIST_URL)
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /{document_id}
+# ---------------------------------------------------------------------------
+
+
+def _delete_url(doc_id: uuid.UUID) -> str:
+    return f"/api/v1/knowledge-bases/{_KB_ID}/documents/{doc_id}"
+
+
+class TestDeleteDocument:
+    def test_returns_202_when_document_exists(self) -> None:
+        doc_id = uuid.uuid4()
+        with TestClient(_make_app(_session_for_delete(_doc_row(doc_id=doc_id)))) as client:
+            resp = client.delete(_delete_url(doc_id))
+        assert resp.status_code == 202
+
+    def test_response_status_is_deleting(self) -> None:
+        doc_id = uuid.uuid4()
+        with TestClient(_make_app(_session_for_delete(_doc_row(doc_id=doc_id)))) as client:
+            body = client.delete(_delete_url(doc_id)).json()
+        assert body["status"] == "DELETING"
+
+    def test_response_contains_id_and_updated_at(self) -> None:
+        doc_id = uuid.uuid4()
+        with TestClient(_make_app(_session_for_delete(_doc_row(doc_id=doc_id)))) as client:
+            body = client.delete(_delete_url(doc_id)).json()
+        assert body["id"] == str(doc_id)
+        assert "updated_at" in body
+
+    def test_response_excludes_storage_key(self) -> None:
+        doc_id = uuid.uuid4()
+        with TestClient(_make_app(_session_for_delete(_doc_row(doc_id=doc_id)))) as client:
+            body = client.delete(_delete_url(doc_id)).json()
+        assert "storage_key" not in body
+
+    def test_returns_404_when_document_not_found(self) -> None:
+        with TestClient(_make_app(_session_for_delete(None))) as client:
+            resp = client.delete(_delete_url(uuid.uuid4()))
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Document not found"
+
+    def test_returns_401_without_auth(self) -> None:
+        with TestClient(_make_app(_session_for_delete(None), auth_raises_401=True)) as client:
+            resp = client.delete(_delete_url(uuid.uuid4()))
+        assert resp.status_code == 401
+
+    def test_returns_404_for_foreign_kb(self) -> None:
+        with TestClient(_make_app(_session_for_delete(None), scope_raises_404=True)) as client:
+            resp = client.delete(_delete_url(uuid.uuid4()))
         assert resp.status_code == 404

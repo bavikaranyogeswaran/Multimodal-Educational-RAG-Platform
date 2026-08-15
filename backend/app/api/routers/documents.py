@@ -1,10 +1,10 @@
-# ruff: noqa: ARG001
 """Document resource endpoints."""
 
 from __future__ import annotations
 
 import io
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 import pypdf
@@ -25,7 +25,9 @@ from app.application.commands.upload_document import (
 )
 from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
+from app.domain.enums import JobPriority, JobStatus, JobType
 from app.domain.errors import UploadValidationError
+from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
@@ -46,9 +48,6 @@ router = APIRouter(
     tags=["documents"],
     dependencies=[Depends(get_kb_scope)],
 )
-
-_PHASE = "4"
-
 
 @router.post("", status_code=201)
 async def upload_document(
@@ -116,6 +115,30 @@ async def get_document_status(
     return DocumentStatusResponse.model_validate(doc)
 
 
-@router.delete("/{document_id}", status_code=501)
-async def delete_document(document_id: uuid.UUID) -> dict[str, str]:
-    return {"detail": "Not implemented", "phase": _PHASE}
+@router.delete("/{document_id}", status_code=202)
+async def delete_document(
+    document_id: uuid.UUID,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DocumentStatusResponse:
+    repo = SqlDocumentRepository(scope, session)
+    doc = await repo.get(scope, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=_404_DOCUMENT)
+    now = datetime.now(UTC)
+    deleting = doc.mark_deleting(now=now)
+    await repo.save(scope, deleting)
+    job = ProcessingJob(
+        id=uuid.uuid4(),
+        job_type=JobType.DELETE_DOCUMENT,
+        priority=JobPriority.INTERACTIVE,
+        status=JobStatus.PENDING,
+        attempt_count=0,
+        max_attempts=3,
+        payload={"document_id": str(document_id), "storage_key": doc.storage_key},
+        created_at=now,
+        updated_at=now,
+    )
+    await SqlJobRepository(session).save(job)
+    await session.commit()
+    return DocumentStatusResponse.model_validate(deleting)
