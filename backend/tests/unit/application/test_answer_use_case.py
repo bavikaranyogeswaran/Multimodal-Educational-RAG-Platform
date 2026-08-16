@@ -61,6 +61,7 @@ def _mock_repo(messages: list | None = None) -> AsyncMock:
     repo = AsyncMock()
     repo.list_messages = AsyncMock(return_value=messages or [])
     repo.save_message = AsyncMock()
+    repo.save_retrieval_chunks = AsyncMock()
     return repo
 
 
@@ -218,11 +219,11 @@ class TestMessagePersistence:
 
         repo = _mock_repo()
         repo.save_message = AsyncMock(
-            side_effect=lambda *a, **kw: call_order.append("save_message")
+            side_effect=lambda *_args, **_kwargs: call_order.append("save_message")
         )
         retrieve = _mock_retrieve()
         retrieve.execute = AsyncMock(
-            side_effect=lambda *a, **kw: call_order.append("retrieve") or []
+            side_effect=lambda *_args, **_kwargs: call_order.append("retrieve") or []
         )
 
         await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
@@ -280,3 +281,117 @@ class TestMessagePersistence:
         failed: Message = repo.save_message.call_args_list[1].args[1]
         assert failed.role is MessageRole.ASSISTANT
         assert failed.status is MessageStatus.FAILED
+
+
+# ---------------------------------------------------------------------------
+# Evidence record — what the model was actually given
+# ---------------------------------------------------------------------------
+
+
+class TestRetrievalChunkPersistence:
+    async def test_not_written_until_the_stream_is_consumed(self) -> None:
+        repo = _mock_repo()
+        retrieve = _mock_retrieve([_ev("Passage A")])
+        await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
+        # execute() returns a generator; nothing has been generated yet, so there is
+        # no answer for the evidence record to hang off.
+        repo.save_retrieval_chunks.assert_not_awaited()
+
+    async def test_written_once_after_the_stream_is_consumed(self) -> None:
+        repo = _mock_repo()
+        retrieve = _mock_retrieve([_ev("Passage A")])
+        stream = await _make_use_case(
+            retrieve=retrieve, repo=repo, gateway=_mock_gateway(tokens=["ok"])
+        ).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        assert repo.save_retrieval_chunks.await_count == 1
+
+    async def test_recorded_against_the_assistant_message(self) -> None:
+        repo = _mock_repo()
+        retrieve = _mock_retrieve([_ev("Passage A")])
+        stream = await _make_use_case(
+            retrieve=retrieve, repo=repo, gateway=_mock_gateway(tokens=["ok"])
+        ).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert repo.save_retrieval_chunks.call_args.args[1] == assistant.id
+
+    async def test_carries_every_evidence_item_that_reached_the_prompt(self) -> None:
+        gateway = _mock_gateway(tokens=["ok"])
+        evidence = [_ev("Passage A"), _ev("Passage B"), _ev("Passage C")]
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(evidence), repo=repo, gateway=gateway
+        ).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        recorded = list(repo.save_retrieval_chunks.call_args.args[2])
+        request = gateway.generate_stream.call_args.args[0]
+        assert len(recorded) == len(request.evidence)
+        assert recorded == evidence
+
+    async def test_written_with_the_calls_scope(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve([_ev("Passage A")]),
+            repo=repo,
+            gateway=_mock_gateway(tokens=["ok"]),
+        ).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        assert repo.save_retrieval_chunks.call_args.args[0] == _SCOPE
+
+    async def test_written_after_the_assistant_message(self) -> None:
+        call_order: list[str] = []
+        repo = _mock_repo()
+        repo.save_message = AsyncMock(
+            side_effect=lambda *_args, **_kwargs: call_order.append("message")
+        )
+        repo.save_retrieval_chunks = AsyncMock(
+            side_effect=lambda *_args, **_kwargs: call_order.append("evidence")
+        )
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve([_ev("Passage A")]),
+            repo=repo,
+            gateway=_mock_gateway(tokens=["ok"]),
+        ).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        # The record carries a foreign key to the message, so the message is written first.
+        assert call_order == ["message", "message", "evidence"]
+
+    async def test_still_written_when_generation_fails(self) -> None:
+        async def _failing():
+            yield "partial"
+            raise RuntimeError("model error")
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(return_value=_failing())
+        evidence = [_ev("Passage A")]
+        repo = _mock_repo()
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(evidence), repo=repo, gateway=gateway
+        ).execute(_BASE_CMD)
+        try:
+            async for _ in stream:
+                pass
+        except RuntimeError:
+            pass
+
+        assert repo.save_retrieval_chunks.await_count == 1
+        assert list(repo.save_retrieval_chunks.call_args.args[2]) == evidence
+
+    async def test_empty_evidence_still_reaches_the_repository(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve([]), repo=repo, gateway=_mock_gateway(tokens=["ok"])
+        ).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        # Whether an empty set is worth a write is the repository's call, not this
+        # use case's — keeping the decision in one place keeps the two from diverging.
+        assert repo.save_retrieval_chunks.await_count == 1
+        assert list(repo.save_retrieval_chunks.call_args.args[2]) == []

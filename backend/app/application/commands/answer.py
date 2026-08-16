@@ -12,7 +12,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery, RetrievalOrchestrator
+from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.enums import MessageRole, MessageStatus, ModelTask
 from app.domain.models.entities import ConversationTurn, ModelRequest
@@ -141,5 +141,13 @@ class AnswerUseCase:
                     updated_at=answer_now,
                 )
                 await repo.save_message(scope, assistant_message)
+
+                # The prompt itself is gone once generation ends, so what went into it
+                # has to be recorded here or the question "did the model actually see
+                # the passage this answer cites?" becomes unanswerable. Written after
+                # the message because the record hangs off it, and written on failure
+                # too — the evidence reached the model either way, and a half-finished
+                # answer can still carry a citation worth checking.
+                await repo.save_retrieval_chunks(scope, assistant_message.id, evidence)
 
         return _tracked()
