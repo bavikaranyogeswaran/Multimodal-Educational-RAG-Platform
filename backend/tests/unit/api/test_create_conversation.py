@@ -137,3 +137,44 @@ class TestCreateConversation:
         with TestClient(_make_app(scope_raises_404=True)) as client:
             resp = client.post(_URL, json=_VALID_BODY)
         assert resp.status_code == 404
+
+
+class TestCreateConversationIsDurable:
+    """A 201 carrying an id has to mean the row exists.
+
+    The session dependency yields a session and closes it without committing, so a
+    handler that writes and returns hands the caller an identifier for a conversation
+    that was rolled back on the way out.
+    """
+
+    def test_commits_the_session(self) -> None:
+        session = _save_session()
+        with TestClient(_make_app(session)) as client:
+            resp = client.post(_URL, json=_VALID_BODY)
+
+        assert resp.status_code == 201
+        session.commit.assert_awaited_once()
+
+    def test_commits_after_the_write(self) -> None:
+        call_order: list[str] = []
+        session = _save_session()
+        session.merge = AsyncMock(
+            side_effect=lambda *_args, **_kwargs: call_order.append("write")
+        )
+        session.commit = AsyncMock(
+            side_effect=lambda *_args, **_kwargs: call_order.append("commit")
+        )
+
+        with TestClient(_make_app(session)) as client:
+            client.post(_URL, json=_VALID_BODY)
+
+        # Committing before the write would persist an empty transaction.
+        assert call_order == ["write", "commit"]
+
+    def test_no_commit_when_the_request_is_rejected(self) -> None:
+        session = _save_session()
+        with TestClient(_make_app(session)) as client:
+            resp = client.post(_URL, json={"title": ""})
+
+        assert resp.status_code == 422
+        session.commit.assert_not_awaited()

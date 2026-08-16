@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -85,6 +86,7 @@ async def create_conversation(
     )
     repo = SqlConversationRepository(scope=scope, session=session)
     await repo.save(scope, conversation)
+    await session.commit()
     return _conv_response(conversation)
 
 
@@ -131,7 +133,7 @@ async def stream_response(
     )
     stream = await use_case.execute(command)
 
-    async def _event_stream():
+    async def _event_stream() -> AsyncIterator[str]:
         async for token in stream:
             yield f"data: {token}\n\n"
         yield "data: [DONE]\n\n"
