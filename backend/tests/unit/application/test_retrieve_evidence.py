@@ -10,6 +10,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
+import structlog.testing
 
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery, RetrievalOrchestrator
 from app.domain.enums import MessageRole, QueryClass, RetrieverKind
@@ -414,3 +415,92 @@ class TestScoringAndFiltering:
         )
         result = await orc.execute(_query(top_k=10))
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Stage timing logs
+# ---------------------------------------------------------------------------
+
+
+class TestStageTimingLogs:
+    _STAGES = ("classify", "rewrite", "plan_expand", "embed", "search", "fuse", "rerank")
+
+    async def test_all_seven_stages_emit_retrieval_stage_event(self) -> None:
+        ev = _evidence(0, text="passage")
+        orc, _ = _make_orchestrator(fused_results=[ev], rerank_scores=[0.9])
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query())
+        stage_names = {e["stage"] for e in logs if e.get("event") == "retrieval_stage"}
+        assert stage_names == set(self._STAGES)
+
+    async def test_each_event_carries_elapsed_ms_as_int(self) -> None:
+        ev = _evidence(0, text="passage")
+        orc, _ = _make_orchestrator(fused_results=[ev], rerank_scores=[0.9])
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query())
+        timing_events = [e for e in logs if e.get("event") == "retrieval_stage"]
+        for event in timing_events:
+            assert isinstance(event["elapsed_ms"], int), f"stage={event['stage']}"
+
+    async def test_each_elapsed_ms_is_non_negative(self) -> None:
+        ev = _evidence(0, text="passage")
+        orc, _ = _make_orchestrator(fused_results=[ev], rerank_scores=[0.9])
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query())
+        timing_events = [e for e in logs if e.get("event") == "retrieval_stage"]
+        for event in timing_events:
+            assert event["elapsed_ms"] >= 0, f"stage={event['stage']}"
+
+    async def test_no_rerank_event_when_candidates_empty(self) -> None:
+        orc, _ = _make_orchestrator(fused_results=[])
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query())
+        stage_names = {e["stage"] for e in logs if e.get("event") == "retrieval_stage"}
+        assert "rerank" not in stage_names
+
+    async def test_fuse_event_includes_candidate_count(self) -> None:
+        ev1 = _evidence(0, text="a")
+        ev2 = _evidence(1, text="b")
+        orc, _ = _make_orchestrator(fused_results=[ev1, ev2], rerank_scores=[0.9, 0.7])
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query())
+        fuse_event = next(
+            e for e in logs if e.get("event") == "retrieval_stage" and e["stage"] == "fuse"
+        )
+        assert fuse_event["candidates"] == 2
+
+    async def test_plan_expand_event_includes_query_count(self) -> None:
+        orc, _ = _make_orchestrator(expand_return=["q1", "q2"])
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query())
+        event = next(
+            e
+            for e in logs
+            if e.get("event") == "retrieval_stage" and e["stage"] == "plan_expand"
+        )
+        assert event["queries"] == 2
+
+    async def test_search_event_includes_searcher_count(self) -> None:
+        # 2 expanded queries → 4 search tasks (2 dense + 2 keyword)
+        orc, _ = _make_orchestrator(expand_return=["q1", "q2"])
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query())
+        event = next(
+            e for e in logs if e.get("event") == "retrieval_stage" and e["stage"] == "search"
+        )
+        assert event["searchers"] == 4
+
+    async def test_rerank_event_includes_results_count(self) -> None:
+        ev1 = _evidence(0, text="a")
+        ev2 = _evidence(1, text="b")
+        orc, _ = _make_orchestrator(
+            fused_results=[ev1, ev2],
+            rerank_scores=[0.9, 0.7],
+            relative_score_margin=1.0,
+        )
+        with structlog.testing.capture_logs() as logs:
+            await orc.execute(_query(top_k=10))
+        event = next(
+            e for e in logs if e.get("event") == "retrieval_stage" and e["stage"] == "rerank"
+        )
+        assert event["results"] == 2

@@ -10,6 +10,9 @@ import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
+import structlog
+
+from app.application.observability.timer import StageTimer
 from app.domain.models.entities import ConversationTurn
 from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, RerankerPort
 from app.domain.retrieval.classifier import QueryClassifier
@@ -18,6 +21,8 @@ from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.fusion import RRFusion
 from app.domain.retrieval.rewriter import QueryRewriter
 from app.domain.scope import ScopeContext
+
+_log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -64,39 +69,80 @@ class RetrievalOrchestrator:
         self._relative_score_margin = relative_score_margin
 
     async def execute(self, query: RetrieveEvidenceQuery) -> Sequence[Evidence]:
-        query_class = self._classifier.classify(query.query)
-        standalone, _ = await self._rewriter.rewrite(query.query, query.history)
-        plan = RetrievalPlan.for_query(query_class, filters=query.filters)
-        expanded = await self._expander.expand(standalone, plan)
+        with StageTimer("classify") as _timer:
+            query_class = self._classifier.classify(query.query)
+        _log.info("retrieval_stage", stage="classify", elapsed_ms=_timer.elapsed_ms())
 
-        embeddings = await asyncio.gather(*[self._embedder.embed_query(q) for q in expanded])
+        with StageTimer("rewrite") as _timer:
+            standalone, _ = await self._rewriter.rewrite(query.query, query.history)
+        _log.info("retrieval_stage", stage="rewrite", elapsed_ms=_timer.elapsed_ms())
 
-        search_tasks = []
-        for q, emb in zip(expanded, embeddings):
-            search_tasks.append(
-                self._dense_retriever.search(
-                    query.scope, emb, top_k=self._dense_top_k, filters=plan.filters
+        with StageTimer("plan_expand") as _timer:
+            plan = RetrievalPlan.for_query(query_class, filters=query.filters)
+            expanded = await self._expander.expand(standalone, plan)
+        _log.info(
+            "retrieval_stage",
+            stage="plan_expand",
+            elapsed_ms=_timer.elapsed_ms(),
+            queries=len(expanded),
+        )
+
+        with StageTimer("embed") as _timer:
+            embeddings = await asyncio.gather(*[self._embedder.embed_query(q) for q in expanded])
+        _log.info(
+            "retrieval_stage",
+            stage="embed",
+            elapsed_ms=_timer.elapsed_ms(),
+            count=len(embeddings),
+        )
+
+        with StageTimer("search") as _timer:
+            search_tasks = []
+            for q, emb in zip(expanded, embeddings):
+                search_tasks.append(
+                    self._dense_retriever.search(
+                        query.scope, emb, top_k=self._dense_top_k, filters=plan.filters
+                    )
                 )
-            )
-            search_tasks.append(
-                self._keyword_retriever.search(
-                    query.scope, q, top_k=self._keyword_top_k, filters=plan.filters
+                search_tasks.append(
+                    self._keyword_retriever.search(
+                        query.scope, q, top_k=self._keyword_top_k, filters=plan.filters
+                    )
                 )
-            )
-        all_results = await asyncio.gather(*search_tasks)
+            all_results = await asyncio.gather(*search_tasks)
+        _log.info(
+            "retrieval_stage",
+            stage="search",
+            elapsed_ms=_timer.elapsed_ms(),
+            searchers=len(search_tasks),
+        )
 
-        fused = self._fuser.fuse(*all_results)[: self._candidate_pool_size]
-        candidates = fused[: self._max_rerank_candidates]
+        with StageTimer("fuse") as _timer:
+            fused = self._fuser.fuse(*all_results)[: self._candidate_pool_size]
+            candidates = fused[: self._max_rerank_candidates]
+        _log.info(
+            "retrieval_stage",
+            stage="fuse",
+            elapsed_ms=_timer.elapsed_ms(),
+            candidates=len(candidates),
+        )
+
         if not candidates:
             return []
 
-        texts = [c.chunk.text.value for c in candidates]
-        scores = await self._reranker.rerank(standalone, texts)
-
-        scored = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
-        top_score = scored[0][1]
-        threshold = top_score - abs(top_score) * self._relative_score_margin
-        filtered = [(e, s) for e, s in scored if s >= threshold]
+        with StageTimer("rerank") as _timer:
+            texts = [c.chunk.text.value for c in candidates]
+            scores = await self._reranker.rerank(standalone, texts)
+            scored = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+            top_score = scored[0][1]
+            threshold = top_score - abs(top_score) * self._relative_score_margin
+            filtered = [(e, s) for e, s in scored if s >= threshold]
+        _log.info(
+            "retrieval_stage",
+            stage="rerank",
+            elapsed_ms=_timer.elapsed_ms(),
+            results=len(filtered),
+        )
 
         return [
             replace(e, label=EvidenceLabel(i + 1), rank=i, rerank_score=s)
