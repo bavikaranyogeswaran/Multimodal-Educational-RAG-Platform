@@ -172,3 +172,15 @@ class TestAnswerUseCase:
         stream = await _make_use_case(gateway=gateway).execute(_BASE_CMD)
         collected = [t async for t in stream]
         assert collected == tokens
+
+    async def test_history_passed_to_retrieve_query(self) -> None:
+        user_msg = _msg(MessageRole.USER, "prior question")
+        asst_msg = _msg(MessageRole.ASSISTANT, "prior answer")
+        # DB returns newest-first: assistant reply first, then the user question.
+        repo = _mock_repo(messages=[asst_msg, user_msg])
+        retrieve = _mock_retrieve()
+        await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
+        query_arg: RetrieveEvidenceQuery = retrieve.execute.call_args.args[0]
+        assert len(query_arg.history) == 2
+        assert query_arg.history[0].role is MessageRole.USER
+        assert query_arg.history[1].role is MessageRole.ASSISTANT

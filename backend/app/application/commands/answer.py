@@ -1,8 +1,8 @@
 """Use case: retrieve evidence, build the seven-slot prompt, and stream the model response.
 
-The use case performs all async work (retrieval and history loading) before returning
-the stream. Errors from the model provider surface as ProviderError when the caller
-first advances the returned iterator.
+History is loaded before retrieval so the rewriter inside the orchestrator can make
+follow-up questions self-contained before the search runs. Errors from the model
+provider surface as ProviderError when the caller first advances the returned iterator.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery, RetrieveEvidenceUseCase
+from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery, RetrievalOrchestrator
 from app.domain.enums import ModelTask
 from app.domain.models.entities import ConversationTurn, ModelRequest
 from app.domain.ports.model_gateway import ModelGatewayPort
@@ -52,7 +52,7 @@ class AnswerUseCase:
 
     def __init__(
         self,
-        retrieve: RetrieveEvidenceUseCase,
+        retrieve: RetrievalOrchestrator,
         conversation_repo: ConversationRepository,
         model_gateway: ModelGatewayPort,
     ) -> None:
@@ -61,22 +61,25 @@ class AnswerUseCase:
         self._model_gateway = model_gateway
 
     async def execute(self, command: AnswerCommand) -> AsyncIterator[str]:
+        # History is loaded first so the orchestrator can pass it to the rewriter.
+        messages = await self._conversation_repo.list_messages(
+            command.scope, command.conversation_id, limit=command.max_history
+        )
+        # list_messages returns newest-first; the model and rewriter both receive turns
+        # in chronological order.
+        history = tuple(
+            ConversationTurn(role=msg.role, content=msg.content)
+            for msg in reversed(list(messages))
+        )
+
         evidence = await self._retrieve.execute(
             RetrieveEvidenceQuery(
                 scope=command.scope,
                 query=command.query,
                 filters=RetrievalFilters(),
                 top_k=command.top_k,
+                history=history,
             )
-        )
-
-        messages = await self._conversation_repo.list_messages(
-            command.scope, command.conversation_id, limit=command.max_history
-        )
-        # list_messages returns newest-first; the model receives turns in chronological order.
-        history = tuple(
-            ConversationTurn(role=msg.role, content=msg.content)
-            for msg in reversed(list(messages))
         )
 
         request = ModelRequest(

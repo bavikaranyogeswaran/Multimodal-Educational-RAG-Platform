@@ -52,6 +52,21 @@ def _build_model_gateway(settings: Settings) -> ModelGatewayPort:
     )
 
 
+def _build_reranker(settings: Settings) -> RerankerPort:
+    try:
+        from app.infrastructure.reranking.cross_encoder import (  # noqa: PLC0415
+            CrossEncoderReranker,
+        )
+
+        return CrossEncoderReranker(
+            model_id=settings.reranker.model_id,
+            device=settings.reranker.device,
+            batch_size=settings.reranker.batch_size,
+        )
+    except ImportError:
+        return cast(RerankerPort, _Unimplemented("RerankerPort"))
+
+
 def _build_embedder(settings: Settings) -> EmbeddingPort:
     try:
         from app.infrastructure.embeddings.sentence_transformer import (  # noqa: PLC0415
@@ -129,7 +144,7 @@ def build_container(settings: Settings) -> Container:
         pdf_parser=cast(PdfParserPort, _u("PdfParserPort")),
         ocr=cast(OcrPort, _u("OcrPort")),
         embedder=_build_embedder(settings),
-        reranker=cast(RerankerPort, _u("RerankerPort")),
+        reranker=_build_reranker(settings),
         dense_retriever=cast(DenseRetriever, _u("DenseRetriever")),
         keyword_retriever=cast(KeywordRetriever, _u("KeywordRetriever")),
         graph=cast(GraphPort, _u("GraphPort")),
