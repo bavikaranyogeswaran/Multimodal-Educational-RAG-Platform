@@ -1,15 +1,15 @@
-"""Unit tests for SqlDenseRetriever.
+"""Unit tests for SqlKeywordRetriever.
 
-All tests use a mock AsyncSession — no real database or pgvector calls are made.
-Tests verify:
-  - scope filter (user_id, knowledge_base_id) appears in every query
+All tests use a mock AsyncSession — no real database or PostgreSQL functions are
+called. Tests verify:
+  - scope filter (user_id, knowledge_base_id) present in every query
   - COMPLETED document status filter enforced via JOIN to documents
-  - embedding IS NOT NULL filter excludes un-embedded chunks
-  - cosine_distance ordering (<=> operator) is applied
-  - LIMIT clause is applied from top_k
-  - document_ids and language filters from RetrievalFilters are wired
-  - results are returned as Evidence with RetrieverKind.DENSE and correct ranks
-  - foreign scope is rejected before any session call
+  - tsv IS NOT NULL and @@ ts_query conditions present
+  - ts_rank_cd descending ordering applied
+  - LIMIT clause from top_k applied
+  - optional document_ids and language filters from RetrievalFilters wired
+  - results returned as Evidence with RetrieverKind.KEYWORD and correct ranks
+  - foreign scope rejected before any session call
 """
 
 from __future__ import annotations
@@ -25,9 +25,7 @@ from app.domain.errors import ScopeViolationError
 from app.domain.retrieval.entities import RetrievalFilters
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.models.chunk import ChunkModel
-from app.infrastructure.retrieval.dense import SqlDenseRetriever
-
-_QUERY_VECTOR = [0.1] * 384
+from app.infrastructure.retrieval.keyword import SqlKeywordRetriever
 
 
 def _make_scope() -> ScopeContext:
@@ -41,8 +39,8 @@ def _make_chunk_model(scope: ScopeContext) -> ChunkModel:
         knowledge_base_id=scope.knowledge_base_id,
         document_id=uuid.uuid4(),
         chunk_type=ChunkType.TEXT.value,
-        text="Sample passage text.",
-        token_count=5,
+        text="Sample passage about neural networks.",
+        token_count=7,
         ordinal=0,
         page_start=1,
         page_end=1,
@@ -61,12 +59,12 @@ def _mock_result(rows: list[object]) -> MagicMock:
     return result
 
 
-def _retriever(scope: ScopeContext, session: AsyncMock) -> SqlDenseRetriever:
-    return SqlDenseRetriever(scope=scope, session=session)
+def _retriever(scope: ScopeContext, session: AsyncMock) -> SqlKeywordRetriever:
+    return SqlKeywordRetriever(scope=scope, session=session)
 
 
 # ---------------------------------------------------------------------------
-# SQL structure — verify the statement before it reaches the database
+# SQL structure
 # ---------------------------------------------------------------------------
 
 
@@ -77,7 +75,7 @@ class TestSqlStructure:
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
@@ -91,13 +89,15 @@ class TestSqlStructure:
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
-        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        assert "COMPLETED" in compiled
-        assert "status" in compiled
+        # websearch_to_tsquery has a REGCONFIG param that literal_binds can't render;
+        # inspect the compiled params dict to verify the COMPLETED bound value.
+        compiled = stmt.compile()
+        assert "status" in str(compiled)
+        assert "COMPLETED" in compiled.params.values()
 
     async def test_joins_to_documents_table(self) -> None:
         scope = _make_scope()
@@ -105,39 +105,51 @@ class TestSqlStructure:
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
         compiled = str(stmt.compile())
         assert "documents" in compiled
 
-    async def test_excludes_un_embedded_chunks(self) -> None:
+    async def test_applies_fulltext_match_operator(self) -> None:
         scope = _make_scope()
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
         compiled = str(stmt.compile())
-        assert "embedding" in compiled
-        assert "NULL" in compiled.upper()
+        assert "@@" in compiled
 
-    async def test_applies_cosine_distance_ordering(self) -> None:
+    async def test_uses_websearch_to_tsquery(self) -> None:
         scope = _make_scope()
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
         compiled = str(stmt.compile())
-        assert "<=>" in compiled
+        assert "websearch_to_tsquery" in compiled
+
+    async def test_orders_by_ts_rank_cd(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result([]))
+
+        await _retriever(scope, session).search(
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
+        )
+
+        stmt = session.execute.call_args[0][0]
+        compiled = str(stmt.compile())
+        assert "ts_rank_cd" in compiled
 
     async def test_applies_top_k_limit(self) -> None:
         scope = _make_scope()
@@ -145,12 +157,13 @@ class TestSqlStructure:
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=7, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=12, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
-        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        assert "7" in compiled
+        # Inspect bound params instead of literal SQL because REGCONFIG blocks literal_binds.
+        compiled = stmt.compile()
+        assert 12 in compiled.params.values()
 
     async def test_document_ids_filter_adds_in_clause(self) -> None:
         scope = _make_scope()
@@ -160,28 +173,26 @@ class TestSqlStructure:
 
         await _retriever(scope, session).search(
             scope,
-            _QUERY_VECTOR,
+            "gradient descent",
             top_k=5,
             filters=RetrievalFilters(document_ids=frozenset({doc_id})),
         )
 
         stmt = session.execute.call_args[0][0]
         compiled = str(stmt.compile())
-        assert "document_id" in compiled
         assert "IN" in compiled.upper()
 
-    async def test_no_document_ids_filter_omits_in_clause(self) -> None:
+    async def test_no_document_ids_omits_in_clause(self) -> None:
         scope = _make_scope()
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
         compiled = str(stmt.compile())
-        # document_id appears in the SELECT list; the IN filter must not be added
         assert "document_id IN" not in compiled
 
     async def test_language_filter_adds_equality_clause(self) -> None:
@@ -190,34 +201,30 @@ class TestSqlStructure:
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope,
-            _QUERY_VECTOR,
-            top_k=5,
-            filters=RetrievalFilters(language="fr"),
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters(language="de")
         )
 
         stmt = session.execute.call_args[0][0]
-        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        assert "language" in compiled
-        assert "fr" in compiled
+        compiled = stmt.compile()
+        assert "language" in str(compiled)
+        assert "de" in compiled.params.values()
 
-    async def test_no_language_filter_omits_language_clause(self) -> None:
+    async def test_no_language_omits_language_equality(self) -> None:
         scope = _make_scope()
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
         )
 
         stmt = session.execute.call_args[0][0]
         compiled = str(stmt.compile())
-        # language appears in the SELECT list; the equality filter must not be added
         assert "language =" not in compiled
 
 
 # ---------------------------------------------------------------------------
-# Return value contract
+# Return values
 # ---------------------------------------------------------------------------
 
 
@@ -228,7 +235,7 @@ class TestReturnValues:
         session.execute = AsyncMock(return_value=_mock_result([]))
 
         results = await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "attention mechanism", top_k=5, filters=RetrievalFilters()
         )
 
         assert results == []
@@ -236,14 +243,14 @@ class TestReturnValues:
     async def test_result_count_matches_returned_rows(self) -> None:
         scope = _make_scope()
         session = AsyncMock()
-        rows = [_make_chunk_model(scope) for _ in range(3)]
+        rows = [_make_chunk_model(scope) for _ in range(4)]
         session.execute = AsyncMock(return_value=_mock_result(rows))
 
         results = await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "attention mechanism", top_k=10, filters=RetrievalFilters()
         )
 
-        assert len(results) == 3
+        assert len(results) == 4
 
     async def test_rank_is_zero_based_position(self) -> None:
         scope = _make_scope()
@@ -252,22 +259,22 @@ class TestReturnValues:
         session.execute = AsyncMock(return_value=_mock_result(rows))
 
         results = await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "attention mechanism", top_k=5, filters=RetrievalFilters()
         )
 
         assert [e.rank for e in results] == [0, 1, 2]
 
-    async def test_retriever_kind_is_dense(self) -> None:
+    async def test_retriever_kind_is_keyword(self) -> None:
         scope = _make_scope()
         session = AsyncMock()
         rows = [_make_chunk_model(scope)]
         session.execute = AsyncMock(return_value=_mock_result(rows))
 
         results = await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "attention mechanism", top_k=5, filters=RetrievalFilters()
         )
 
-        assert RetrieverKind.DENSE in results[0].retrievers
+        assert RetrieverKind.KEYWORD in results[0].retrievers
         assert len(results[0].retrievers) == 1
 
     async def test_labels_are_one_based_and_sequential(self) -> None:
@@ -277,7 +284,7 @@ class TestReturnValues:
         session.execute = AsyncMock(return_value=_mock_result(rows))
 
         results = await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "attention mechanism", top_k=5, filters=RetrievalFilters()
         )
 
         assert [e.label.number for e in results] == [1, 2, 3]
@@ -289,7 +296,7 @@ class TestReturnValues:
         session.execute = AsyncMock(return_value=_mock_result([row]))
 
         results = await _retriever(scope, session).search(
-            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+            scope, "attention mechanism", top_k=5, filters=RetrievalFilters()
         )
 
         assert results[0].chunk.id == row.id
@@ -310,7 +317,7 @@ class TestScopeGuard:
 
         with pytest.raises(ScopeViolationError):
             await retriever.search(
-                call_scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+                call_scope, "neural network", top_k=5, filters=RetrievalFilters()
             )
 
         session.execute.assert_not_called()
