@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +12,7 @@ from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.enums import MessageRole, MessageStatus, ModelTask
+from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
 
@@ -51,13 +54,13 @@ def _msg(role: MessageRole, text: str) -> Message:
     )
 
 
-def _mock_retrieve(evidence: list | None = None) -> AsyncMock:
+def _mock_retrieve(evidence: list[MagicMock] | None = None) -> AsyncMock:
     retrieve = AsyncMock()
     retrieve.execute = AsyncMock(return_value=evidence or [])
     return retrieve
 
 
-def _mock_repo(messages: list | None = None) -> AsyncMock:
+def _mock_repo(messages: list[Message] | None = None) -> AsyncMock:
     repo = AsyncMock()
     repo.list_messages = AsyncMock(return_value=messages or [])
     repo.save_message = AsyncMock()
@@ -65,8 +68,35 @@ def _mock_repo(messages: list | None = None) -> AsyncMock:
     return repo
 
 
+def _uow_over(repo: AsyncMock, opened: list[str] | None = None) -> ConversationUnitOfWork:
+    """A unit of work that hands out the same repository every time.
+
+    Tests assert against one repository across both transactions, so the blocks share
+    an instance. `opened`, when supplied, records an entry per block so a test can see
+    how many transactions the use case actually opened.
+    """
+
+    @asynccontextmanager
+    async def _uow() -> AsyncIterator[AsyncMock]:
+        if opened is not None:
+            opened.append("open")
+        yield repo
+
+    return _uow
+
+
+def _recording_retrieve(call_order: list[str]) -> Callable[..., list[MagicMock]]:
+    """Note that retrieval ran, then return no evidence."""
+
+    def _record(*_args: object, **_kwargs: object) -> list[MagicMock]:
+        call_order.append("retrieve")
+        return []
+
+    return _record
+
+
 def _mock_gateway(tokens: list[str] | None = None) -> MagicMock:
-    async def _gen():
+    async def _gen() -> AsyncIterator[str]:
         for t in tokens or []:
             yield t
 
@@ -79,10 +109,11 @@ def _make_use_case(
     retrieve: AsyncMock | None = None,
     repo: AsyncMock | None = None,
     gateway: MagicMock | None = None,
+    opened: list[str] | None = None,
 ) -> AnswerUseCase:
     return AnswerUseCase(
         retrieve=retrieve or _mock_retrieve(),
-        conversation_repo=repo or _mock_repo(),
+        conversation_uow=_uow_over(repo or _mock_repo(), opened),
         model_gateway=gateway or _mock_gateway(),
     )
 
@@ -223,7 +254,7 @@ class TestMessagePersistence:
         )
         retrieve = _mock_retrieve()
         retrieve.execute = AsyncMock(
-            side_effect=lambda *_args, **_kwargs: call_order.append("retrieve") or []
+            side_effect=_recording_retrieve(call_order),
         )
 
         await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
@@ -261,7 +292,7 @@ class TestMessagePersistence:
         assert assistant.status is MessageStatus.COMPLETED
 
     async def test_failed_message_saved_on_stream_error(self) -> None:
-        async def _failing():
+        async def _failing() -> AsyncIterator[str]:
             yield "partial"
             raise RuntimeError("model error")
 
@@ -281,6 +312,61 @@ class TestMessagePersistence:
         failed: Message = repo.save_message.call_args_list[1].args[1]
         assert failed.role is MessageRole.ASSISTANT
         assert failed.status is MessageStatus.FAILED
+
+
+# ---------------------------------------------------------------------------
+# Transaction boundaries
+# ---------------------------------------------------------------------------
+
+
+class TestTransactionBoundaries:
+    async def test_question_is_committed_before_the_stream_begins(self) -> None:
+        opened: list[str] = []
+        repo = _mock_repo()
+        await _make_use_case(repo=repo, opened=opened).execute(_BASE_CMD)
+
+        # One block, opened and closed, holding the question — durable before a single
+        # token has been generated.
+        assert len(opened) == 1
+        assert repo.save_message.await_count == 1
+
+    async def test_answer_is_written_in_a_second_transaction(self) -> None:
+        opened: list[str] = []
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            repo=repo, gateway=_mock_gateway(tokens=["ok"]), opened=opened
+        ).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        # The first block closed while the handler was still running; this one opens
+        # after the response has been streamed, which is why it cannot be the same one.
+        assert len(opened) == 2
+
+    async def test_second_transaction_opens_even_when_generation_fails(self) -> None:
+        async def _failing() -> AsyncIterator[str]:
+            yield "partial"
+            raise RuntimeError("model error")
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(return_value=_failing())
+        opened: list[str] = []
+
+        stream = await _make_use_case(gateway=gateway, opened=opened).execute(_BASE_CMD)
+        try:
+            async for _ in stream:
+                pass
+        except RuntimeError:
+            pass
+
+        assert len(opened) == 2
+
+    async def test_no_second_transaction_if_the_stream_is_never_consumed(self) -> None:
+        opened: list[str] = []
+        await _make_use_case(opened=opened).execute(_BASE_CMD)
+
+        # Nothing was generated, so there is no answer to store and no reason to open
+        # a transaction to store it in.
+        assert len(opened) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +449,7 @@ class TestRetrievalChunkPersistence:
         assert call_order == ["message", "message", "evidence"]
 
     async def test_still_written_when_generation_fails(self) -> None:
-        async def _failing():
+        async def _failing() -> AsyncIterator[str]:
             yield "partial"
             raise RuntimeError("model error")
 

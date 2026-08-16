@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -88,7 +89,12 @@ def _evidence(text: str, *, scope: ScopeContext = _SCOPE, rank: int = 0) -> Evid
 def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> AnswerUseCase:
     retrieve = AsyncMock()
     retrieve.execute = AsyncMock(return_value=evidence)
-    return AnswerUseCase(retrieve=retrieve, conversation_repo=repo, model_gateway=gateway)
+
+    @asynccontextmanager
+    async def _uow() -> AsyncIterator[AsyncMock]:
+        yield repo
+
+    return AnswerUseCase(retrieve=retrieve, conversation_uow=_uow, model_gateway=gateway)
 
 
 def _repo() -> AsyncMock:

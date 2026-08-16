@@ -1,7 +1,8 @@
 """FastAPI dependency: assemble AnswerUseCase for the stream route.
 
-SqlConversationRepository is per-request (holds a scoped DB session), so it is
-constructed here alongside the other per-request collaborators.
+The use case is handed a unit of work rather than a repository, because its writes
+straddle the end of the request. Retrieval still runs on the request's own session —
+it is finished before the response starts streaming, and it only reads.
 """
 
 from __future__ import annotations
@@ -9,7 +10,6 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.container import get_container
 from app.api.dependencies.retrieval import get_retrieval_orchestrator
@@ -18,18 +18,16 @@ from app.application.commands.answer import AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator
 from app.configuration.container import Container
 from app.domain.scope import ScopeContext
-from app.infrastructure.database.repositories.conversation import SqlConversationRepository
-from app.infrastructure.database.session import get_session
+from app.infrastructure.database.unit_of_work import build_conversation_unit_of_work
 
 
 async def get_answer_use_case(
     retrieve: Annotated[RetrievalOrchestrator, Depends(get_retrieval_orchestrator)],
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
-    session: Annotated[AsyncSession, Depends(get_session)],
     container: Annotated[Container, Depends(get_container)],
 ) -> AnswerUseCase:
     return AnswerUseCase(
         retrieve=retrieve,
-        conversation_repo=SqlConversationRepository(scope=scope, session=session),
+        conversation_uow=build_conversation_unit_of_work(container.session_factory, scope),
         model_gateway=container.model_gateway,
     )

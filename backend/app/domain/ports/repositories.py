@@ -18,6 +18,7 @@ application-layer use cases based on the planned phases; they grow as phases are
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
@@ -163,6 +164,24 @@ class ConversationRepository(Protocol):
         anyone asks, so the evidence behind it has to be durable.
         """
         ...
+
+
+class ConversationUnitOfWork(Protocol):
+    """Opens a conversation repository over its own transaction and commits it.
+
+    A repository handed in ready-made borrows whoever built it — for a request-scoped
+    session that means the writes are only durable while the request lasts. Streaming an
+    answer outlives its request: the last token is sent, the handler has long returned,
+    and only then is there an answer to store. Writes made against the request's session
+    at that point are discarded.
+
+    Producing the repository per unit of work instead of receiving one moves the
+    transaction boundary to where the work actually is. Each block is a whole change,
+    committed when it completes and rolled back if it raises, and none of them depend on
+    a caller still being around.
+    """
+
+    def __call__(self) -> AbstractAsyncContextManager[ConversationRepository]: ...
 
 
 class MemoryRepository(Protocol):

@@ -3,6 +3,13 @@
 History is loaded before retrieval so the rewriter inside the orchestrator can make
 follow-up questions self-contained before the search runs. Errors from the model
 provider surface as ProviderError when the caller first advances the returned iterator.
+
+One turn spans two transactions rather than one, because it spans two moments. The
+question is stored as soon as it arrives, before anything can go wrong with answering
+it — a question that was asked stays asked even if generation then fails. The answer and
+the record of the evidence behind it can only be stored once generation has finished,
+which for a streamed response is after the caller has consumed the last token. Each half
+therefore takes its own unit of work.
 """
 
 from __future__ import annotations
@@ -17,7 +24,7 @@ from app.domain.conversations.entities import Message
 from app.domain.enums import MessageRole, MessageStatus, ModelTask
 from app.domain.models.entities import ConversationTurn, ModelRequest
 from app.domain.ports.model_gateway import ModelGatewayPort
-from app.domain.ports.repositories import ConversationRepository
+from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.retrieval.entities import RetrievalFilters
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -56,38 +63,41 @@ class AnswerUseCase:
     def __init__(
         self,
         retrieve: RetrievalOrchestrator,
-        conversation_repo: ConversationRepository,
+        conversation_uow: ConversationUnitOfWork,
         model_gateway: ModelGatewayPort,
     ) -> None:
         self._retrieve = retrieve
-        self._conversation_repo = conversation_repo
+        self._uow = conversation_uow
         self._model_gateway = model_gateway
 
     async def execute(self, command: AnswerCommand) -> AsyncIterator[str]:
         now = datetime.now(UTC)
 
-        # History loaded first — the rewriter needs only prior turns, not the current question.
-        messages = await self._conversation_repo.list_messages(
-            command.scope, command.conversation_id, limit=command.max_history
-        )
-        history = tuple(
-            ConversationTurn(role=msg.role, content=msg.content)
-            for msg in reversed(list(messages))
-        )
+        async with self._uow() as repo:
+            # History loaded before the question is stored — the rewriter needs prior
+            # turns only, and would otherwise be handed the question it is rewriting.
+            messages = await repo.list_messages(
+                command.scope, command.conversation_id, limit=command.max_history
+            )
+            history = tuple(
+                ConversationTurn(role=msg.role, content=msg.content)
+                for msg in reversed(list(messages))
+            )
 
-        # User message persisted before retrieval or generation begins.
-        user_message = Message(
-            id=uuid.uuid4(),
-            conversation_id=command.conversation_id,
-            user_id=command.scope.user_id,
-            knowledge_base_id=command.scope.knowledge_base_id,
-            role=MessageRole.USER,
-            status=MessageStatus.RECEIVED,
-            content=UntrustedText(command.query),
-            created_at=now,
-            updated_at=now,
-        )
-        await self._conversation_repo.save_message(command.scope, user_message)
+            # Committed before retrieval or generation begins, so a question that was
+            # asked stays recorded however the rest of the turn goes.
+            user_message = Message(
+                id=uuid.uuid4(),
+                conversation_id=command.conversation_id,
+                user_id=command.scope.user_id,
+                knowledge_base_id=command.scope.knowledge_base_id,
+                role=MessageRole.USER,
+                status=MessageStatus.RECEIVED,
+                content=UntrustedText(command.query),
+                created_at=now,
+                updated_at=now,
+            )
+            await repo.save_message(command.scope, user_message)
 
         evidence = await self._retrieve.execute(
             RetrieveEvidenceQuery(
@@ -113,7 +123,7 @@ class AnswerUseCase:
         inner_stream = self._model_gateway.generate_stream(request)
         scope = command.scope
         conv_id = command.conversation_id
-        repo = self._conversation_repo
+        uow = self._uow
 
         async def _tracked() -> AsyncGenerator[str, None]:
             tokens: list[str] = []
@@ -140,14 +150,18 @@ class AnswerUseCase:
                     created_at=answer_now,
                     updated_at=answer_now,
                 )
-                await repo.save_message(scope, assistant_message)
+                # A fresh unit of work: by now the response has been streamed and the
+                # request that started it is over, so there is no caller's transaction
+                # left to write into.
+                async with uow() as repo:
+                    await repo.save_message(scope, assistant_message)
 
-                # The prompt itself is gone once generation ends, so what went into it
-                # has to be recorded here or the question "did the model actually see
-                # the passage this answer cites?" becomes unanswerable. Written after
-                # the message because the record hangs off it, and written on failure
-                # too — the evidence reached the model either way, and a half-finished
-                # answer can still carry a citation worth checking.
-                await repo.save_retrieval_chunks(scope, assistant_message.id, evidence)
+                    # The prompt itself is gone once generation ends, so what went into
+                    # it has to be recorded here or the question "did the model actually
+                    # see the passage this answer cites?" becomes unanswerable. Written
+                    # after the message because the record hangs off it, and written on
+                    # failure too — the evidence reached the model either way, and a
+                    # half-finished answer can still carry a citation worth checking.
+                    await repo.save_retrieval_chunks(scope, assistant_message.id, evidence)
 
         return _tracked()
