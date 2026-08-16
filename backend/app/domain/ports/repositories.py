@@ -30,6 +30,7 @@ from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.knowledge_base.entities import KnowledgeBase
 from app.domain.memory.entities import MemoryFact
+from app.domain.retrieval.entities import Evidence
 from app.domain.scope import ScopeContext
 
 
@@ -148,6 +149,19 @@ class ConversationRepository(Protocol):
         self, scope: ScopeContext, conversation_id: UUID, *, limit: int = 50
     ) -> Sequence[Message]:
         """Most recent messages first, up to limit."""
+        ...
+
+    async def save_retrieval_chunks(
+        self, scope: ScopeContext, message_id: UUID, evidence: Sequence[Evidence]
+    ) -> None:
+        """Record exactly which chunks were in the model's context for one answer.
+
+        Written against the assistant message, because the question this record
+        exists to answer is asked about an answer: did the passage this claim cites
+        actually reach the model, or did the model invent a citation to something it
+        never saw? Nothing else can settle that — the prompt is gone by the time
+        anyone asks, so the evidence behind it has to be durable.
+        """
         ...
 
 

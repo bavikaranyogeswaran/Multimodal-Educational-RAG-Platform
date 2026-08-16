@@ -1,9 +1,15 @@
 """Tests for SqlConversationRepository against an in-memory SQLite database.
 
 Covers CRUD for both Conversation and Message aggregates, scope isolation,
-result ordering, and the limit parameter on list_messages. The SQLite session
-includes the knowledge_bases, conversations, and messages tables. A KB row is
+result ordering, the limit parameter on list_messages, and the evidence record
+written for each answer. The SQLite session includes the knowledge_bases,
+conversations, messages and conversation_retrieval_chunks tables. A KB row is
 inserted before each test that saves a conversation, to satisfy the FK constraint.
+
+Retrieval-chunk rows reference chunk ids that have no matching row, because the
+chunks table carries PostgreSQL-specific column types and is not created here.
+SQLite does not enforce foreign keys by default, so the reference is accepted and
+these tests stay focused on what the repository writes.
 """
 
 from __future__ import annotations
@@ -14,16 +20,19 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.conversations.entities import Conversation, Message
-from app.domain.enums import MessageRole, MessageStatus
+from app.domain.documents.chunks import Chunk
+from app.domain.enums import ChunkType, MessageRole, MessageStatus, RetrieverKind
 from app.domain.errors import ScopeViolationError
+from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
+from app.infrastructure.database.models.conversation import ConversationRetrievalChunkModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -77,6 +86,47 @@ def _make_msg(
         created_at=ts,
         updated_at=ts,
     )
+
+
+def _make_evidence(
+    scope: ScopeContext,
+    *,
+    rank: int = 0,
+    rerank_score: float | None = -10.5,
+    fusion_score: float | None = None,
+) -> Evidence:
+    return Evidence(
+        label=EvidenceLabel(rank + 1),
+        chunk=Chunk(
+            id=uuid.uuid4(),
+            user_id=scope.user_id,
+            knowledge_base_id=scope.knowledge_base_id,
+            document_id=uuid.uuid4(),
+            chunk_type=ChunkType.TEXT,
+            text=UntrustedText("Backpropagation computes gradients layer by layer."),
+            token_count=9,
+            ordinal=rank,
+            page_start=1,
+            page_end=1,
+            index_version=1,
+            created_at=datetime.now(UTC),
+        ),
+        retrievers=frozenset({RetrieverKind.DENSE}),
+        rank=rank,
+        rerank_score=rerank_score,
+        fusion_score=fusion_score,
+    )
+
+
+async def _retrieval_rows(
+    session: AsyncSession, message_id: uuid.UUID
+) -> list[ConversationRetrievalChunkModel]:
+    stmt = (
+        select(ConversationRetrievalChunkModel)
+        .where(ConversationRetrievalChunkModel.message_id == message_id)
+        .order_by(ConversationRetrievalChunkModel.rank)
+    )
+    return list((await session.execute(stmt)).scalars().all())
 
 
 def _repo(scope: ScopeContext, session: AsyncSession) -> SqlConversationRepository:
@@ -387,6 +437,186 @@ class TestListMessages:
 
 
 # ---------------------------------------------------------------------------
+# save_retrieval_chunks
+# ---------------------------------------------------------------------------
+
+
+class TestSaveRetrievalChunks:
+    async def test_writes_one_row_per_evidence_item(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+
+        evidence = [_make_evidence(scope, rank=i) for i in range(3)]
+        await repo.save_retrieval_chunks(scope, msg.id, evidence)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _retrieval_rows(sqlite_session, msg.id)
+        assert len(rows) == 3
+
+    async def test_stores_chunk_ids_and_ranks(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+
+        evidence = [_make_evidence(scope, rank=i) for i in range(3)]
+        await repo.save_retrieval_chunks(scope, msg.id, evidence)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _retrieval_rows(sqlite_session, msg.id)
+        assert [r.chunk_id for r in rows] == [e.chunk.id for e in evidence]
+        assert [r.rank for r in rows] == [0, 1, 2]
+
+    async def test_stores_rerank_score_when_present(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+
+        evidence = [_make_evidence(scope, rerank_score=-8.25, fusion_score=0.016)]
+        await repo.save_retrieval_chunks(scope, msg.id, evidence)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _retrieval_rows(sqlite_session, msg.id)
+        assert rows[0].score == pytest.approx(-8.25)
+
+    async def test_falls_back_to_fusion_score(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+
+        # Reranking did not run, so fusion is the last stage that scored this chunk.
+        evidence = [_make_evidence(scope, rerank_score=None, fusion_score=0.016)]
+        await repo.save_retrieval_chunks(scope, msg.id, evidence)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _retrieval_rows(sqlite_session, msg.id)
+        assert rows[0].score == pytest.approx(0.016)
+
+    async def test_falls_back_to_zero_when_no_stage_scored(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+
+        evidence = [_make_evidence(scope, rerank_score=None, fusion_score=None)]
+        await repo.save_retrieval_chunks(scope, msg.id, evidence)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _retrieval_rows(sqlite_session, msg.id)
+        assert rows[0].score == pytest.approx(0.0)
+
+    async def test_empty_evidence_writes_nothing(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+
+        await repo.save_retrieval_chunks(scope, msg.id, [])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert await _retrieval_rows(sqlite_session, msg.id) == []
+
+    async def test_rewriting_the_same_message_replaces_rather_than_duplicates(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+
+        evidence = [_make_evidence(scope, rank=0, rerank_score=-9.0)]
+        await repo.save_retrieval_chunks(scope, msg.id, evidence)
+        await sqlite_session.flush()
+
+        rescored = [replace(evidence[0], rerank_score=-4.0)]
+        await repo.save_retrieval_chunks(scope, msg.id, rescored)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _retrieval_rows(sqlite_session, msg.id)
+        assert len(rows) == 1
+        assert rows[0].score == pytest.approx(-4.0)
+
+    async def test_separate_messages_keep_separate_records(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        first = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT, age_seconds=60)
+        second = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, first)
+        await repo.save_message(scope, second)
+        await sqlite_session.flush()
+
+        await repo.save_retrieval_chunks(scope, first.id, [_make_evidence(scope)])
+        await repo.save_retrieval_chunks(
+            scope, second.id, [_make_evidence(scope, rank=i) for i in range(2)]
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert len(await _retrieval_rows(sqlite_session, first.id)) == 1
+        assert len(await _retrieval_rows(sqlite_session, second.id)) == 2
+
+
+# ---------------------------------------------------------------------------
 # Scope guard — a call carrying someone else's scope never reaches the session
 # ---------------------------------------------------------------------------
 
@@ -442,3 +672,13 @@ class TestConversationScopeGuard:
         with pytest.raises(ScopeViolationError):
             await repo.list_messages(_make_scope(), uuid.uuid4())
         session.execute.assert_not_called()
+
+    async def test_save_retrieval_chunks_rejects_foreign_scope(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        repo = _repo(scope, session)
+        with pytest.raises(ScopeViolationError):
+            await repo.save_retrieval_chunks(
+                _make_scope(), uuid.uuid4(), [_make_evidence(scope)]
+            )
+        session.merge.assert_not_called()

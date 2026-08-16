@@ -11,9 +11,14 @@ from sqlalchemy import select
 
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.enums import MessageRole, MessageStatus
+from app.domain.retrieval.entities import Evidence
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
-from app.infrastructure.database.models.conversation import ConversationModel, MessageModel
+from app.infrastructure.database.models.conversation import (
+    ConversationModel,
+    ConversationRetrievalChunkModel,
+    MessageModel,
+)
 from app.infrastructure.database.repository import ScopedRepository
 
 
@@ -85,6 +90,41 @@ class SqlConversationRepository(ScopedRepository):
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_msg_to_entity(row) for row in rows]
+
+    async def save_retrieval_chunks(
+        self, scope: ScopeContext, message_id: UUID, evidence: Sequence[Evidence]
+    ) -> None:
+        self._require_scope(scope)
+        if not evidence:
+            return
+        now = datetime.now(UTC)
+        for item in evidence:
+            # merge rather than add, so re-running generation for the same message
+            # overwrites its previous record instead of colliding on the composite key.
+            await self._session.merge(
+                ConversationRetrievalChunkModel(
+                    message_id=message_id,
+                    chunk_id=item.chunk.id,
+                    rank=item.rank,
+                    score=_persisted_score(item),
+                    created_at=now,
+                )
+            )
+
+
+def _persisted_score(item: Evidence) -> float:
+    """The score that explains the stored rank, taking the last stage that produced one.
+
+    Reranking decides the final order when it runs, so its score is the one that makes
+    the rank intelligible. Fusion score stands in when the pipeline returned before
+    reranking. Zero is the last resort: the column is not nullable because a row
+    recording position without any score behind it is a record nobody can interpret.
+    """
+    if item.rerank_score is not None:
+        return item.rerank_score
+    if item.fusion_score is not None:
+        return item.fusion_score
+    return 0.0
 
 
 def _utc(dt: datetime) -> datetime:

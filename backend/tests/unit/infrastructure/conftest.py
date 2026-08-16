@@ -3,7 +3,8 @@
 The `sqlite_session` fixture provides an in-memory SQLite database for repositories
 whose ORM models contain no PostgreSQL-specific column types. The following tables are
 created: knowledge_bases, documents, document_pages, conversations, messages,
-memory_facts, graph_entities, and graph_relationships — all standard SQL types.
+conversation_retrieval_chunks, memory_facts, graph_entities, and graph_relationships —
+all standard SQL types.
 
 DocumentElementModel (ARRAY) and ChunkModel (Vector + ARRAY + TSVECTOR) are not
 created in SQLite. Tests for those repository methods use AsyncMock sessions instead.
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.infrastructure.database.base import Base
 from app.infrastructure.database.models.conversation import (
     ConversationModel,
+    ConversationRetrievalChunkModel,
     MemoryFactModel,
     MessageModel,
 )
@@ -48,6 +50,7 @@ async def sqlite_session() -> AsyncIterator[AsyncSession]:
         Base.metadata.tables[DocumentPageModel.__tablename__],
         Base.metadata.tables[ConversationModel.__tablename__],
         Base.metadata.tables[MessageModel.__tablename__],
+        Base.metadata.tables[ConversationRetrievalChunkModel.__tablename__],
         Base.metadata.tables[MemoryFactModel.__tablename__],
         Base.metadata.tables[GraphEntityModel.__tablename__],
         Base.metadata.tables[GraphRelationshipModel.__tablename__],
