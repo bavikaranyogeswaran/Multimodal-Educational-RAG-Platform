@@ -26,7 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.documents.chunks import Chunk
-from app.domain.enums import ChunkType, MessageRole, MessageStatus, RetrieverKind
+from app.domain.enums import (
+    ChunkType,
+    DocumentStatus,
+    MessageRole,
+    MessageStatus,
+    RetrieverKind,
+)
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -93,10 +99,10 @@ async def seed(test_db_url: str) -> AsyncIterator[_Seed]:
         await conn.execute(
             text(
                 "INSERT INTO documents (id, user_id, knowledge_base_id, filename, "
-                "storage_key, content_type, size_bytes, processing_status, "
+                "storage_key, content_type, byte_size, status, "
                 "created_at, updated_at) "
                 "VALUES (:id, :user_id, :kb_id, :filename, :storage_key, :content_type, "
-                ":size_bytes, :status, :now, :now)"
+                ":byte_size, :status, :now, :now)"
             ),
             {
                 "id": document_id,
@@ -105,8 +111,8 @@ async def seed(test_db_url: str) -> AsyncIterator[_Seed]:
                 "filename": "integration.pdf",
                 "storage_key": f"{user_id}/{kb_id}/{document_id}/original.pdf",
                 "content_type": "application/pdf",
-                "size_bytes": 1024,
-                "status": "COMPLETED",
+                "byte_size": 1024,
+                "status": DocumentStatus.COMPLETED.value,
                 "now": now,
             },
         )
