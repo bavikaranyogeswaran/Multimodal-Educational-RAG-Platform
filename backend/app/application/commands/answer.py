@@ -8,16 +8,19 @@ provider surface as ProviderError when the caller first advances the returned it
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery, RetrievalOrchestrator
-from app.domain.enums import ModelTask
+from app.domain.conversations.entities import Message
+from app.domain.enums import MessageRole, MessageStatus, ModelTask
 from app.domain.models.entities import ConversationTurn, ModelRequest
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import ConversationRepository
 from app.domain.retrieval.entities import RetrievalFilters
 from app.domain.scope import ScopeContext
+from app.domain.values import UntrustedText
 
 _SYSTEM_PREAMBLE = (
     "You are a knowledgeable educational tutor helping students understand their course material. "
@@ -61,16 +64,30 @@ class AnswerUseCase:
         self._model_gateway = model_gateway
 
     async def execute(self, command: AnswerCommand) -> AsyncIterator[str]:
-        # History is loaded first so the orchestrator can pass it to the rewriter.
+        now = datetime.now(UTC)
+
+        # History loaded first — the rewriter needs only prior turns, not the current question.
         messages = await self._conversation_repo.list_messages(
             command.scope, command.conversation_id, limit=command.max_history
         )
-        # list_messages returns newest-first; the model and rewriter both receive turns
-        # in chronological order.
         history = tuple(
             ConversationTurn(role=msg.role, content=msg.content)
             for msg in reversed(list(messages))
         )
+
+        # User message persisted before retrieval or generation begins.
+        user_message = Message(
+            id=uuid.uuid4(),
+            conversation_id=command.conversation_id,
+            user_id=command.scope.user_id,
+            knowledge_base_id=command.scope.knowledge_base_id,
+            role=MessageRole.USER,
+            status=MessageStatus.RECEIVED,
+            content=UntrustedText(command.query),
+            created_at=now,
+            updated_at=now,
+        )
+        await self._conversation_repo.save_message(command.scope, user_message)
 
         evidence = await self._retrieve.execute(
             RetrieveEvidenceQuery(
@@ -93,4 +110,36 @@ class AnswerUseCase:
             query=command.query,
         )
 
-        return self._model_gateway.generate_stream(request)
+        inner_stream = self._model_gateway.generate_stream(request)
+        scope = command.scope
+        conv_id = command.conversation_id
+        repo = self._conversation_repo
+
+        async def _tracked() -> AsyncGenerator[str, None]:
+            tokens: list[str] = []
+            failed = False
+            try:
+                async for token in inner_stream:
+                    tokens.append(token)
+                    yield token
+            except Exception:
+                failed = True
+                raise
+            finally:
+                status = MessageStatus.FAILED if failed else MessageStatus.COMPLETED
+                content_text = "".join(tokens) if tokens else "(generation failed)"
+                answer_now = datetime.now(UTC)
+                assistant_message = Message(
+                    id=uuid.uuid4(),
+                    conversation_id=conv_id,
+                    user_id=scope.user_id,
+                    knowledge_base_id=scope.knowledge_base_id,
+                    role=MessageRole.ASSISTANT,
+                    status=status,
+                    content=UntrustedText(content_text),
+                    created_at=answer_now,
+                    updated_at=answer_now,
+                )
+                await repo.save_message(scope, assistant_message)
+
+        return _tracked()

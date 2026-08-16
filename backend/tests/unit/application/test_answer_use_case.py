@@ -60,6 +60,7 @@ def _mock_retrieve(evidence: list | None = None) -> AsyncMock:
 def _mock_repo(messages: list | None = None) -> AsyncMock:
     repo = AsyncMock()
     repo.list_messages = AsyncMock(return_value=messages or [])
+    repo.save_message = AsyncMock()
     return repo
 
 
@@ -184,3 +185,98 @@ class TestAnswerUseCase:
         assert len(query_arg.history) == 2
         assert query_arg.history[0].role is MessageRole.USER
         assert query_arg.history[1].role is MessageRole.ASSISTANT
+
+
+# ---------------------------------------------------------------------------
+# Message persistence
+# ---------------------------------------------------------------------------
+
+
+class TestMessagePersistence:
+    async def test_user_message_saved_during_execute(self) -> None:
+        repo = _mock_repo()
+        await _make_use_case(repo=repo).execute(_BASE_CMD)
+        # save_message for the user turn is called eagerly inside execute(), before
+        # the caller even touches the returned generator.
+        assert repo.save_message.await_count >= 1
+
+    async def test_user_message_has_received_status(self) -> None:
+        repo = _mock_repo()
+        await _make_use_case(repo=repo).execute(_BASE_CMD)
+        saved: Message = repo.save_message.call_args_list[0].args[1]
+        assert saved.role is MessageRole.USER
+        assert saved.status is MessageStatus.RECEIVED
+
+    async def test_user_message_content_matches_query(self) -> None:
+        repo = _mock_repo()
+        await _make_use_case(repo=repo).execute(_BASE_CMD)
+        saved: Message = repo.save_message.call_args_list[0].args[1]
+        assert saved.content.value == _BASE_CMD.query
+
+    async def test_user_message_saved_before_retrieval(self) -> None:
+        call_order: list[str] = []
+
+        repo = _mock_repo()
+        repo.save_message = AsyncMock(
+            side_effect=lambda *a, **kw: call_order.append("save_message")
+        )
+        retrieve = _mock_retrieve()
+        retrieve.execute = AsyncMock(
+            side_effect=lambda *a, **kw: call_order.append("retrieve") or []
+        )
+
+        await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
+
+        assert call_order.index("save_message") < call_order.index("retrieve")
+
+    async def test_assistant_message_saved_after_stream_consumed(self) -> None:
+        tokens = ["Back", "prop", "agation"]
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo, gateway=_mock_gateway(tokens=tokens)).execute(
+            _BASE_CMD
+        )
+        _ = [t async for t in stream]
+        # Two calls: user message + assistant message.
+        assert repo.save_message.await_count == 2
+
+    async def test_assistant_message_content_is_joined_tokens(self) -> None:
+        tokens = ["Back", "prop", "agation"]
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo, gateway=_mock_gateway(tokens=tokens)).execute(
+            _BASE_CMD
+        )
+        _ = [t async for t in stream]
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert assistant.content.value == "Backpropagation"
+
+    async def test_assistant_message_has_completed_status(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo, gateway=_mock_gateway(tokens=["ok"])).execute(
+            _BASE_CMD
+        )
+        _ = [t async for t in stream]
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert assistant.role is MessageRole.ASSISTANT
+        assert assistant.status is MessageStatus.COMPLETED
+
+    async def test_failed_message_saved_on_stream_error(self) -> None:
+        async def _failing():
+            yield "partial"
+            raise RuntimeError("model error")
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(return_value=_failing())
+        repo = _mock_repo()
+
+        stream = await _make_use_case(repo=repo, gateway=gateway).execute(_BASE_CMD)
+
+        try:
+            async for _ in stream:
+                pass
+        except RuntimeError:
+            pass
+
+        assert repo.save_message.await_count == 2
+        failed: Message = repo.save_message.call_args_list[1].args[1]
+        assert failed.role is MessageRole.ASSISTANT
+        assert failed.status is MessageStatus.FAILED
