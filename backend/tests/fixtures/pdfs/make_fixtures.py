@@ -42,10 +42,18 @@ def _escape(text: str) -> str:
 # so the behaviour stays covered.
 
 
-def _build(pages: list[str], *, rotation: int = 0) -> bytes:
-    """Assemble a PDF from per-page content streams, fixing up the xref offsets."""
+def _build(pages: list[str], *, rotation: int = 0, with_image: bool = False) -> bytes:
+    """Assemble a PDF from per-page content streams, fixing up the xref offsets.
+
+    `with_image` adds a tiny grayscale image XObject that every page can draw. It exists
+    so a fixture can carry a real embedded image rather than a stand-in, because image
+    detection reads the page's resources and a stand-in would not be there to find.
+    """
     page_ids = [4 + i * 2 for i in range(len(pages))]
     content_ids = [5 + i * 2 for i in range(len(pages))]
+    # Must be contiguous with the rest: the cross-reference table lists every
+    # number from one to the highest, and a gap makes the file unreadable.
+    image_id = (max(content_ids) if content_ids else 3) + 1
 
     objects: dict[int, str] = {
         1: "<< /Type /Catalog /Pages 2 0 R >>",
@@ -55,11 +63,23 @@ def _build(pages: list[str], *, rotation: int = 0) -> bytes:
         ),
         3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     }
+    if with_image:
+        # Two-by-two grayscale. The content is irrelevant; its presence is the point.
+        objects[image_id] = (
+            "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+            "/ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>\n"
+            "stream\n\x00\x40\x80\xff\nendstream"
+        )
+
+    resources = "/Font << /F1 3 0 R >>"
+    if with_image:
+        resources += f" /XObject << /Im1 {image_id} 0 R >>"
+
     for page_id, content_id, content in zip(page_ids, content_ids, pages, strict=True):
         rotate = f" /Rotate {rotation}" if rotation else ""
         objects[page_id] = (
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_PAGE_WIDTH} {_PAGE_HEIGHT}]"
-            f"{rotate} /Resources << /Font << /F1 3 0 R >> >> "
+            f"{rotate} /Resources << {resources} >> "
             f"/Contents {content_id} 0 R >>"
         )
         objects[content_id] = f"<< /Length {len(content)} >>\nstream\n{content}\nendstream"
@@ -206,6 +226,52 @@ def _empty_page_sample() -> bytes:
     return _build([""])
 
 
+def _structured_sample() -> bytes:
+    """One page carrying every element type this parser can tell apart.
+
+    A heading set larger than the body, a paragraph, a bulleted list, a ruled table, a
+    caption under it, and an embedded image. The table is drawn with real stroked lines
+    because table detection looks for them — a table implied only by alignment would not
+    be found, which is itself a limitation worth knowing rather than papering over.
+    """
+    text = _text_ops(
+        [
+            (72, 720, 18, "Results and Discussion"),
+            *_prose_block(
+                690,
+                [
+                    "The measurements below were collected over three runs of the",
+                    "training procedure, with the learning rate held constant.",
+                ],
+            ),
+            (72, 640, 10, "- Accuracy improved on every run"),
+            (72, 626, 10, "- Loss decreased monotonically"),
+            (72, 612, 10, "- Variance across runs stayed small"),
+            # Cells of the ruled table below.
+            (110, 545, 10, "Run"),
+            (310, 545, 10, "Accuracy"),
+            (110, 505, 10, "1"),
+            (310, 505, 10, "0.91"),
+            (110, 465, 10, "2"),
+            (310, 465, 10, "0.94"),
+            (72, 420, 9, "Table 1: Accuracy by run."),
+            (72, 250, 9, "Figure 1: Loss curve over training steps."),
+        ]
+    )
+    # A three-row grid: outer box, two horizontal rules, one vertical rule.
+    table = "\n".join(
+        [
+            "1 w",
+            "100 450 400 120 re S",
+            "100 530 m 500 530 l S",
+            "100 490 m 500 490 l S",
+            "300 450 m 300 570 l S",
+        ]
+    )
+    image = "q 200 150 0 0 0 0 cm Q\nq 200 0 0 150 100 270 cm /Im1 Do Q"
+    return _build(["\n".join([table, image, text])], with_image=True)
+
+
 def _no_pages_sample() -> bytes:
     """Structurally valid, and containing no pages at all.
 
@@ -220,6 +286,7 @@ _FIXTURES = {
     "single_line_sample.pdf": _single_line_sample,
     "rotated_sample.pdf": _rotated_sample,
     "empty_page_sample.pdf": _empty_page_sample,
+    "structured_sample.pdf": _structured_sample,
     "no_pages_sample.pdf": _no_pages_sample,
 }
 

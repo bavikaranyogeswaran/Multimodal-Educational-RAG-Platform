@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **5.4** — element typing |
+| Next step | **5.5** — reading order and columns |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -991,7 +991,7 @@ nothing consumes them.
 
 Covers §13, §14, §15, §16.
 
-**Status: in progress — 3 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
+**Status: in progress — 4 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
 `app/infrastructure/ocr/` are empty packages. What exists instead is a deliberate placeholder:
 `_extract_pdf_pages` in `app/worker/__main__.py` reads native text with `pypdf` and skips pages
 that return none. A scanned page yields nothing and the document still completes, so it is
@@ -1018,7 +1018,7 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 | 5.1 | `PageClassifier` — pure rules over per-page signals → `PageKind` | S | ✅ |
 | 5.2 | `PdfPlumberParser` behind `PdfParserPort`; golden-file tests introduced | M | ✅ |
 | 5.3 | Rewire ingestion — parse, classify, persist pages and elements | M | ✅ |
-| 5.4 | Element typing — headings, lists, captions, formulas, table and figure regions | M | ☐ |
+| 5.4 | Element typing — headings, lists, captions, formulas, table and figure regions | M | ✅ |
 | 5.5 | Reading-order resolution, multi-column handling, `heading_path` | M | ☐ |
 | 5.6 | Page rendering via `pypdfium2` into the TTL cache prefix | S | ☐ |
 | — | **Reassess before committing to OCR** | | |
@@ -1061,14 +1061,14 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 - [x] Tests: pages and elements are persisted under the calling scope; a document with no
       extractable text still completes with its pages recorded
 
-### 5.4 — Element typing
+### 5.4 — Element typing ✅
 
-- [ ] `HEADING` from font size relative to page body text, weight, and position; `LIST` from
+- [x] `HEADING` from font size relative to page body text, weight, and position; `LIST` from
       leading markers and hanging indents; `CAPTION` from proximity to a table or figure region
       plus a leading label; `FORMULA` from glyph and symbol density
-- [ ] `TABLE` and `FIGURE` **regions** detected and recorded with their bounding boxes. Their
+- [x] `TABLE` and `FIGURE` **regions** detected and recorded with their bounding boxes. Their
       contents are Phase 6 — this step establishes only that a region is there and where
-- [ ] Tests: a heading is not classified from font size alone when the whole page is large type;
+- [x] Tests: a heading is not classified from font size alone when the whole page is large type;
       a caption is not attached across a column boundary
 
 ### 5.5 — Reading order, columns and heading path

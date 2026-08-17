@@ -249,6 +249,28 @@ class ParsingSettings(BaseSettings):
     #: element. Page numbers and stray marks would otherwise each become a paragraph.
     min_element_characters: int = 2
 
+    #: How much larger than its page's body text a run has to be set before it reads as
+    #: a heading. A ratio rather than a size, so the rule holds on a slide deck and a
+    #: large-print edition as well as on a textbook.
+    heading_size_ratio: float = 1.15
+
+    #: Headings are short. Beyond this many lines a run is prose however it is set,
+    #: which is what stops an emphasised sentence from being promoted to a title.
+    heading_max_lines: int = 3
+
+    #: Share of visible characters that must be mathematical symbols before a run is
+    #: treated as a formula rather than as a sentence that happens to contain one.
+    formula_symbol_ratio: float = 0.25
+
+    @model_validator(mode="after")
+    def _heading_ratio_exceeds_body_text(self) -> ParsingSettings:
+        if self.heading_size_ratio <= 1.0:
+            raise ValueError(
+                "heading_size_ratio must exceed 1.0 — at or below it, body text is the "
+                "same size as the threshold and every paragraph reads as a heading"
+            )
+        return self
+
     @model_validator(mode="after")
     def _gap_multiplier_exceeds_one_line(self) -> ParsingSettings:
         if self.paragraph_gap_multiplier <= 1.0:

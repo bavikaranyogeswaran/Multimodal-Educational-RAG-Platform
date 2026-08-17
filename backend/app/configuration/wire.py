@@ -69,6 +69,9 @@ def _build_reranker(settings: Settings) -> RerankerPort:
 
 def _build_pdf_parser(settings: Settings) -> PdfParserPort:
     try:
+        from app.domain.documents.element_classifier import (  # noqa: PLC0415
+            ElementClassifier,
+        )
         from app.domain.documents.page_classifier import PageClassifier  # noqa: PLC0415
         from app.infrastructure.parsing.pdfplumber_parser import (  # noqa: PLC0415
             PdfPlumberParser,
@@ -80,6 +83,11 @@ def _build_pdf_parser(settings: Settings) -> PdfParserPort:
                 native_text_coverage_threshold=settings.ocr.native_text_coverage_threshold,
                 image_coverage_threshold=settings.ocr.image_coverage_threshold,
                 complex_vector_drawing_threshold=settings.ocr.complex_vector_drawing_threshold,
+            ),
+            ElementClassifier(
+                heading_size_ratio=settings.parsing.heading_size_ratio,
+                heading_max_lines=settings.parsing.heading_max_lines,
+                formula_symbol_ratio=settings.parsing.formula_symbol_ratio,
             ),
             paragraph_gap_multiplier=settings.parsing.paragraph_gap_multiplier,
             min_element_characters=settings.parsing.min_element_characters,

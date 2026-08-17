@@ -8,7 +8,7 @@
     "elements": [
       {
         "reading_order": 0,
-        "element_type": "PARAGRAPH",
+        "element_type": "HEADING",
         "processing_method": "NATIVE_TEXT",
         "text": "Introduction to Backpropagation",
         "bounding_box": [
@@ -89,7 +89,7 @@
     "elements": [
       {
         "reading_order": 0,
-        "element_type": "PARAGRAPH",
+        "element_type": "HEADING",
         "processing_method": "NATIVE_TEXT",
         "text": "The Backward Pass in Detail",
         "bounding_box": [

@@ -6,10 +6,11 @@ each page has to be read, and enough to produce elements for every page whose te
 can be trusted. Pages it cannot read this way come back empty and are left for optical
 recognition, rather than being half-read into something that looks like content.
 
-Elements are emitted as paragraphs here and nothing finer. Distinguishing a heading from
-a paragraph, and ordering elements across columns, both need judgements this step does
-not make yet; emitting everything as a paragraph is the honest placeholder, because it
-claims only what has actually been established.
+Elements are typed by how they are set — a heading by being larger or heavier than the
+body around it, a list by its markers, a caption by its label. Tables and figures are
+found by looking at the page rather than at a run of text, and are recorded as regions
+whose contents a later stage fills in. Ordering across columns is still to come, so
+elements are ordered straight down the page for now.
 
 pdfplumber is synchronous and CPU-bound, and the worker that calls this runs a heartbeat
 on the same event loop to hold the job's lease. Parsing on that loop would stall the
@@ -23,6 +24,7 @@ import asyncio
 import io
 import uuid
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -30,6 +32,7 @@ from uuid import UUID
 import pdfplumber
 import structlog
 
+from app.domain.documents.element_classifier import ElementClassifier, ElementSignals
 from app.domain.documents.entities import DocumentElement, DocumentPage
 from app.domain.documents.page_classifier import PageClassifier, PageSignals
 from app.domain.enums import ElementType, PageKind, ProcessingMethod
@@ -41,23 +44,45 @@ _log = structlog.get_logger(__name__)
 
 ParsedPage = tuple[DocumentPage, Sequence[DocumentElement]]
 
+# (x0, top, x1, bottom) in pdfplumber's downward-measured coordinates.
+_Region = tuple[float, float, float, float]
+
+
+@dataclass(frozen=True, slots=True)
+class _Draft:
+    """An element found on a page, before it is given an identity and a reading order.
+
+    Positions stay in pdfplumber's downward coordinates while ordering is decided,
+    because ordering down a page is what they express directly. They are flipped to the
+    upward system once, at the point the real element is built.
+    """
+
+    element_type: ElementType
+    text: str
+    top: float
+    bottom: float
+    left: float
+    right: float
+
 
 class PdfPlumberParser:
     """`PdfParserPort` over the embedded text layer.
 
-    The classifier is injected rather than constructed here: deciding how a page must be
-    read is a rule, and rules belong in the domain where they can be changed without a
-    PDF to hand.
+    Both classifiers are injected rather than constructed here: deciding how a page must
+    be read, and what a run of text is, are rules, and rules belong in the domain where
+    they can be changed and tested without a PDF to hand.
     """
 
     def __init__(
         self,
-        classifier: PageClassifier,
+        page_classifier: PageClassifier,
+        element_classifier: ElementClassifier,
         *,
         paragraph_gap_multiplier: float,
         min_element_characters: int,
     ) -> None:
-        self._classifier = classifier
+        self._page_classifier = page_classifier
+        self._classifier = element_classifier
         self._paragraph_gap_multiplier = paragraph_gap_multiplier
         self._min_element_characters = min_element_characters
 
@@ -118,7 +143,7 @@ class PdfPlumberParser:
         now: datetime,
     ) -> ParsedPage:
         signals = _page_signals(page)
-        kind = self._classifier.classify(signals)
+        kind = self._page_classifier.classify(signals)
 
         document_page = DocumentPage(
             id=uuid.uuid4(),
@@ -147,29 +172,80 @@ class PdfPlumberParser:
         document_id: UUID,
         scope: ScopeContext,
         now: datetime,
-    ) -> Iterator[DocumentElement]:
+    ) -> list[DocumentElement]:
+        """Every element on the page, ordered down it.
+
+        Text runs, tables and figures are gathered separately because they are found in
+        different ways, then interleaved by position. Sorting at the end rather than
+        emitting each group in turn is what keeps a figure between the paragraphs it sits
+        between, instead of after all of them.
+        """
         page_height = float(page.height)
-        reading_order = 0
-        for block in self._paragraph_blocks(page):
-            text = " ".join(line["text"].strip() for line in block).strip()
-            if len(text) < self._min_element_characters:
-                continue
-            yield DocumentElement(
+        body_size = _page_body_font_size(page)
+        table_regions = _table_regions(page)
+
+        drafts: list[_Draft] = []
+        drafts.extend(_figure_drafts(page))
+        drafts.extend(_table_drafts(page, table_regions))
+        drafts.extend(
+            self._text_drafts(page, table_regions, body_size)
+        )
+        drafts.sort(key=lambda draft: (draft.top, draft.left))
+
+        return [
+            DocumentElement(
                 id=uuid.uuid4(),
                 user_id=scope.user_id,
                 knowledge_base_id=scope.knowledge_base_id,
                 document_id=document_id,
                 page_number=page_number,
-                element_type=ElementType.PARAGRAPH,
-                text=UntrustedText(text),
-                reading_order=reading_order,
+                element_type=draft.element_type,
+                text=UntrustedText(draft.text),
+                reading_order=order,
                 processing_method=ProcessingMethod.NATIVE_TEXT,
                 created_at=now,
-                bounding_box=_block_bounds(block, page_height),
+                bounding_box=_flip(draft, page_height),
             )
-            reading_order += 1
+            for order, draft in enumerate(drafts)
+        ]
 
-    def _paragraph_blocks(self, page: Any) -> Iterator[list[dict[str, Any]]]:
+    def _text_drafts(
+        self,
+        page: Any,
+        table_regions: list[_Region],
+        body_size: float,
+    ) -> Iterator[_Draft]:
+        for block in self._paragraph_blocks(page, table_regions):
+            lines = [line["text"].strip() for line in block]
+            text = " ".join(lines).strip()
+            if len(text) < self._min_element_characters:
+                continue
+            element_type = self._classifier.classify(
+                ElementSignals(
+                    text=text,
+                    font_size=_block_font_size(block),
+                    page_body_font_size=body_size,
+                    is_bold=_block_is_bold(block),
+                    line_count=len(block),
+                )
+            )
+            # Prose wraps mid-sentence, so its lines rejoin with a space. A list does
+            # not wrap — each line is a separate item — and joining those with a space
+            # runs them together into one sentence that was never written.
+            if element_type is ElementType.LIST:
+                text = "\n".join(lines).strip()
+            yield _Draft(
+                element_type=element_type,
+                text=text,
+                top=min(float(line["top"]) for line in block),
+                bottom=max(float(line["bottom"]) for line in block),
+                left=min(float(line["x0"]) for line in block),
+                right=max(float(line["x1"]) for line in block),
+            )
+
+    def _paragraph_blocks(
+        self, page: Any, table_regions: list[_Region]
+    ) -> Iterator[list[dict[str, Any]]]:
         """Group text lines into paragraphs on vertical spacing.
 
         Lines arrive top to bottom. A gap larger than a line height by more than the
@@ -184,7 +260,18 @@ class PdfPlumberParser:
         break either way. Taking the larger would swallow every heading into the
         paragraph that follows it.
         """
-        lines = sorted(page.extract_text_lines(), key=lambda line: (line["top"], line["x0"]))
+        lines = sorted(
+            (
+                line
+                for line in page.extract_text_lines()
+                # Text inside a table is reported as ordinary lines as well. Left in, it
+                # would appear twice — once flattened into a paragraph and once inside
+                # the table element — and the flattened copy is the one that would mix
+                # rows together and lose which column a number came from.
+                if not _falls_inside(line, table_regions)
+            ),
+            key=lambda line: (line["top"], line["x0"]),
+        )
         block: list[dict[str, Any]] = []
         for line in lines:
             if block:
@@ -254,23 +341,130 @@ def _line_height(line: dict[str, Any]) -> float:
     return float(line["bottom"]) - float(line["top"])
 
 
-def _block_bounds(block: Sequence[dict[str, Any]], page_height: float) -> BoundingBox | None:
-    """One box around every line in the paragraph, in bottom-left origin coordinates.
+# ---------------------------------------------------------------------------
+# Tables and figures — found by looking at the page rather than at a run of text
+# ---------------------------------------------------------------------------
 
-    The two coordinate systems have to be reconciled here. pdfplumber measures `top` and
-    `bottom` downwards from the top of the page; `BoundingBox` measures upwards from the
-    bottom, which is what a PDF viewer and a citation highlight both expect. Subtracting
-    from the page height flips the axis, and it also swaps which value is which — the
-    line's `top`, being the smaller number in a downward system, becomes the larger `y1`
-    in an upward one.
 
-    Returns None when the lines carry no usable extent: a zero-area box fails the value
-    object's invariant, and no box is a truthful answer where a degenerate one is not.
+def _table_regions(page: Any) -> list[_Region]:
+    try:
+        return [tuple(float(value) for value in table.bbox) for table in page.find_tables()]  # type: ignore[misc]
+    except Exception:
+        # Table detection is heuristic and its failure is not a reason to lose the page.
+        # Without regions the text inside a table is read as prose, which is the
+        # behaviour of the step before this one rather than a new kind of wrong.
+        return []
+
+
+def _table_drafts(page: Any, regions: list[_Region]) -> Iterator[_Draft]:
+    """One element per detected table, carrying its cell text laid out in rows.
+
+    The text is joined rather than structured. Headers, units and row grouping are a
+    later concern; what matters here is that the table exists, where it is, and that its
+    contents are not scattered through the surrounding prose.
     """
-    x0 = min(float(line["x0"]) for line in block)
-    x1 = max(float(line["x1"]) for line in block)
-    y0 = page_height - max(float(line["bottom"]) for line in block)
-    y1 = page_height - min(float(line["top"]) for line in block)
-    if x1 <= x0 or y1 <= y0:
+    for region, table in zip(regions, page.find_tables(), strict=False):
+        rows = table.extract()
+        text = "\n".join(
+            " | ".join(cell.strip() for cell in row if cell) for row in rows if any(row)
+        ).strip()
+        x0, top, x1, bottom = region
+        yield _Draft(
+            element_type=ElementType.TABLE,
+            text=text,
+            top=top,
+            bottom=bottom,
+            left=x0,
+            right=x1,
+        )
+
+
+def _figure_drafts(page: Any) -> Iterator[_Draft]:
+    """One element per embedded image, carrying its position and no text.
+
+    A figure has nothing to say until something looks at it. Recording it empty is what
+    lets a later stage find it — the alternative, inventing a description now, would put
+    text into the document that the document does not contain.
+    """
+    for image in page.images:
+        yield _Draft(
+            element_type=ElementType.FIGURE,
+            text="",
+            top=float(image["top"]),
+            bottom=float(image["bottom"]),
+            left=float(image["x0"]),
+            right=float(image["x1"]),
+        )
+
+
+def _falls_inside(line: dict[str, Any], regions: list[_Region]) -> bool:
+    """Whether a line's centre sits within any region.
+
+    The centre rather than the whole box, so a line that grazes a table's border by a
+    fraction of a point is still judged by where it actually is.
+    """
+    mid_x = (float(line["x0"]) + float(line["x1"])) / 2
+    mid_y = (float(line["top"]) + float(line["bottom"])) / 2
+    return any(
+        x0 <= mid_x <= x1 and top <= mid_y <= bottom for x0, top, x1, bottom in regions
+    )
+
+
+# ---------------------------------------------------------------------------
+# Type signals
+# ---------------------------------------------------------------------------
+
+
+def _page_body_font_size(page: Any) -> float:
+    """The page's dominant type size — what every element on it is judged against.
+
+    The median across characters rather than the mean, so a page with one very large
+    title is still measured by its body text. Falls back to a nominal size on a page with
+    no characters, where nothing will be classified anyway.
+    """
+    sizes = sorted(float(char["size"]) for char in page.chars if char.get("size"))
+    if not sizes:
+        return 10.0
+    return sizes[len(sizes) // 2]
+
+
+def _block_font_size(block: Sequence[dict[str, Any]]) -> float:
+    sizes = sorted(
+        float(char["size"])
+        for line in block
+        for char in line.get("chars", ())
+        if char.get("size")
+    )
+    if not sizes:
+        return 10.0
+    return sizes[len(sizes) // 2]
+
+
+def _block_is_bold(block: Sequence[dict[str, Any]]) -> bool:
+    """Whether most of the block is set in a bold face.
+
+    Most rather than any, because a single emphasised word inside a sentence does not
+    make the sentence a heading.
+    """
+    fonts = [
+        str(char.get("fontname", ""))
+        for line in block
+        for char in line.get("chars", ())
+    ]
+    if not fonts:
+        return False
+    bold = sum("bold" in font.lower() or "black" in font.lower() for font in fonts)
+    return bold * 2 > len(fonts)
+
+
+def _flip(draft: _Draft, page_height: float) -> BoundingBox | None:
+    """A draft's position as a bounding box, measured upward from the bottom.
+
+    Returns None for a degenerate region rather than a zero-area box, which the value
+    object refuses and which would in any case describe nothing.
+    """
+    y0 = page_height - draft.bottom
+    y1 = page_height - draft.top
+    if draft.right <= draft.left or y1 <= y0:
         return None
-    return BoundingBox(x0=x0, y0=y0, x1=x1, y1=y1)
+    return BoundingBox(x0=draft.left, y0=y0, x1=draft.right, y1=y1)

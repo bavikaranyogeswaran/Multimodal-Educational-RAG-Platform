@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from app.domain.documents.element_classifier import ElementClassifier
 from app.domain.documents.page_classifier import PageClassifier
 from app.domain.enums import ElementType, PageKind, ProcessingMethod
 from app.domain.errors import UploadValidationError
@@ -47,11 +48,27 @@ def _classifier(**overrides: Any) -> PageClassifier:
     return PageClassifier(**{**defaults, **overrides})
 
 
-def _parser(classifier: PageClassifier | None = None) -> PdfPlumberParser:
+def _element_classifier(**overrides: Any) -> ElementClassifier:
+    defaults: dict[str, Any] = {
+        "heading_size_ratio": 1.15,
+        "heading_max_lines": 3,
+        "formula_symbol_ratio": 0.25,
+    }
+    return ElementClassifier(**{**defaults, **overrides})
+
+
+def _parser(
+    classifier: PageClassifier | None = None,
+    element_classifier: ElementClassifier | None = None,
+    *,
+    paragraph_gap_multiplier: float = 1.6,
+    min_element_characters: int = 2,
+) -> PdfPlumberParser:
     return PdfPlumberParser(
         classifier or _classifier(),
-        paragraph_gap_multiplier=1.6,
-        min_element_characters=2,
+        element_classifier or _element_classifier(),
+        paragraph_gap_multiplier=paragraph_gap_multiplier,
+        min_element_characters=min_element_characters,
     )
 
 
@@ -155,12 +172,10 @@ class TestPages:
 
 
 class TestElements:
-    async def test_every_element_is_a_paragraph_for_now(self) -> None:
-        """Finer typing is a later step; claiming it here would be claiming more than
-        has been established."""
-        parsed = await _parse("native_text_sample")
-        for _, elements in parsed:
-            assert all(e.element_type is ElementType.PARAGRAPH for e in elements)
+    async def test_a_page_of_prose_yields_a_heading_and_paragraphs(self) -> None:
+        (_, elements), *_ = await _parse("native_text_sample")
+        assert elements[0].element_type is ElementType.HEADING
+        assert all(e.element_type is ElementType.PARAGRAPH for e in elements[1:])
 
     async def test_every_element_records_how_it_was_obtained(self) -> None:
         parsed = await _parse("native_text_sample")
@@ -220,18 +235,123 @@ class TestParagraphGrouping:
         assert elements[0].text.value == "Introduction to Backpropagation"
 
     async def test_a_larger_multiplier_groups_more_aggressively(self) -> None:
-        loose = PdfPlumberParser(
-            _classifier(), paragraph_gap_multiplier=100.0, min_element_characters=2
-        )
+        loose = _parser(paragraph_gap_multiplier=100.0)
         (_, elements), *_ = await _parse("native_text_sample", loose)
         assert len(elements) == 1
 
     async def test_short_fragments_are_discarded(self) -> None:
-        strict = PdfPlumberParser(
-            _classifier(), paragraph_gap_multiplier=1.6, min_element_characters=10_000
-        )
+        strict = _parser(min_element_characters=10_000)
         (_, elements), *_ = await _parse("native_text_sample", strict)
         assert list(elements) == []
+
+
+# ---------------------------------------------------------------------------
+# Element typing
+# ---------------------------------------------------------------------------
+
+
+class TestElementTyping:
+    async def test_a_larger_opening_line_is_typed_as_a_heading(self) -> None:
+        (_, elements), *_ = await _parse("structured_sample")
+        assert elements[0].element_type is ElementType.HEADING
+        assert elements[0].text.value == "Results and Discussion"
+
+    async def test_bulleted_lines_are_typed_as_a_list(self) -> None:
+        (_, elements), *_ = await _parse("structured_sample")
+        lists = [e for e in elements if e.element_type is ElementType.LIST]
+        assert len(lists) == 1
+
+    async def test_list_items_keep_their_own_lines(self) -> None:
+        """Prose wraps mid-sentence and rejoins with a space; list items do not wrap,
+        and joining them that way runs them into a sentence nobody wrote."""
+        (_, elements), *_ = await _parse("structured_sample")
+        items = next(e for e in elements if e.element_type is ElementType.LIST)
+        assert items.text.value.splitlines() == [
+            "- Accuracy improved on every run",
+            "- Loss decreased monotonically",
+            "- Variance across runs stayed small",
+        ]
+
+    async def test_labelled_lines_are_typed_as_captions(self) -> None:
+        (_, elements), *_ = await _parse("structured_sample")
+        captions = [e for e in elements if e.element_type is ElementType.CAPTION]
+        assert len(captions) == 2
+        assert captions[0].text.value.startswith("Table 1:")
+        assert captions[1].text.value.startswith("Figure 1:")
+
+    async def test_typing_is_relative_to_the_page(self) -> None:
+        """Raising the ratio past what the fixture's heading achieves demotes it, which
+        is only possible because the comparison is against the page rather than a fixed
+        size."""
+        strict = _parser(element_classifier=_element_classifier(heading_size_ratio=10.0))
+        (_, elements), *_ = await _parse("structured_sample", strict)
+        assert elements[0].element_type is ElementType.PARAGRAPH
+
+
+# ---------------------------------------------------------------------------
+# Tables and figures
+# ---------------------------------------------------------------------------
+
+
+class TestTableAndFigureRegions:
+    async def test_a_ruled_table_is_found(self) -> None:
+        (_, elements), *_ = await _parse("structured_sample")
+        tables = [e for e in elements if e.element_type is ElementType.TABLE]
+        assert len(tables) == 1
+
+    async def test_the_table_carries_its_rows(self) -> None:
+        (_, elements), *_ = await _parse("structured_sample")
+        table = next(e for e in elements if e.element_type is ElementType.TABLE)
+        assert table.text.value.splitlines() == [
+            "Run | Accuracy",
+            "1 | 0.91",
+            "2 | 0.94",
+        ]
+
+    async def test_the_table_carries_a_bounding_box(self) -> None:
+        (_, elements), *_ = await _parse("structured_sample")
+        table = next(e for e in elements if e.element_type is ElementType.TABLE)
+        assert table.bounding_box is not None
+        assert table.bounding_box.area > 0
+
+    async def test_table_text_is_not_also_read_as_prose(self) -> None:
+        """Left in, the cells would appear twice, and the flattened copy is the one that
+        mixes rows together and loses which column a number came from."""
+        (_, elements), *_ = await _parse("structured_sample")
+        prose = [
+            e.text.value
+            for e in elements
+            if e.element_type in {ElementType.PARAGRAPH, ElementType.LIST}
+        ]
+        assert not any("0.91" in text for text in prose)
+
+    async def test_an_embedded_image_is_found(self) -> None:
+        (_, elements), *_ = await _parse("structured_sample")
+        figures = [e for e in elements if e.element_type is ElementType.FIGURE]
+        assert len(figures) == 1
+
+    async def test_the_figure_carries_a_box_and_no_text(self) -> None:
+        """A figure has nothing to say until something looks at it. Inventing a
+        description here would put text into the document that is not in it."""
+        (_, elements), *_ = await _parse("structured_sample")
+        figure = next(e for e in elements if e.element_type is ElementType.FIGURE)
+        assert figure.text.value == ""
+        assert figure.bounding_box is not None
+
+    async def test_elements_are_ordered_down_the_page(self) -> None:
+        """Tables and figures are found by different means from text and have to be
+        interleaved with it, not appended after it."""
+        (_, elements), *_ = await _parse("structured_sample")
+        tops = [e.bounding_box.y1 for e in elements if e.bounding_box is not None]
+        assert tops == sorted(tops, reverse=True)
+
+    async def test_a_page_without_either_yields_neither(self) -> None:
+        parsed = await _parse("native_text_sample")
+        for _, elements in parsed:
+            assert not any(
+                e.element_type in {ElementType.TABLE, ElementType.FIGURE}
+                for e in elements
+            )
 
 
 # ---------------------------------------------------------------------------
