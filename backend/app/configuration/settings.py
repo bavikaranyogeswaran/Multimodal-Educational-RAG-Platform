@@ -208,6 +208,30 @@ class OcrSettings(BaseSettings):
     #: Below this, a page is treated as scanned rather than native-text.
     native_text_coverage_threshold: float = 0.10
 
+    #: A text layer has to be substantial as well as widespread before it is trusted:
+    #: some scanners emit a layer covering the page that holds almost nothing.
+    min_native_characters: int = 50
+
+    #: Images covering at least this share of a page are large enough to be carrying
+    #: text the layer does not have. Below it they are decoration — logos, rules,
+    #: bullets — and recognising them costs more than they return.
+    image_coverage_threshold: float = 0.15
+
+    #: Vector line work dense enough that the text layer holds the labels and none of
+    #: the structure joining them. Placeholder pending calibration against real
+    #: material: an ordinary prose page draws almost nothing, a ruled table draws
+    #: tens, a schematic draws thousands, and where between those the expensive path
+    #: starts paying for itself is not yet known.
+    complex_vector_drawing_threshold: int = 400
+
+    @model_validator(mode="after")
+    def _coverage_thresholds_are_fractions(self) -> OcrSettings:
+        for name in ("native_text_coverage_threshold", "image_coverage_threshold"):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} is a share of a page and must be between 0 and 1")
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Chunking

@@ -31,7 +31,8 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Last updated | 17 August 2026 (reconciled against the codebase) |
+| Next step | **5.2** — native-text parser |
+| Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -990,25 +991,122 @@ nothing consumes them.
 
 Covers §13, §14, §15, §16.
 
-**Status: not started.** `app/infrastructure/parsing/` and `app/infrastructure/ocr/` are empty
-packages. What exists instead is a deliberate placeholder: `_extract_pdf_pages` in
-`app/worker/__main__.py` reads native text with `pypdf` and skips pages that return none. A
-scanned page yields nothing and the document still completes, so it is indexed as though empty.
-The `PageKind`, `ProcessingMethod` and `ElementType` enums are defined and unused.
+**Status: in progress — 1 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
+`app/infrastructure/ocr/` are empty packages. What exists instead is a deliberate placeholder:
+`_extract_pdf_pages` in `app/worker/__main__.py` reads native text with `pypdf` and skips pages
+that return none. A scanned page yields nothing and the document still completes, so it is
+indexed as though empty — a silent failure this phase turns into a recorded `PageKind`.
 
-- [ ] `pypdf` metadata and native text · `pdfplumber` layout, blocks, tables · `pypdfium2`
-      rendering · Pillow, with OpenCV only where preprocessing is necessary
-- [ ] Page classifier → `NATIVE_TEXT` / `SCANNED` / `MIXED` / `COMPLEX`
-- [ ] PaddleOCR PP-OCRv6 on GPU as primary, per-region for mixed pages, with confidence
-- [ ] PaddleOCR-VL fallback triggered only by §15 conditions
-- [ ] Tesseract wired as emergency fallback only
-- [ ] Element typing: `HEADING`, `PARAGRAPH`, `LIST`, `TABLE`, `FIGURE`, `CHART`, `DIAGRAM`,
-      `FORMULA`, `CAPTION`
-- [ ] Reading-order resolution, multi-column handling, `heading_path`
-- [ ] Full §16 field set including `processing_method` and `confidence`
-- [ ] `OCR_PAGE` jobs, idempotent per-page re-run, renders to the TTL cache prefix
-- [ ] Extracted document text marked **untrusted** at extraction time (§38 injection defence)
-- [ ] Golden-file parser tests
+**The domain layer for this phase already exists.** `DocumentPage`, `DocumentElement`, `PageKind`,
+`ProcessingMethod` and `ElementType` were written in Phase 1; `PdfParserPort` and `OcrPort` are
+declared; `save_pages`, `get_pages`, `save_elements` and `get_elements` are implemented against
+`document_pages` and `document_elements` from Phase 2. Phase 5 is adapters and wiring — no new
+entities, no migration.
+
+Two §16 requirements are consequently satisfied before any parser is written, by construction
+rather than by discipline: `DocumentElement.text` is `UntrustedText`, so extracted text cannot
+reach a prompt as instruction; and an element whose `processing_method` is `OCR` or `OCR_VL`
+cannot be constructed at all without a bounding box and a confidence, because the entity raises.
+
+**Split into two passes.** Steps 5.1–5.6 are ordinary work against libraries already installed and
+serve native-text documents completely. OCR is deferred to a second pass and reassessed once real
+parsed output exists — R-04 identified this install class as the highest-risk in the project, and
+there is no reason to carry that risk inside an otherwise low-risk phase.
+
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 5.1 | `PageClassifier` — pure rules over per-page signals → `PageKind` | S | ✅ |
+| 5.2 | `PdfPlumberParser` behind `PdfParserPort`; golden-file tests introduced | M | ☐ |
+| 5.3 | Rewire ingestion — parse, classify, persist pages and elements | M | ☐ |
+| 5.4 | Element typing — headings, lists, captions, formulas, table and figure regions | M | ☐ |
+| 5.5 | Reading-order resolution, multi-column handling, `heading_path` | M | ☐ |
+| 5.6 | Page rendering via `pypdfium2` into the TTL cache prefix | S | ☐ |
+| — | **Reassess before committing to OCR** | | |
+| 5.7 | PaddleOCR PP-OCRv6 adapter on **CPU** (D-27), per-region for mixed pages | L · risky | ☐ |
+| 5.8 | PaddleOCR-VL fallback on §15 conditions only; Tesseract as emergency | M | ☐ |
+| 5.9 | `OCR_PAGE` jobs, idempotent per-page re-run | M | ☐ |
+
+### 5.1 — Page classification ✅
+
+- [x] `app/domain/documents/page_classifier.py` — `PageSignals` (native character count, image
+      area as a fraction of page area, vector-drawing count, text-block count) and
+      `PageClassifier.classify(signals) → PageKind`. Pure and rule-based, in the same shape as
+      `QueryClassifier`: the parser gathers the signals, the domain decides
+- [x] Thresholds come from settings, never literals (D-20)
+- [x] Tests: each of the four kinds; behaviour exactly at every threshold boundary; a page with
+      no signals at all classifies rather than raising
+
+### 5.2 — Native-text parser
+
+- [ ] `app/infrastructure/parsing/pdfplumber_parser.py` implementing `PdfParserPort` — `pypdf`
+      for document metadata, `pdfplumber` for per-page words, blocks and dimensions
+- [ ] Emits one `DocumentPage` per page carrying kind, width, height and rotation
+- [ ] Emits `DocumentElement`s typed `PARAGRAPH` with `processing_method = NATIVE_TEXT`, bounding
+      boxes and sequential `reading_order`. Typing beyond paragraph is 5.4
+- [ ] `SCANNED` and `COMPLEX` pages return an empty element sequence, per the port's contract
+- [ ] **Golden-file tests introduced here** — a small fixture PDF committed with its expected
+      page and element output; every later step in this phase extends the expectations rather
+      than adding a separate test pass at the end
+- [ ] Tests: encrypted PDF, zero-page PDF and a malformed file all raise rather than returning
+      partial output
+
+### 5.3 — Rewire ingestion
+
+- [ ] `IngestDocumentUseCase` takes `PdfParserPort` in place of the injected
+      `pdf_page_extractor` callable; `_extract_pdf_pages` in `app/worker/__main__.py` is deleted
+- [ ] Pages and elements persisted through `DocumentRepository` before chunking begins
+- [ ] Chunking input is deliberately **unchanged** in this step — the chunker keeps consuming
+      page text. Rewriting it over elements is Phase 7, and doing it here would mean writing the
+      splitter twice, once before headings exist and again after
+- [ ] Tests: pages and elements are persisted under the calling scope; a document with no
+      extractable text still completes with its pages recorded
+
+### 5.4 — Element typing
+
+- [ ] `HEADING` from font size relative to page body text, weight, and position; `LIST` from
+      leading markers and hanging indents; `CAPTION` from proximity to a table or figure region
+      plus a leading label; `FORMULA` from glyph and symbol density
+- [ ] `TABLE` and `FIGURE` **regions** detected and recorded with their bounding boxes. Their
+      contents are Phase 6 — this step establishes only that a region is there and where
+- [ ] Tests: a heading is not classified from font size alone when the whole page is large type;
+      a caption is not attached across a column boundary
+
+### 5.5 — Reading order, columns and heading path
+
+- [ ] Column detection from horizontal whitespace; reading order resolved within and then across
+      columns rather than by raw y-coordinate
+- [ ] `heading_path` derived by carrying the heading stack down the resolved order, so every
+      element knows the section it sits in
+- [ ] Tests: a two-column page orders left column fully before right; a figure spanning both
+      columns does not break the order; `heading_path` survives a page break mid-section
+
+### 5.6 — Page rendering
+
+- [ ] `pypdfium2` render at the configured DPI, written to the R2 cache prefix with its TTL
+      (D-13) — permanent storage is not used, because renders are regenerable
+- [ ] Idempotent per page: re-rendering replaces rather than accumulating
+- [ ] Tests: a render round-trips through the cache adapter; an expired entry returns `None`
+      rather than stale bytes
+
+### Second pass — OCR (5.7–5.9)
+
+Deferred deliberately, and to be re-divided against what 5.1–5.6 actually produce. The proportion
+of pages classified `SCANNED` or `COMPLEX` in real material is the number that should decide how
+much of this is worth building, and that number does not exist yet.
+
+- [ ] PaddleOCR PP-OCRv6 as primary, **running on CPU** — the 6 GB card is reserved for
+      inference, embeddings and reranking, which is what makes `FR-PRF-02` satisfiable at all
+      (D-27, R-07). Per-region for `MIXED` pages, with a confidence on every element
+- [ ] PaddleOCR-VL fallback triggered **only** by the §15 conditions, never as a general retry —
+      `NFR-PERF-17` caps this path at under 20% of pages and `NFR-PERF-12` allows it 120 s per
+      complex page precisely because it is rare (D-28)
+- [ ] Tesseract wired as emergency fallback only, never selected while either Paddle path is
+      available
+- [ ] `OCR_PAGE` jobs, idempotent per-page re-run — re-running a page replaces its elements
+      rather than appending a second set
+- [ ] Element `confidence` populated from the engine, not assumed; low-confidence extraction is
+      recorded rather than silently accepted (A-098's 0.6 threshold is a placeholder awaiting
+      exactly this data)
 
 ## Phase 6 — Table, figure, chart & diagram processing
 
