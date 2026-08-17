@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **5.6** — page rendering |
+| Next step | **Reassess** — first pass of Phase 5 complete |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -991,7 +991,7 @@ nothing consumes them.
 
 Covers §13, §14, §15, §16.
 
-**Status: in progress — 5 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
+**Status: first pass complete — 6 of 6 steps. OCR deferred pending reassessment.** `app/infrastructure/parsing/` and
 `app/infrastructure/ocr/` are empty packages. What exists instead is a deliberate placeholder:
 `_extract_pdf_pages` in `app/worker/__main__.py` reads native text with `pypdf` and skips pages
 that return none. A scanned page yields nothing and the document still completes, so it is
@@ -1020,7 +1020,7 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 | 5.3 | Rewire ingestion — parse, classify, persist pages and elements | M | ✅ |
 | 5.4 | Element typing — headings, lists, captions, formulas, table and figure regions | M | ✅ |
 | 5.5 | Reading-order resolution, multi-column handling, `heading_path` | M | ✅ |
-| 5.6 | Page rendering via `pypdfium2` into the TTL cache prefix | S | ☐ |
+| 5.6 | Page rendering via `pypdfium2` into the TTL cache prefix | S | ✅ |
 | — | **Reassess before committing to OCR** | | |
 | 5.7 | PaddleOCR PP-OCRv6 adapter on **CPU** (D-27), per-region for mixed pages | L · risky | ☐ |
 | 5.8 | PaddleOCR-VL fallback on §15 conditions only; Tesseract as emergency | M | ☐ |
@@ -1080,12 +1080,12 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 - [x] Tests: a two-column page orders left column fully before right; a figure spanning both
       columns does not break the order; `heading_path` survives a page break mid-section
 
-### 5.6 — Page rendering
+### 5.6 — Page rendering ✅
 
-- [ ] `pypdfium2` render at the configured DPI, written to the R2 cache prefix with its TTL
+- [x] `pypdfium2` render at the configured DPI, written to the R2 cache prefix with its TTL
       (D-13) — permanent storage is not used, because renders are regenerable
-- [ ] Idempotent per page: re-rendering replaces rather than accumulating
-- [ ] Tests: a render round-trips through the cache adapter; an expired entry returns `None`
+- [x] Idempotent per page: re-rendering replaces rather than accumulating
+- [x] Tests: a render round-trips through the cache adapter; an expired entry returns `None`
       rather than stale bytes
 
 ### Second pass — OCR (5.7–5.9)

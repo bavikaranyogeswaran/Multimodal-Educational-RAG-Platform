@@ -36,6 +36,7 @@ from app.domain.ports.repositories import (
     KnowledgeBaseRepository,
     MemoryRepository,
 )
+from app.infrastructure.rendering.page_renderer import PageRenderer
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,11 @@ class Container:
 
     # Infrastructure — not a domain port; owns the database connection pool
     session_factory: async_sessionmaker[AsyncSession]
+
+    # Infrastructure — no domain port yet. Nothing in the application layer renders
+    # a page; the recognition stage that will is not built. A port invented before
+    # its caller exists would be a guess at the signature that caller wants.
+    page_renderer: PageRenderer
 
     # Repository ports
     knowledge_base_repository: KnowledgeBaseRepository

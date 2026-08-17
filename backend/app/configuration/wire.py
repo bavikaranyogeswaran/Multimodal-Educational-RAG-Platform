@@ -40,6 +40,7 @@ from app.domain.ports.repositories import (
 )
 from app.infrastructure.database.session import build_engine, build_session_factory
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
+from app.infrastructure.rendering.page_renderer import PageRenderer
 from app.infrastructure.storage.r2 import build_r2_adapters
 
 
@@ -167,6 +168,11 @@ def build_container(settings: Settings) -> Container:
 
     return Container(
         session_factory=_session_factory,
+        page_renderer=PageRenderer(
+            _cache,
+            dpi=settings.storage.page_render_dpi,
+            ttl_seconds=settings.storage.page_render_ttl_seconds,
+        ),
         # Repository ports — wired in Phase 2 (SQLAlchemy adapters)
         knowledge_base_repository=cast(KnowledgeBaseRepository, _u("KnowledgeBaseRepository")),
         document_repository=cast(DocumentRepository, _u("DocumentRepository")),
