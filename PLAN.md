@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **5.3** — rewire ingestion |
+| Next step | **5.4** — element typing |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -991,7 +991,7 @@ nothing consumes them.
 
 Covers §13, §14, §15, §16.
 
-**Status: in progress — 2 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
+**Status: in progress — 3 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
 `app/infrastructure/ocr/` are empty packages. What exists instead is a deliberate placeholder:
 `_extract_pdf_pages` in `app/worker/__main__.py` reads native text with `pypdf` and skips pages
 that return none. A scanned page yields nothing and the document still completes, so it is
@@ -1017,7 +1017,7 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 |---|---|---|---|
 | 5.1 | `PageClassifier` — pure rules over per-page signals → `PageKind` | S | ✅ |
 | 5.2 | `PdfPlumberParser` behind `PdfParserPort`; golden-file tests introduced | M | ✅ |
-| 5.3 | Rewire ingestion — parse, classify, persist pages and elements | M | ☐ |
+| 5.3 | Rewire ingestion — parse, classify, persist pages and elements | M | ✅ |
 | 5.4 | Element typing — headings, lists, captions, formulas, table and figure regions | M | ☐ |
 | 5.5 | Reading-order resolution, multi-column handling, `heading_path` | M | ☐ |
 | 5.6 | Page rendering via `pypdfium2` into the TTL cache prefix | S | ☐ |
@@ -1050,15 +1050,15 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 - [x] Tests: encrypted PDF, zero-page PDF and a malformed file all raise rather than returning
       partial output
 
-### 5.3 — Rewire ingestion
+### 5.3 — Rewire ingestion ✅
 
-- [ ] `IngestDocumentUseCase` takes `PdfParserPort` in place of the injected
+- [x] `IngestDocumentUseCase` takes `PdfParserPort` in place of the injected
       `pdf_page_extractor` callable; `_extract_pdf_pages` in `app/worker/__main__.py` is deleted
-- [ ] Pages and elements persisted through `DocumentRepository` before chunking begins
-- [ ] Chunking input is deliberately **unchanged** in this step — the chunker keeps consuming
+- [x] Pages and elements persisted through `DocumentRepository` before chunking begins
+- [x] Chunking input is deliberately **unchanged** in this step — the chunker keeps consuming
       page text. Rewriting it over elements is Phase 7, and doing it here would mean writing the
       splitter twice, once before headings exist and again after
-- [ ] Tests: pages and elements are persisted under the calling scope; a document with no
+- [x] Tests: pages and elements are persisted under the calling scope; a document with no
       extractable text still completes with its pages recorded
 
 ### 5.4 — Element typing

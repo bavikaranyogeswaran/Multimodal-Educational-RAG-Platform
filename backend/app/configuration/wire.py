@@ -67,6 +67,27 @@ def _build_reranker(settings: Settings) -> RerankerPort:
         return cast(RerankerPort, _Unimplemented("RerankerPort"))
 
 
+def _build_pdf_parser(settings: Settings) -> PdfParserPort:
+    try:
+        from app.domain.documents.page_classifier import PageClassifier  # noqa: PLC0415
+        from app.infrastructure.parsing.pdfplumber_parser import (  # noqa: PLC0415
+            PdfPlumberParser,
+        )
+
+        return PdfPlumberParser(
+            PageClassifier(
+                min_native_characters=settings.ocr.min_native_characters,
+                native_text_coverage_threshold=settings.ocr.native_text_coverage_threshold,
+                image_coverage_threshold=settings.ocr.image_coverage_threshold,
+                complex_vector_drawing_threshold=settings.ocr.complex_vector_drawing_threshold,
+            ),
+            paragraph_gap_multiplier=settings.parsing.paragraph_gap_multiplier,
+            min_element_characters=settings.parsing.min_element_characters,
+        )
+    except ImportError:
+        return cast(PdfParserPort, _Unimplemented("PdfParserPort"))
+
+
 def _build_embedder(settings: Settings) -> EmbeddingPort:
     try:
         from app.infrastructure.embeddings.sentence_transformer import (  # noqa: PLC0415
@@ -141,7 +162,7 @@ def build_container(settings: Settings) -> Container:
         # Adapter ports — wired as their respective phases land
         storage=_storage,
         cache=_cache,
-        pdf_parser=cast(PdfParserPort, _u("PdfParserPort")),
+        pdf_parser=_build_pdf_parser(settings),
         ocr=cast(OcrPort, _u("OcrPort")),
         embedder=_build_embedder(settings),
         reranker=_build_reranker(settings),

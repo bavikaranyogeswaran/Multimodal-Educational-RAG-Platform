@@ -1,33 +1,38 @@
 """Use case: ingest a document that has already been uploaded and stored in R2.
 
-Receives a Document entity that is already in PROCESSING state. Downloads the
-bytes from object storage, extracts text page by page, splits into overlapping
-chunks, generates dense embeddings, and persists everything. Returns the
-document in COMPLETED state — the caller is responsible for saving it and
-committing the session.
+Receives a Document entity that is already in PROCESSING state. Downloads the bytes from
+object storage, parses them into pages and layout elements, persists both, splits the
+text into overlapping chunks, generates dense embeddings, and persists those. Returns the
+document in COMPLETED state — the caller is responsible for saving it and committing.
 
-PDF parsing is injected as a callable so the application layer stays free of
-third-party library imports.
+Pages and elements are written before chunking begins. They are what the parse actually
+established, and they stay useful whether or not the stages after them succeed: a page
+recorded as needing recognition is a fact worth keeping even if this run then fails.
+
+Chunking still consumes page text rather than the elements directly. Rewriting the
+splitter to work over structure is worth doing once, after the parser can tell a heading
+from a paragraph — doing it now would mean writing it twice.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.domain.documents.chunks import Chunk
-from app.domain.documents.entities import Document
+from app.domain.documents.entities import Document, DocumentElement, DocumentPage
 from app.domain.enums import ChunkType
-from app.domain.ports.adapters import EmbeddingPort, StoragePort
-from app.domain.ports.repositories import ChunkRepository
+from app.domain.ports.adapters import EmbeddingPort, PdfParserPort, StoragePort
+from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
 from app.domain.values import HeadingPath, UntrustedText
 
-# (1-indexed page number, extracted text for that page)
+# (1-indexed page number, text for that page)
 PageText = tuple[int, str]
+ParsedPage = tuple[DocumentPage, Sequence[DocumentElement]]
 
 
 @dataclass(frozen=True)
@@ -49,19 +54,21 @@ class IngestDocumentUseCase:
     def __init__(
         self,
         chunk_repo: ChunkRepository,
+        document_repo: DocumentRepository,
         storage: StoragePort,
         embedder: EmbeddingPort,
         *,
-        pdf_page_extractor: Callable[[bytes], Sequence[PageText]],
+        parser: PdfParserPort,
         embedding_model_id: str,
         index_version: int,
         chunk_chars: int,
         chunk_overlap_chars: int,
     ) -> None:
         self._chunk_repo = chunk_repo
+        self._document_repo = document_repo
         self._storage = storage
         self._embedder = embedder
-        self._extractor = pdf_page_extractor
+        self._parser = parser
         self._embedding_model_id = embedding_model_id
         self._index_version = index_version
         self._chunk_chars = chunk_chars
@@ -75,12 +82,20 @@ class IngestDocumentUseCase:
         # Download the original file from object storage
         data = await self._storage.get(doc.storage_key)
 
-        # Extract text page by page (may return empty for scanned-only PDFs)
-        pages: Sequence[PageText] = self._extractor(data)
+        # Parse into pages and layout elements. Pages whose text layer cannot be
+        # trusted come back with no elements rather than with a partial reading.
+        parsed = await self._parser.parse(data, document_id=doc.id, scope=scope)
 
-        # Build chunks from the extracted pages
+        # Persisted before chunking, because they are what the parse established and
+        # they remain true regardless of what the later stages do.
+        await self._document_repo.save_pages(scope, [page for page, _ in parsed])
+        elements = [element for _, page_elements in parsed for element in page_elements]
+        if elements:
+            await self._document_repo.save_elements(scope, elements)
+
+        # Build chunks from the text the parse recovered
         chunks = _build_chunks(
-            pages,
+            _page_texts(parsed),
             doc=doc,
             scope=scope,
             chunk_chars=self._chunk_chars,
@@ -106,13 +121,28 @@ class IngestDocumentUseCase:
                 version=self._index_version,
             )
 
-        page_count = doc.page_count or (max(p for p, _ in pages) if pages else 1)
-        return doc.mark_completed(page_count=page_count, now=now)
+        # The parse counted the pages, so the count is known rather than inferred from
+        # whichever page happened to yield text last.
+        return doc.mark_completed(page_count=len(parsed), now=now)
 
 
 # ---------------------------------------------------------------------------
 # Chunking helpers
 # ---------------------------------------------------------------------------
+
+
+def _page_texts(parsed: Sequence[ParsedPage]) -> list[PageText]:
+    """Flatten each page's elements back to text, in reading order.
+
+    The bridge between a parser that produces structure and a splitter that does not use
+    it yet. Paragraphs are joined with a blank line rather than a space so the boundaries
+    survive in the text, ready for the splitter that will eventually respect them.
+    """
+    return [
+        (page.page_number, "\n\n".join(element.text.value for element in elements))
+        for page, elements in parsed
+        if elements
+    ]
 
 
 def _build_chunks(

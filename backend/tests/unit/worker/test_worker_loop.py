@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.domain.documents.entities import Document
-from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
+from app.domain.documents.entities import Document, DocumentPage
+from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType, PageKind
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.worker.__main__ import _run_job
@@ -119,7 +119,7 @@ class TestRunJobHappyPath:
         # kept as a structural placeholder for the two-phase commit contract.
         pass
 
-    async def test_does_not_raise_on_valid_job_with_empty_pdf(self) -> None:
+    async def test_does_not_raise_when_a_page_yields_no_text(self) -> None:
         doc = _make_doc(status=DocumentStatus.PENDING)
         settings = _make_settings()
         job = _make_job()
@@ -152,16 +152,36 @@ class TestRunJobHappyPath:
         ctx.__aenter__ = AsyncMock(return_value=session)
         ctx.__aexit__ = AsyncMock(return_value=False)
 
+        # A page that exists and produced nothing — a scanned page, before recognition.
+        parser_mock = AsyncMock()
+        parser_mock.parse = AsyncMock(
+            return_value=[
+                (
+                    DocumentPage(
+                        id=uuid.uuid4(),
+                        user_id=doc.user_id,
+                        knowledge_base_id=doc.knowledge_base_id,
+                        document_id=doc.id,
+                        page_number=1,
+                        kind=PageKind.SCANNED,
+                        width=612.0,
+                        height=792.0,
+                    ),
+                    [],
+                )
+            ]
+        )
+
         container = MagicMock()
         container.session_factory = MagicMock(return_value=ctx)
         container.storage = storage_mock
         container.embedder = embedder_mock
+        container.pdf_parser = parser_mock
 
         with (
             patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo_mock),
             patch("app.worker.__main__.SqlChunkRepository", return_value=chunk_repo_mock),
             patch("app.worker.__main__.SqlJobRepository", return_value=job_repo_mock),
-            patch("app.worker.__main__._extract_pdf_pages", return_value=[]),
         ):
             await _run_job(container, settings, job)
 

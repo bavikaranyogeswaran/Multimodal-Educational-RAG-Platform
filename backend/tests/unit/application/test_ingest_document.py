@@ -1,7 +1,8 @@
 """Unit tests for IngestDocumentUseCase.
 
-All I/O (storage, embedder, chunk repository) is mocked. The extractor is a
-simple lambda so tests do not depend on pypdf.
+All I/O — storage, embedder, both repositories — is mocked, and the parser is a stub
+returning prepared pages and elements, so nothing here depends on a real PDF. The parser
+itself is covered against actual files in the infrastructure tests.
 """
 
 from __future__ import annotations
@@ -15,9 +16,10 @@ from app.application.commands.ingest_document import (
     IngestDocumentUseCase,
     _split_text,
 )
-from app.domain.documents.entities import Document
-from app.domain.enums import DocumentStatus
+from app.domain.documents.entities import Document, DocumentElement, DocumentPage
+from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
 from app.domain.scope import ScopeContext
+from app.domain.values import UntrustedText
 
 _NOW = datetime(2025, 1, 15, tzinfo=UTC)
 _USER_ID = uuid.uuid4()
@@ -46,16 +48,66 @@ def _make_doc(*, status: DocumentStatus = DocumentStatus.PROCESSING) -> Document
     )
 
 
-def _make_extractor(pages: list[tuple[int, str]]):
-    return lambda _data: pages
+def _page(number: int, *, kind: PageKind = PageKind.NATIVE_TEXT) -> DocumentPage:
+    return DocumentPage(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=number,
+        kind=kind,
+        width=612.0,
+        height=792.0,
+    )
+
+
+def _element(page_number: int, text: str, order: int) -> DocumentElement:
+    return DocumentElement(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=page_number,
+        element_type=ElementType.PARAGRAPH,
+        text=UntrustedText(text),
+        reading_order=order,
+        processing_method=ProcessingMethod.NATIVE_TEXT,
+        created_at=_NOW,
+    )
+
+
+def _make_parser(
+    pages: list[tuple[int, list[str]]],
+    *,
+    kind: PageKind = PageKind.NATIVE_TEXT,
+) -> AsyncMock:
+    """A parser returning prepared pages, each with its paragraph texts."""
+    parsed = [
+        (
+            _page(number, kind=kind),
+            [_element(number, text, order) for order, text in enumerate(texts)],
+        )
+        for number, texts in pages
+    ]
+    parser = AsyncMock()
+    parser.parse = AsyncMock(return_value=parsed)
+    return parser
+
+
+def _make_document_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.save_pages = AsyncMock()
+    repo.save_elements = AsyncMock()
+    return repo
 
 
 def _make_use_case(
     *,
     chunk_repo: AsyncMock | None = None,
+    document_repo: AsyncMock | None = None,
     storage: AsyncMock | None = None,
     embedder: AsyncMock | None = None,
-    extractor=None,
+    parser: AsyncMock | None = None,
     chunk_chars: int = 500,
     chunk_overlap_chars: int = 50,
 ) -> IngestDocumentUseCase:
@@ -70,13 +122,14 @@ def _make_use_case(
         embedder = AsyncMock()
         embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384])
         embedder.dimension = 384
-    if extractor is None:
-        extractor = _make_extractor([(1, "Sample page text.")])
+    if parser is None:
+        parser = _make_parser([(1, ["Sample page text."])])
     return IngestDocumentUseCase(
         chunk_repo=chunk_repo,
+        document_repo=document_repo or _make_document_repo(),
         storage=storage,
         embedder=embedder,
-        pdf_page_extractor=extractor,
+        parser=parser,
         embedding_model_id="test-model",
         index_version=1,
         chunk_chars=chunk_chars,
@@ -96,11 +149,18 @@ class TestHappyPath:
         result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=doc))
         assert result.status == DocumentStatus.COMPLETED
 
-    async def test_result_preserves_page_count_from_document(self) -> None:
-        use_case = _make_use_case()
-        doc = _make_doc()
+    async def test_page_count_comes_from_the_parse(self) -> None:
+        """The parse counted the pages, so it is the authority — not the count the
+        document was carrying from upload-time validation."""
+        embedder = AsyncMock()
+        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384, [0.2] * 384])
+        embedder.dimension = 384
+        use_case = _make_use_case(
+            parser=_make_parser([(1, ["a"]), (2, ["b"])]), embedder=embedder
+        )
+        doc = _make_doc()  # carries page_count=3
         result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=doc))
-        assert result.page_count == 3  # from doc.page_count
+        assert result.page_count == 2
 
     async def test_storage_get_called_with_storage_key(self) -> None:
         storage = AsyncMock()
@@ -125,8 +185,8 @@ class TestHappyPath:
         embedder = AsyncMock()
         embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384])
         embedder.dimension = 384
-        extractor = _make_extractor([(1, "hello world")])
-        use_case = _make_use_case(embedder=embedder, extractor=extractor)
+        parser = _make_parser([(1, ["hello world"])])
+        use_case = _make_use_case(embedder=embedder, parser=parser)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         embedder.embed_documents.assert_called_once()
         texts = embedder.embed_documents.call_args.args[0]
@@ -149,7 +209,7 @@ class TestHappyPath:
         assert kw["version"] == 1
 
     async def test_multi_page_document_produces_one_chunk_per_page(self) -> None:
-        extractor = _make_extractor([(1, "Page one text."), (2, "Page two text.")])
+        parser = _make_parser([(1, ["Page one text."]), (2, ["Page two text."])])
         embedder = AsyncMock()
         embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384, [0.2] * 384])
         embedder.dimension = 384
@@ -157,7 +217,7 @@ class TestHappyPath:
         chunk_repo.save_batch = AsyncMock()
         chunk_repo.set_embeddings = AsyncMock()
         use_case = _make_use_case(
-            extractor=extractor, embedder=embedder, chunk_repo=chunk_repo
+            parser=parser, embedder=embedder, chunk_repo=chunk_repo
         )
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         saved_chunks = chunk_repo.save_batch.call_args.args[1]
@@ -165,37 +225,135 @@ class TestHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Empty document (no extractable text)
+# A document whose pages yield no text
 # ---------------------------------------------------------------------------
 
 
-class TestEmptyDocument:
-    async def test_empty_pdf_returns_completed_document(self) -> None:
-        use_case = _make_use_case(extractor=_make_extractor([]))
+def _scanned_parser(page_count: int = 2) -> AsyncMock:
+    """Pages that exist and produced nothing — what a scanned document looks like
+    before recognition has run over it."""
+    return _make_parser(
+        [(number, []) for number in range(1, page_count + 1)], kind=PageKind.SCANNED
+    )
+
+
+class TestDocumentWithNoExtractableText:
+    async def test_it_still_completes(self) -> None:
+        use_case = _make_use_case(parser=_scanned_parser())
         result = await use_case.execute(
             IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
         )
         assert result.status == DocumentStatus.COMPLETED
 
-    async def test_empty_pdf_does_not_call_embedder(self) -> None:
+    async def test_its_pages_are_still_recorded(self) -> None:
+        """The pages exist and are known to need recognition. Losing that because no
+        text came out would leave nothing for a later stage to work from."""
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(parser=_scanned_parser(), document_repo=document_repo)
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        saved = document_repo.save_pages.call_args.args[1]
+        assert [page.page_number for page in saved] == [1, 2]
+        assert all(page.kind is PageKind.SCANNED for page in saved)
+
+    async def test_page_count_still_reflects_the_parse(self) -> None:
+        use_case = _make_use_case(parser=_scanned_parser(page_count=5))
+        result = await use_case.execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        assert result.page_count == 5
+
+    async def test_no_elements_are_written(self) -> None:
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(parser=_scanned_parser(), document_repo=document_repo)
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        document_repo.save_elements.assert_not_called()
+
+    async def test_the_embedder_is_not_called(self) -> None:
         embedder = AsyncMock()
         embedder.embed_documents = AsyncMock(return_value=[])
         embedder.dimension = 384
-        use_case = _make_use_case(
-            extractor=_make_extractor([]), embedder=embedder
-        )
+        use_case = _make_use_case(parser=_scanned_parser(), embedder=embedder)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         embedder.embed_documents.assert_not_called()
 
-    async def test_empty_pdf_does_not_call_save_batch(self) -> None:
+    async def test_no_chunks_are_written(self) -> None:
+        chunk_repo = AsyncMock()
+        chunk_repo.save_batch = AsyncMock()
+        chunk_repo.set_embeddings = AsyncMock()
+        use_case = _make_use_case(parser=_scanned_parser(), chunk_repo=chunk_repo)
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        chunk_repo.save_batch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Pages and elements
+# ---------------------------------------------------------------------------
+
+
+class TestPageAndElementPersistence:
+    async def test_pages_are_saved_under_the_calling_scope(self) -> None:
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(document_repo=document_repo)
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        assert document_repo.save_pages.call_args.args[0] == _SCOPE
+
+    async def test_elements_are_saved_under_the_calling_scope(self) -> None:
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(document_repo=document_repo)
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        assert document_repo.save_elements.call_args.args[0] == _SCOPE
+
+    async def test_elements_from_every_page_are_saved_together(self) -> None:
+        document_repo = _make_document_repo()
+        parser = _make_parser([(1, ["one", "two"]), (2, ["three"])])
+        embedder = AsyncMock()
+        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384, [0.2] * 384])
+        embedder.dimension = 384
+        use_case = _make_use_case(
+            parser=parser, document_repo=document_repo, embedder=embedder
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        saved = document_repo.save_elements.call_args.args[1]
+        assert [element.text.value for element in saved] == ["one", "two", "three"]
+
+    async def test_pages_are_saved_before_chunks(self) -> None:
+        """A parse that established pages should not lose them because a later stage
+        failed."""
+        order: list[str] = []
+        document_repo = _make_document_repo()
+        document_repo.save_pages = AsyncMock(
+            side_effect=lambda *_a, **_k: order.append("pages")
+        )
+        chunk_repo = AsyncMock()
+        chunk_repo.save_batch = AsyncMock(
+            side_effect=lambda *_a, **_k: order.append("chunks")
+        )
+        chunk_repo.set_embeddings = AsyncMock()
+        use_case = _make_use_case(document_repo=document_repo, chunk_repo=chunk_repo)
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        assert order == ["pages", "chunks"]
+
+    async def test_the_parser_is_given_the_document_id_and_scope(self) -> None:
+        parser = _make_parser([(1, ["text"])])
+        use_case = _make_use_case(parser=parser)
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        kwargs = parser.parse.call_args.kwargs
+        assert kwargs["document_id"] == _DOC_ID
+        assert kwargs["scope"] == _SCOPE
+
+    async def test_paragraphs_reach_the_chunker_separated(self) -> None:
+        """Paragraph boundaries survive into the text the splitter sees, ready for the
+        splitter that will eventually respect them."""
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
         chunk_repo.set_embeddings = AsyncMock()
         use_case = _make_use_case(
-            extractor=_make_extractor([]), chunk_repo=chunk_repo
+            parser=_make_parser([(1, ["first para", "second para"])]),
+            chunk_repo=chunk_repo,
         )
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
-        chunk_repo.save_batch.assert_not_called()
+        text = chunk_repo.save_batch.call_args.args[1][0].text.value
+        assert text == "first para\n\nsecond para"
 
 
 # ---------------------------------------------------------------------------

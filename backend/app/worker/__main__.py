@@ -1,23 +1,23 @@
 """Ingestion worker — run with: python -m app.worker
 
-One worker process claims document-ingestion jobs one at a time, runs the full
-pipeline (download → chunk → embed → persist), and extends the job's lease
-while work is in progress. On SIGTERM or SIGINT the worker finishes the current
+One worker process claims document-ingestion jobs one at a time, runs the full pipeline
+(download → parse → persist pages and elements → chunk → embed), and extends the job's
+lease while work is in progress. On SIGTERM or SIGINT the worker finishes the current
 job, then exits cleanly.
+
+The heartbeat that holds the lease runs as a task on this same event loop, which is why
+the parser hands its work to a thread rather than doing it here.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import io
 import signal
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pypdf
 import structlog
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.commands.ingest_document import IngestDocumentCommand, IngestDocumentUseCase
@@ -32,23 +32,6 @@ from app.infrastructure.database.repositories.document import SqlDocumentReposit
 from app.infrastructure.database.repositories.job import SqlJobRepository
 
 _log = structlog.get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# PDF text extractor (infrastructure concern, kept here so the app layer
-# remains free of pypdf imports)
-# ---------------------------------------------------------------------------
-
-
-def _extract_pdf_pages(data: bytes) -> list[tuple[int, str]]:
-    """Return (1-indexed page number, extracted text) for each page with text."""
-    reader = pypdf.PdfReader(io.BytesIO(data))
-    result: list[tuple[int, str]] = []
-    for i, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        if text.strip():
-            result.append((i, text))
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +102,10 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
         async with container.session_factory() as session:
             use_case = IngestDocumentUseCase(
                 chunk_repo=SqlChunkRepository(scope, session),
+                document_repo=SqlDocumentRepository(scope, session),
                 storage=container.storage,
                 embedder=container.embedder,
-                pdf_page_extractor=_extract_pdf_pages,
+                parser=container.pdf_parser,
                 embedding_model_id=settings.embedding.model_id,
                 index_version=settings.embedding.index_version,
                 chunk_chars=settings.chunking.child_target_tokens * 4,
