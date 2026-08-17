@@ -22,6 +22,7 @@ import pytest
 
 from app.domain.documents.element_classifier import ElementClassifier
 from app.domain.documents.page_classifier import PageClassifier
+from app.domain.documents.reading_order import ReadingOrderResolver
 from app.domain.enums import ElementType, PageKind, ProcessingMethod
 from app.domain.errors import UploadValidationError
 from app.domain.scope import ScopeContext
@@ -57,9 +58,15 @@ def _element_classifier(**overrides: Any) -> ElementClassifier:
     return ElementClassifier(**{**defaults, **overrides})
 
 
+def _reading_order(**overrides: Any) -> ReadingOrderResolver:
+    defaults: dict[str, Any] = {"min_gutter_width": 24.0, "min_column_width": 90.0}
+    return ReadingOrderResolver(**{**defaults, **overrides})
+
+
 def _parser(
     classifier: PageClassifier | None = None,
     element_classifier: ElementClassifier | None = None,
+    reading_order: ReadingOrderResolver | None = None,
     *,
     paragraph_gap_multiplier: float = 1.6,
     min_element_characters: int = 2,
@@ -67,8 +74,10 @@ def _parser(
     return PdfPlumberParser(
         classifier or _classifier(),
         element_classifier or _element_classifier(),
+        reading_order or _reading_order(),
         paragraph_gap_multiplier=paragraph_gap_multiplier,
         min_element_characters=min_element_characters,
+        min_gutter_width=24.0,
     )
 
 
@@ -95,6 +104,7 @@ def _snapshot(parsed: list[Any]) -> list[dict[str, Any]]:
                     "element_type": element.element_type.value,
                     "processing_method": element.processing_method.value,
                     "text": element.text.value,
+                    "heading_path": list(element.heading_path.segments),
                     "bounding_box": (
                         None
                         if element.bounding_box is None
@@ -235,9 +245,13 @@ class TestParagraphGrouping:
         assert elements[0].text.value == "Introduction to Backpropagation"
 
     async def test_a_larger_multiplier_groups_more_aggressively(self) -> None:
+        """Raising the gap tolerance merges the paragraphs, but not the heading with
+        them: a change of type size ends a block whatever the spacing allows."""
         loose = _parser(paragraph_gap_multiplier=100.0)
         (_, elements), *_ = await _parse("native_text_sample", loose)
-        assert len(elements) == 1
+        assert len(elements) == 2
+        assert elements[0].element_type is ElementType.HEADING
+        assert elements[1].element_type is ElementType.PARAGRAPH
 
     async def test_short_fragments_are_discarded(self) -> None:
         strict = _parser(min_element_characters=10_000)
@@ -383,6 +397,102 @@ class TestBoundingBoxes:
         assert multi_line is not None
         # Several lines at ten-point leading are taller than any single line.
         assert multi_line.height > 20
+
+
+# ---------------------------------------------------------------------------
+# Columns and reading order
+# ---------------------------------------------------------------------------
+
+
+class TestMultiColumnReadingOrder:
+    async def test_the_left_column_is_read_before_the_right(self) -> None:
+        """The failure this prevents is silent: ordering by height alone interleaves the
+        columns line by line, and the text is concatenated before anyone can notice."""
+        (_, elements), *_ = await _parse("two_column_sample")
+        text = [e.text.value for e in elements]
+        left = next(i for i, t in enumerate(text) if t.startswith("Left column line 1"))
+        right = next(i for i, t in enumerate(text) if t.startswith("Right column line 1"))
+        assert left < right
+
+    async def test_a_column_is_not_broken_across_its_lines(self) -> None:
+        (_, elements), *_ = await _parse("two_column_sample")
+        upper_left = next(
+            e for e in elements if e.text.value.startswith("Left column line 1")
+        )
+        assert "Left column line 6" in upper_left.text.value
+        assert "Right column" not in upper_left.text.value
+
+    async def test_column_text_is_never_woven_together(self) -> None:
+        (_, elements), *_ = await _parse("two_column_sample")
+        for element in elements:
+            text = element.text.value
+            assert not ("Left column" in text and "Right column" in text)
+
+    async def test_a_spanning_heading_is_read_before_both_columns(self) -> None:
+        (_, elements), *_ = await _parse("two_column_sample")
+        assert elements[0].text.value == "A Heading Across Both Columns"
+
+    async def test_a_spanning_figure_separates_the_bands(self) -> None:
+        """Everything above the figure is read before it and everything below after,
+        rather than the columns running straight past it."""
+        (_, elements), *_ = await _parse("two_column_sample")
+        text = [e.text.value for e in elements]
+        figure = next(
+            i for i, e in enumerate(elements) if e.element_type is ElementType.FIGURE
+        )
+        upper_right = next(i for i, t in enumerate(text) if t.startswith("Right column"))
+        lower_left = next(i for i, t in enumerate(text) if t.startswith("Lower left"))
+        assert upper_right < figure < lower_left
+
+    async def test_a_single_column_page_is_unaffected(self) -> None:
+        """Column handling must not disturb the ordinary case, which is most pages."""
+        (_, elements), *_ = await _parse("native_text_sample")
+        tops = [e.bounding_box.y1 for e in elements if e.bounding_box is not None]
+        assert tops == sorted(tops, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Heading paths
+# ---------------------------------------------------------------------------
+
+
+class TestHeadingPaths:
+    async def test_content_carries_the_heading_above_it(self) -> None:
+        (_, elements), *_ = await _parse("native_text_sample")
+        body = elements[1]
+        assert body.heading_path.segments == ("Introduction to Backpropagation",)
+
+    async def test_a_heading_carries_its_own_path(self) -> None:
+        (_, elements), *_ = await _parse("native_text_sample")
+        assert elements[0].heading_path.leaf == "Introduction to Backpropagation"
+
+    async def test_a_smaller_heading_nests_beneath_a_larger_one(self) -> None:
+        (_, elements), *_ = await _parse("section_across_pages_sample")
+        section = elements[1]
+        assert section.heading_path.segments == ("Chapter Three", "Gradient Descent")
+
+    async def test_a_section_survives_a_page_break(self) -> None:
+        """The second page opens with body text and no heading of its own. State rebuilt
+        per page would show it as belonging to nothing, which is exactly where a chunk
+        has the least context of its own to fall back on."""
+        parsed = await _parse("section_across_pages_sample")
+        (_, second_page_elements) = parsed[1]
+        assert second_page_elements[0].heading_path.segments == (
+            "Chapter Three",
+            "Gradient Descent",
+        )
+
+    async def test_a_new_heading_replaces_the_previous_one(self) -> None:
+        parsed = await _parse("native_text_sample")
+        (_, second) = parsed[1]
+        assert second[0].heading_path.segments == ("The Backward Pass in Detail",)
+
+    async def test_two_headings_of_different_sizes_stay_separate(self) -> None:
+        """A chapter title immediately above a section title sits at ordinary leading,
+        and without a size break the two would be joined into one element."""
+        (_, elements), *_ = await _parse("section_across_pages_sample")
+        assert elements[0].text.value == "Chapter Three"
+        assert elements[1].text.value == "Gradient Descent"
 
 
 # ---------------------------------------------------------------------------

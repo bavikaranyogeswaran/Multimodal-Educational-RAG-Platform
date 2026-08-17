@@ -262,6 +262,15 @@ class ParsingSettings(BaseSettings):
     #: treated as a formula rather than as a sentence that happens to contain one.
     formula_symbol_ratio: float = 0.25
 
+    #: An empty vertical strip at least this wide separates columns. Narrower gaps
+    #: are the ordinary ragged space between words and at line ends.
+    min_gutter_width: float = 24.0
+
+    #: Both sides of a gutter must be at least this wide for it to count. Without it,
+    #: the space beside a short centred title reads as a gutter and splits the page
+    #: into a column and a sliver.
+    min_column_width: float = 90.0
+
     @model_validator(mode="after")
     def _heading_ratio_exceeds_body_text(self) -> ParsingSettings:
         if self.heading_size_ratio <= 1.0:

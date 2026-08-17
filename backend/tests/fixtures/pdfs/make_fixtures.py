@@ -272,6 +272,88 @@ def _structured_sample() -> bytes:
     return _build(["\n".join([table, image, text])], with_image=True)
 
 
+def _two_column_sample() -> bytes:
+    """A page laid out in two columns under a full-width heading.
+
+    Column text is deliberately distinguishable — the left column counts upward, the
+    right continues from where it stops — so an ordering that interleaved the columns
+    would produce a visibly wrong sequence rather than a subtly wrong one.
+
+    A wide figure sits between two bands of column text. It belongs to neither column,
+    and what it establishes is that everything above it is read before it and everything
+    below after, rather than the columns running past it.
+    """
+    # Columns of realistic measure. A column narrower than the minimum column width is
+    # rejected as a sliver, correctly, so a fixture with short lines would test nothing
+    # but that guard. These run to roughly 220 points, which is what a two-column
+    # textbook page actually uses.
+    def _column(x: float, start_y: float, lines: list[str]) -> list[tuple[float, float, int, str]]:
+        return [(x, y, size, text) for (_, y, size, text) in _prose_block(start_y, lines)]
+
+    # Lines are sized to sit inside their column: at ten points a line of about forty
+    # characters runs roughly 180 points, which leaves a clear gutter before the right
+    # column begins at 320. Longer lines would run across the gutter and there would be
+    # no gap left to find.
+    left_top = _column(
+        72, 690, [f"Left column line {n} of the upper band." for n in range(1, 7)]
+    )
+    right_top = _column(
+        320, 690, [f"Right column line {n} of the band." for n in range(1, 7)]
+    )
+    left_bottom = _column(
+        72, 400, [f"Lower left line {n} below the figure." for n in range(1, 5)]
+    )
+    right_bottom = _column(
+        320, 400, [f"Lower right line {n} below it too." for n in range(1, 5)]
+    )
+    text = _text_ops(
+        [
+            (72, 730, 18, "A Heading Across Both Columns"),
+            *left_top,
+            *right_top,
+            (72, 470, 9, "Figure 2: A figure spanning the full measure."),
+            *left_bottom,
+            *right_bottom,
+        ]
+    )
+    # A full-width image between the two bands of column text.
+    image = "q 460 0 0 60 72 490 cm /Im1 Do Q"
+    return _build(["\n".join([image, text])], with_image=True)
+
+
+def _section_across_pages_sample() -> bytes:
+    """A section that begins on one page and continues onto the next.
+
+    The second page opens with body text and no heading of its own, so anything that
+    rebuilt its section state per page would show that text as belonging to nothing.
+    """
+    page_one = _text_ops(
+        [
+            (72, 730, 18, "Chapter Three"),
+            (72, 700, 13, "Gradient Descent"),
+            *_prose_block(
+                670,
+                [
+                    "The method takes steps proportional to the negative of the",
+                    "gradient at the current point, which is the direction of",
+                    "steepest descent from there.",
+                ],
+            ),
+        ]
+    )
+    page_two = _text_ops(
+        _prose_block(
+            730,
+            [
+                "Step size governs whether the method converges at all. Too large",
+                "and it oscillates across the minimum without settling; too small",
+                "and it takes impractically many steps to arrive.",
+            ],
+        )
+    )
+    return _build([page_one, page_two])
+
+
 def _no_pages_sample() -> bytes:
     """Structurally valid, and containing no pages at all.
 
@@ -287,6 +369,8 @@ _FIXTURES = {
     "rotated_sample.pdf": _rotated_sample,
     "empty_page_sample.pdf": _empty_page_sample,
     "structured_sample.pdf": _structured_sample,
+    "two_column_sample.pdf": _two_column_sample,
+    "section_across_pages_sample.pdf": _section_across_pages_sample,
     "no_pages_sample.pdf": _no_pages_sample,
 }
 

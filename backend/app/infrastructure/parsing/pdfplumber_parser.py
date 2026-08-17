@@ -34,7 +34,9 @@ import structlog
 
 from app.domain.documents.element_classifier import ElementClassifier, ElementSignals
 from app.domain.documents.entities import DocumentElement, DocumentPage
+from app.domain.documents.heading_stack import HeadingStack
 from app.domain.documents.page_classifier import PageClassifier, PageSignals
+from app.domain.documents.reading_order import LayoutBox, ReadingOrderResolver
 from app.domain.enums import ElementType, PageKind, ProcessingMethod
 from app.domain.errors import UploadValidationError
 from app.domain.scope import ScopeContext
@@ -63,6 +65,13 @@ class _Draft:
     bottom: float
     left: float
     right: float
+    font_size: float = 0.0
+
+    @property
+    def box(self) -> LayoutBox:
+        return LayoutBox(
+            left=self.left, right=self.right, top=self.top, bottom=self.bottom
+        )
 
 
 class PdfPlumberParser:
@@ -77,14 +86,18 @@ class PdfPlumberParser:
         self,
         page_classifier: PageClassifier,
         element_classifier: ElementClassifier,
+        reading_order: ReadingOrderResolver,
         *,
         paragraph_gap_multiplier: float,
         min_element_characters: int,
+        min_gutter_width: float,
     ) -> None:
         self._page_classifier = page_classifier
         self._classifier = element_classifier
+        self._reading_order = reading_order
         self._paragraph_gap_multiplier = paragraph_gap_multiplier
         self._min_element_characters = min_element_characters
+        self._min_gutter_width = min_gutter_width
 
     async def parse(
         self,
@@ -106,10 +119,17 @@ class PdfPlumberParser:
         scope: ScopeContext,
     ) -> list[ParsedPage]:
         now = datetime.now(UTC)
+        # Document-level, not page-level: a section that starts near the foot of one page
+        # continues onto the next, and rebuilding this per page would lose that at every
+        # break — where the content has the least context of its own to fall back on.
+        headings = HeadingStack()
         try:
             with pdfplumber.open(io.BytesIO(data)) as pdf:
                 parsed = [
-                    self._parse_page(page, number, document_id, scope, now)
+                    self._parse_page(
+                        page, number, document_id=document_id, scope=scope,
+                        now=now, headings=headings,
+                    )
                     for number, page in enumerate(pdf.pages, start=1)
                 ]
         except Exception as exc:
@@ -138,9 +158,11 @@ class PdfPlumberParser:
         self,
         page: Any,
         page_number: int,
+        *,
         document_id: UUID,
         scope: ScopeContext,
         now: datetime,
+        headings: HeadingStack,
     ) -> ParsedPage:
         signals = _page_signals(page)
         kind = self._page_classifier.classify(signals)
@@ -162,16 +184,21 @@ class PdfPlumberParser:
         if kind in {PageKind.SCANNED, PageKind.COMPLEX}:
             return document_page, []
 
-        elements = list(self._elements_for(page, page_number, document_id, scope, now))
+        elements = self._elements_for(
+            page, page_number, document_id=document_id, scope=scope,
+            now=now, headings=headings,
+        )
         return document_page, elements
 
     def _elements_for(
         self,
         page: Any,
         page_number: int,
+        *,
         document_id: UUID,
         scope: ScopeContext,
         now: datetime,
+        headings: HeadingStack,
     ) -> list[DocumentElement]:
         """Every element on the page, ordered down it.
 
@@ -187,27 +214,40 @@ class PdfPlumberParser:
         drafts: list[_Draft] = []
         drafts.extend(_figure_drafts(page))
         drafts.extend(_table_drafts(page, table_regions))
-        drafts.extend(
-            self._text_drafts(page, table_regions, body_size)
-        )
-        drafts.sort(key=lambda draft: (draft.top, draft.left))
+        drafts.extend(self._text_drafts(page, table_regions, body_size))
 
-        return [
-            DocumentElement(
-                id=uuid.uuid4(),
-                user_id=scope.user_id,
-                knowledge_base_id=scope.knowledge_base_id,
-                document_id=document_id,
-                page_number=page_number,
-                element_type=draft.element_type,
-                text=UntrustedText(draft.text),
-                reading_order=order,
-                processing_method=ProcessingMethod.NATIVE_TEXT,
-                created_at=now,
-                bounding_box=_flip(draft, page_height),
+        ordered = [
+            drafts[index]
+            for index in self._reading_order.order(
+                [draft.box for draft in drafts], float(page.width)
             )
-            for order, draft in enumerate(drafts)
         ]
+
+        elements: list[DocumentElement] = []
+        for order, draft in enumerate(ordered):
+            # Asked once per element, in reading order, so the answer reflects the
+            # section the reader would be in at that point.
+            if draft.element_type is ElementType.HEADING:
+                heading_path = headings.enter(draft.text, size=draft.font_size)
+            else:
+                heading_path = headings.current
+            elements.append(
+                DocumentElement(
+                    id=uuid.uuid4(),
+                    user_id=scope.user_id,
+                    knowledge_base_id=scope.knowledge_base_id,
+                    document_id=document_id,
+                    page_number=page_number,
+                    element_type=draft.element_type,
+                    text=UntrustedText(draft.text),
+                    reading_order=order,
+                    processing_method=ProcessingMethod.NATIVE_TEXT,
+                    created_at=now,
+                    bounding_box=_flip(draft, page_height),
+                    heading_path=heading_path,
+                )
+            )
+        return elements
 
     def _text_drafts(
         self,
@@ -215,7 +255,7 @@ class PdfPlumberParser:
         table_regions: list[_Region],
         body_size: float,
     ) -> Iterator[_Draft]:
-        for block in self._paragraph_blocks(page, table_regions):
+        for block in self._blocks_by_column(page, table_regions):
             lines = [line["text"].strip() for line in block]
             text = " ".join(lines).strip()
             if len(text) < self._min_element_characters:
@@ -241,10 +281,47 @@ class PdfPlumberParser:
                 bottom=max(float(line["bottom"]) for line in block),
                 left=min(float(line["x0"]) for line in block),
                 right=max(float(line["x1"]) for line in block),
+                font_size=_block_font_size(block),
             )
 
-    def _paragraph_blocks(
+    def _blocks_by_column(
         self, page: Any, table_regions: list[_Region]
+    ) -> Iterator[list[dict[str, Any]]]:
+        """Paragraph blocks, grouped within each column rather than across the page.
+
+        Columns have to be found before lines are grouped, not after. Two columns put
+        their lines at the same heights, so grouping by vertical spacing alone weaves
+        them together into paragraphs that read straight across the gutter — text that
+        is wrong in a way no later reordering can undo, because the lines have already
+        been joined into a single string.
+        """
+        lines = [
+            line
+            for line in _text_lines(page, self._min_gutter_width)
+            # Text inside a table is reported as ordinary lines as well. Left in, it
+            # would appear twice — once flattened into a paragraph and once inside
+            # the table element — and the flattened copy is the one that would mix
+            # rows together and lose which column a number came from.
+            if not _falls_inside(line, table_regions)
+        ]
+        if not lines:
+            return
+
+        gutters = self._reading_order.find_gutters([_line_box(line) for line in lines])
+        if not gutters:
+            yield from self._paragraph_blocks(lines)
+            return
+
+        by_column: dict[int, list[dict[str, Any]]] = {}
+        for line in lines:
+            column = self._reading_order.column_of(_line_box(line), gutters)
+            by_column.setdefault(column, []).append(line)
+
+        for column in sorted(by_column):
+            yield from self._paragraph_blocks(by_column[column])
+
+    def _paragraph_blocks(
+        self, lines: list[dict[str, Any]]
     ) -> Iterator[list[dict[str, Any]]]:
         """Group text lines into paragraphs on vertical spacing.
 
@@ -260,30 +337,33 @@ class PdfPlumberParser:
         break either way. Taking the larger would swallow every heading into the
         paragraph that follows it.
         """
-        lines = sorted(
-            (
-                line
-                for line in page.extract_text_lines()
-                # Text inside a table is reported as ordinary lines as well. Left in, it
-                # would appear twice — once flattened into a paragraph and once inside
-                # the table element — and the flattened copy is the one that would mix
-                # rows together and lose which column a number came from.
-                if not _falls_inside(line, table_regions)
-            ),
-            key=lambda line: (line["top"], line["x0"]),
-        )
+        ordered = sorted(lines, key=lambda line: (line["top"], line["x0"]))
         block: list[dict[str, Any]] = []
-        for line in lines:
-            if block:
-                previous = block[-1]
-                reference = max(min(_line_height(previous), _line_height(line)), 1.0)
-                gap = float(line["top"]) - float(previous["bottom"])
-                if gap > reference * self._paragraph_gap_multiplier:
-                    yield block
-                    block = []
+        for line in ordered:
+            if block and self._starts_new_block(block[-1], line):
+                yield block
+                block = []
             block.append(line)
         if block:
             yield block
+
+    def _starts_new_block(
+        self, previous: dict[str, Any], line: dict[str, Any]
+    ) -> bool:
+        """Whether this line begins a new paragraph rather than continuing one.
+
+        Two things end a paragraph. A wide enough vertical gap is the obvious one. A
+        change of type size is the other, and it matters just as much: a chapter title
+        immediately above a section title sits at ordinary leading, and without this
+        the two would be joined into one element carrying both their names.
+        """
+        previous_height = _line_height(previous)
+        height = _line_height(line)
+        reference = max(min(previous_height, height), 1.0)
+        gap = float(line["top"]) - float(previous["bottom"])
+        if gap > reference * self._paragraph_gap_multiplier:
+            return True
+        return abs(previous_height - height) > max(previous_height, height) * 0.15
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +415,15 @@ def _normalised_rotation(page: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return normalised if normalised in {0, 90, 180, 270} else 0
+
+
+def _line_box(line: dict[str, Any]) -> LayoutBox:
+    return LayoutBox(
+        left=float(line["x0"]),
+        right=float(line["x1"]),
+        top=float(line["top"]),
+        bottom=float(line["bottom"]),
+    )
 
 
 def _line_height(line: dict[str, Any]) -> float:
@@ -428,12 +517,68 @@ def _page_body_font_size(page: Any) -> float:
     return sizes[len(sizes) // 2]
 
 
+def _text_lines(page: Any, min_gutter_width: float) -> list[dict[str, Any]]:
+    """Words assembled into lines, ending a line at any gap wide enough to be a gutter.
+
+    On a single-column page no gap is ever that wide, so every row becomes one line and
+    the result matches what a line-based extractor would have produced. On a multi-column
+    page the same rule separates the columns, which is the case that cannot be repaired
+    afterwards.
+    """
+    words = page.extract_words(extra_attrs=["size", "fontname"])
+    if not words:
+        return []
+
+    lines: list[dict[str, Any]] = []
+    for row in _rows(words):
+        segment: list[dict[str, Any]] = []
+        for word in sorted(row, key=lambda w: float(w["x0"])):
+            if segment and float(word["x0"]) - float(segment[-1]["x1"]) >= min_gutter_width:
+                lines.append(_line_from(segment))
+                segment = []
+            segment.append(word)
+        if segment:
+            lines.append(_line_from(segment))
+    return lines
+
+
+def _rows(words: Sequence[dict[str, Any]]) -> Iterator[list[dict[str, Any]]]:
+    """Words gathered into visual rows by vertical position.
+
+    Two words belong to the same row when their vertical extents overlap for most of
+    their height, which tolerates the small baseline differences that ordinary typesetting
+    produces without merging genuinely separate lines.
+    """
+    row: list[dict[str, Any]] = []
+    for word in sorted(words, key=lambda w: (float(w["top"]), float(w["x0"]))):
+        if row:
+            reference = row[0]
+            height = max(float(reference["bottom"]) - float(reference["top"]), 1.0)
+            if abs(float(word["top"]) - float(reference["top"])) > height * 0.5:
+                yield row
+                row = []
+        row.append(word)
+    if row:
+        yield row
+
+
+def _line_from(words: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "text": " ".join(str(word["text"]) for word in words),
+        "x0": min(float(word["x0"]) for word in words),
+        "x1": max(float(word["x1"]) for word in words),
+        "top": min(float(word["top"]) for word in words),
+        "bottom": max(float(word["bottom"]) for word in words),
+        "words": list(words),
+    }
+
+
 def _block_font_size(block: Sequence[dict[str, Any]]) -> float:
     sizes = sorted(
-        float(char["size"])
+        float(word["size"])
         for line in block
-        for char in line.get("chars", ())
-        if char.get("size")
+        for word in line.get("words", ())
+        if word.get("size")
     )
     if not sizes:
         return 10.0
@@ -447,9 +592,9 @@ def _block_is_bold(block: Sequence[dict[str, Any]]) -> bool:
     make the sentence a heading.
     """
     fonts = [
-        str(char.get("fontname", ""))
+        str(word.get("fontname", ""))
         for line in block
-        for char in line.get("chars", ())
+        for word in line.get("words", ())
     ]
     if not fonts:
         return False

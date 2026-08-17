@@ -73,6 +73,9 @@ def _build_pdf_parser(settings: Settings) -> PdfParserPort:
             ElementClassifier,
         )
         from app.domain.documents.page_classifier import PageClassifier  # noqa: PLC0415
+        from app.domain.documents.reading_order import (  # noqa: PLC0415
+            ReadingOrderResolver,
+        )
         from app.infrastructure.parsing.pdfplumber_parser import (  # noqa: PLC0415
             PdfPlumberParser,
         )
@@ -89,8 +92,13 @@ def _build_pdf_parser(settings: Settings) -> PdfParserPort:
                 heading_max_lines=settings.parsing.heading_max_lines,
                 formula_symbol_ratio=settings.parsing.formula_symbol_ratio,
             ),
+            ReadingOrderResolver(
+                min_gutter_width=settings.parsing.min_gutter_width,
+                min_column_width=settings.parsing.min_column_width,
+            ),
             paragraph_gap_multiplier=settings.parsing.paragraph_gap_multiplier,
             min_element_characters=settings.parsing.min_element_characters,
+            min_gutter_width=settings.parsing.min_gutter_width,
         )
     except ImportError:
         return cast(PdfParserPort, _Unimplemented("PdfParserPort"))
