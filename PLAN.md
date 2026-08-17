@@ -7,6 +7,12 @@ system design specification.
 
 - Phases run in numerical order unless a dependency says otherwise. Within Phase 0, follow the
   **running order** column, not the step numbers.
+- **That ordering has already been departed from.** Phase 9 was built to near-completion while
+  phases 5, 6 and 8 were untouched and phase 7 was a third done, on the strength of a placeholder
+  ingestion path good enough to put text in the index. It worked, and the retrieval pipeline it
+  produced is sound — but the placeholder is now the ceiling on everything measured downstream,
+  and phases 10 and 11 would stack on the same foundation. Read each phase's **Status** line
+  before assuming the numbering tells you what is finished.
 - Work proceeds **one step at a time**. The next step is never started automatically.
 - Every phase ends in something testable and one commit.
 - Section references like `§27` point at the source system design specification.
@@ -20,16 +26,37 @@ system design specification.
 
 | | |
 |---|---|
-| Current phase | **Phase 2 complete ✅ — Phase 3 next** |
-| Phase 0 steps | 13 of 13 ✅ |
-| Phase 1 steps | 10 of 10 ✅ |
-| Phase 2 steps | 12 of 12 ✅ |
-| Phases complete | 2 of 21 |
-| Last updated | 13 August 2026 (Phase 3 divided) |
+| Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
+| In progress | **Phase 9** — ~95%, three persistence gaps left |
+| Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
+| Not started | Phase 5, 6, 10–16, 18–20 |
+| Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
+| Last updated | 17 August 2026 (reconciled against the codebase) |
 
-Phase 0, 1 and 2 are complete. Phase 3 starts next. 836 unit tests + 9 integration tests passing,
-ruff and mypy clean across all new files. Twelve SQLAlchemy models registered with Base.metadata;
-migration `0008` applied at `0008 (head)` against Supabase.
+Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
+finished, so the numbering no longer describes the build order — work jumped to conversations and
+retrieval once the data model and API surface were in place. Phases 5 and 6 have not been started
+at all, which is the substantive hole: ingestion currently extracts native PDF text with `pypdf`
+and splits it on a fixed character window, so nothing scanned, tabular or visual is retrievable
+and §19's chunking strategy is unbuilt. Retrieval quality is capped there regardless of what
+phases 10 and 11 add on top.
+
+Migration `0008` applied at `0008 (head)` against Supabase; fourteen SQLAlchemy models registered
+with `Base.metadata`. ruff and mypy clean across `app/`.
+
+**Two known test failures**, neither caused by the code under test:
+
+- `test_container.py::test_every_slot_raises_not_implemented_on_access` — asserts `model_gateway`
+  is still an unimplemented slot; it has held a real `OllamaModelGateway` since `897a88d`.
+- `test_stage_timer.py::test_measures_real_elapsed_time` — flaky, failing roughly one run in
+  three. Asserts at least 20 ms elapsed after a 20 ms sleep, which Windows timer granularity does
+  not reliably satisfy.
+
+**Documentation debt carried into Phase 20.** `REQUIREMENTS.md` has no status column against its
+334 functional requirements; `USE_CASES.md` tracks no implementation status; `ARCHITECTURE.md`
+does not yet describe the transaction boundaries introduced in step 9.15; `EXECUTION_LOG.md` has
+no entries between step 3.2 and step 9.11, against the standing constraint that every step
+updates it.
 
 ---
 
@@ -459,9 +486,9 @@ contract surface be reviewed for consistency at once rather than scattered acros
 | 1.3 | Chunk, Evidence, Citation, RetrievalPlan | M | ✅ |
 | 1.4 | Conversation, Message, MemoryFact | M | ☑ |
 | 1.5 | GraphEntity, GraphRelationship | S | ☑ |
-| 1.6 | ModelRequest, ModelResponse, ProcessingJob | M | ☐ |
-| 1.7 | Repository ports | M | ☐ |
-| 1.8 | Adapter ports | M | ☐ |
+| 1.6 | ModelRequest, ModelResponse, ProcessingJob | M | ✅ |
+| 1.7 | Repository ports | M | ✅ |
+| 1.8 | Adapter ports | M | ✅ |
 | 1.9 | Model gateway port and capability registry | M | ☑ |
 | 1.10 | Composition root, DI wiring, boundary test made load-bearing | M | ☑ |
 
@@ -816,132 +843,158 @@ Covers §7 (API process), §10, §61, §62 baseline, §64 first tests.
 |---|---|---|---|
 | 3.1 | Supabase JWT verification + `get_current_user` FastAPI dependency | M | ✅ |
 | 3.2 | KB ownership dependency → `ScopeContext`; 404 on foreign or missing KB | S | ✅ |
-| 3.3 | Middleware: trace ID, CORS, request logging, exception-to-HTTP mapping | M | ☐ |
-| 3.4 | Observability baseline: structlog pipeline, `TraceContext`, stage timers | M | ☐ |
-| 3.5 | `/api/v1/knowledge-bases` CRUD — 5 endpoints, Pydantic schemas | M | ☐ |
-| 3.6 | §61 route skeletons — every remaining endpoint returning 501 | S | ☐ |
-| 3.7 | Security tests: cross-user KB access, cross-KB access, unauthenticated access | M | ☐ |
+| 3.3 | Middleware: trace ID, CORS, request logging, exception-to-HTTP mapping | M | ✅ |
+| 3.4 | Observability baseline: structlog pipeline, `TraceContext`, stage timers | M | ✅ |
+| 3.5 | `/api/v1/knowledge-bases` CRUD — 5 endpoints, Pydantic schemas | M | ✅ |
+| 3.6 | §61 route skeletons — every remaining endpoint returning 501 | S | ✅ |
+| 3.7 | Security tests: cross-user KB access, cross-KB access, unauthenticated access | M | ✅ |
 
-### 3.1 — JWT verification + auth dependency
+### 3.1 — JWT verification + auth dependency ✅
 
-- [ ] `app/infrastructure/auth/jwt.py` — `decode_jwt(token: str) → dict`:
-      validates signature (HS256 with `SUPABASE_JWT_SECRET`), expiry, and audience
-      `"authenticated"`; raises `AuthenticationError` on any failure
-- [ ] `app/api/deps/auth.py` — `get_current_user` FastAPI dependency:
+Built with **RS256 verified against Supabase's JWKS**, not the HS256 shared secret this step
+originally specified — `SupabaseSettings` already carried `jwks_url` and `jwks_cache_seconds`, so
+the asymmetric path was the consistent choice and no `SUPABASE_JWT_SECRET` was introduced
+(A-252). The dependency landed in `app/api/dependencies/`, not `app/api/deps/`, and that
+directory name is what every later step follows (A-256).
+
+- [x] `app/infrastructure/auth/jwt.py` — `decode_jwt(token: str) → dict`:
+      validates signature (RS256 against the JWKS in `app/infrastructure/auth/jwks.py`), expiry,
+      and audience `"authenticated"`; raises `AuthenticationError` on any failure
+- [x] `app/api/dependencies/auth.py` — `get_current_user` FastAPI dependency:
       extracts Bearer token from `Authorization` header; calls `decode_jwt`;
       returns `user_id: uuid.UUID` from the `sub` claim; 401 on missing or invalid token
-- [ ] `PyJWT` added to `core` dependency group
-- [ ] Tests: valid token → `user_id`, expired token → 401, wrong audience → 401, missing
+- [x] `PyJWT` added to `core` dependency group
+- [x] Tests: valid token → `user_id`, expired token → 401, wrong audience → 401, missing
       header → 401, malformed token → 401
 
-### 3.2 — KB ownership dependency
+### 3.2 — KB ownership dependency ✅
 
-- [ ] `app/api/deps/scope.py` — `get_kb_scope` FastAPI dependency:
+- [x] `app/api/dependencies/scope.py` — `get_kb_scope` FastAPI dependency:
       takes `kb_id: uuid.UUID` from path + `user_id` from 3.1 + `AsyncSession` from DI;
       queries `knowledge_bases WHERE id = :kb_id`; returns 404 if not found **or** if the
       row belongs to a different user — the two cases are indistinguishable to the caller
       (FR-AUTH-13); returns `ScopeContext(user_id, kb_id)` on success
-- [ ] Tests: own KB → ScopeContext; foreign KB → 404; missing KB → 404
+- [x] Tests: own KB → ScopeContext; foreign KB → 404; missing KB → 404
 
-### 3.3 — Middleware
+### 3.3 — Middleware ✅
 
-- [ ] `app/api/middleware/trace.py` — generates a UUID trace ID per request, stores it in a
+- [x] `app/api/middleware/trace.py` — generates a UUID trace ID per request, stores it in a
       `ContextVar`, adds it to the response as `X-Trace-ID`
-- [ ] `app/api/middleware/errors.py` — exception handler registered on the FastAPI app:
+- [x] `app/api/middleware/errors.py` — exception handler registered on the FastAPI app:
       `NotFoundError` → 404, `ScopeViolationError` → 404 (never 403, FR-AUTH-13),
       `AuthenticationError` → 401, `InvariantViolationError` → 422, unhandled → 500;
       every response body is `{"detail": "<message>", "trace_id": "<id>"}`
-- [ ] `app/api/middleware/logging.py` — ASGI middleware that logs method, path, status code,
+- [x] `app/api/middleware/logging.py` — ASGI middleware that logs method, path, status code,
       and duration via structlog on every request/response; redacts `Authorization` header value
-- [ ] CORS middleware registered in `main.py` using `CORS_ORIGINS` from settings
-- [ ] Tests: trace ID present in response headers; domain errors map to correct HTTP codes;
+- [x] CORS middleware registered in `main.py` using `CORS_ORIGINS` from settings
+- [x] Tests: trace ID present in response headers; domain errors map to correct HTTP codes;
       auth header value never appears in log output
 
-### 3.4 — Observability baseline
+### 3.4 — Observability baseline ✅
 
-- [ ] `app/application/observability/context.py` — `TraceContext`: `ContextVar` holding the
+- [x] `app/application/observability/context.py` — `TraceContext`: `ContextVar` holding the
       current trace ID and optional user ID; `bind()` and `get()` helpers used by log processors
-- [ ] `app/application/observability/timer.py` — `StageTimer`: context manager that measures
+- [x] `app/application/observability/timer.py` — `StageTimer`: context manager that measures
       elapsed time for a named stage; `elapsed_ms()` returns an integer; used in Phase 9 onward
       for the 17 §62 stage timers
-- [ ] `app/infrastructure/observability/structlog_setup.py` — call-once `configure_structlog()`:
+- [x] `app/infrastructure/observability/structlog_setup.py` — call-once `configure_structlog()`:
       adds timestamp, log level, trace ID (from `TraceContext`), and a PII redaction processor
       that strips any key matching `prompt`, `document_text`, `model_output` in production
       (`DEBUG_ALLOW_CONTENT_LOGGING` setting gates the exception); outputs JSON in production,
       coloured console in development
-- [ ] `app/infrastructure/observability/invocation_log.py` — `write_model_invocation()`:
+- [x] `app/infrastructure/observability/invocation_log.py` — `write_model_invocation()`:
       writes a structlog event `model_invocation` with `model_id`, `task`, `prompt_tokens`,
       `completion_tokens`, `latency_ms`, `trace_id`; Phase 8 adds a DB write on top of this
-- [ ] `configure_structlog()` called in the FastAPI lifespan before any handlers register
-- [ ] Tests: redaction processor strips flagged keys in production mode and passes them in
+- [x] `configure_structlog()` called in the FastAPI lifespan before any handlers register
+- [x] Tests: redaction processor strips flagged keys in production mode and passes them in
       debug mode; `StageTimer` reports correct elapsed time; `TraceContext` is request-scoped
       (one request's trace ID does not leak to another)
 
-### 3.5 — Knowledge Base CRUD API
+### 3.5 — Knowledge Base CRUD API ✅
 
-- [ ] `app/api/schemas/knowledge_base.py` — Pydantic v2 schemas:
+- [x] `app/api/schemas/knowledge_base.py` — Pydantic v2 schemas:
       `CreateKnowledgeBaseRequest` (name required; description, subject, learning_goal,
       preferred_language, explanation_level, optional_exam_date all optional);
       `UpdateKnowledgeBaseRequest` (all fields optional);
       `KnowledgeBaseResponse` (full field set including timestamps)
-- [ ] Five endpoints under `/api/v1/knowledge-bases` in `app/api/routers/knowledge_bases.py`:
+- [x] Five endpoints under `/api/v1/knowledge-bases` in `app/api/routers/knowledge_bases.py`:
       `POST /` → create row via `KnowledgeBaseRepository`, return 201 + `KnowledgeBaseResponse`;
       `GET /` → list all KBs for `user_id`, return 200 + list;
       `GET /{kb_id}` → single KB via `get_kb_scope`, return 200;
       `PATCH /{kb_id}` → partial update, return 200;
       `DELETE /{kb_id}` → delete KB + all child rows (CASCADE in schema), return 204
-- [ ] Router registered on the FastAPI app in `main.py`
-- [ ] Every response includes `X-Trace-ID` via the trace middleware from 3.3
-- [ ] Tests: 201 on create; 200 list returns only the requesting user's KBs; 404 on get/update/delete
+- [x] Router registered on the FastAPI app in `main.py`
+- [x] Every response includes `X-Trace-ID` via the trace middleware from 3.3
+- [x] Tests: 201 on create; 200 list returns only the requesting user's KBs; 404 on get/update/delete
       for a foreign KB; 401 when no token supplied; 422 on missing required field; 204 on delete
 
-### 3.6 — §61 route skeletons
+### 3.6 — §61 route skeletons ✅
 
-- [ ] One router file per resource group, each endpoint returning
+- [x] One router file per resource group, each endpoint returning
       `{"detail": "Not implemented", "phase": "<N>"}` with HTTP 501:
       documents (§11, Phase 4), conversations + messages (§23, Phase 9),
       graph (§57, Phase 12), study content (§46, Phase 15), memory (§42, Phase 14)
-- [ ] All skeleton routes wired through `get_current_user` and `get_kb_scope` so auth + scope
+- [x] All skeleton routes wired through `get_current_user` and `get_kb_scope` so auth + scope
       enforcement is active from day one — the 501 body is never reached without a valid token and
       an owned KB
-- [ ] Routers registered in `main.py`; OpenAPI document lists all endpoints at their final paths
-- [ ] Test: `GET /api/v1/knowledge-bases/{kb_id}/conversations` with a valid token returns 501;
+- [x] Routers registered in `main.py`; OpenAPI document lists all endpoints at their final paths
+- [x] Test: `GET /api/v1/knowledge-bases/{kb_id}/conversations` with a valid token returns 501;
       the same call without a token returns 401 (auth fires before the 501)
 
-### 3.7 — Security tests: authentication and KB access
+### 3.7 — Security tests: authentication and KB access ✅
 
-- [ ] `tests/security/test_kb_access.py` — marked `security` and `gate`:
+- [x] `tests/security/test_kb_access.py` — marked `security` and `gate`:
       cross-user KB access → 404 (user A's valid token, user B's KB ID);
       unauthenticated access to any endpoint → 401;
       expired token → 401;
       valid token but KB does not exist → 404
-- [ ] `tests/security/test_rls_api.py` — end-to-end RLS check via the API layer:
+- [x] `tests/security/test_rls_api.py` — end-to-end RLS check via the API layer:
       create a KB as user A (direct DB insert, bypassing auth); attempt to read it as user B
       via the API; assert 404 is returned and no KB data is disclosed in the error body
-- [ ] All security tests runnable standalone: `uv run pytest -m security`
-- [ ] UC-01 (sign-in, token issued) and UC-02 (create KB) acceptance criteria met by the CRUD
+- [x] All security tests runnable standalone: `uv run pytest -m security`
+- [x] UC-01 (sign-in, token issued) and UC-02 (create KB) acceptance criteria met by the CRUD
       tests in 3.5 and the security tests here
 
 ## Phase 4 — Storage, upload flow, job queue & worker
 
 Covers §7 (worker), §11, §12, §60.
 
-- [ ] R2 adapter behind `StoragePort` — S3-compatible presigned URLs, private bucket,
+**Status: ~85%.** Everything on the happy path works. What is missing is recovery — a job whose
+worker dies is never reclaimed, a failed job is never retried, and deletion jobs are enqueued but
+nothing consumes them.
+
+- [x] R2 adapter behind `StoragePort` — S3-compatible presigned URLs, private bucket,
       `{user_id}/{kb_id}/{document_id}/original.pdf` (D-08)
-- [ ] Separate cache prefix with TTL for page renders (D-13)
-- [ ] Upload endpoint: MIME, magic-byte, size and page-count validation → `documents` row →
+- [x] Separate cache prefix with TTL for page renders (D-13)
+- [x] Upload endpoint: MIME, magic-byte, size and page-count validation → `documents` row →
       storage write → `DOCUMENT_INGESTION` job → returns ID and status
-- [ ] Status lifecycle `PENDING → PROCESSING → COMPLETED → FAILED → DELETING`
-- [ ] Job queue: `FOR UPDATE SKIP LOCKED`, `INTERACTIVE`/`NORMAL`/`BACKGROUND` priorities,
-      heartbeat, lease-expiry reclaim, `attempt_count` with exponential backoff, dead-letter
-- [ ] Separate worker process sharing domain and application code, graceful shutdown
-- [ ] Status polling endpoint with per-stage progress
-- [ ] Security tests: signed-URL expiry, upload into a foreign KB
-- [ ] UC-04, UC-05
+- [x] Status lifecycle `PENDING → PROCESSING → COMPLETED → FAILED → DELETING`
+- [x] Job queue: `FOR UPDATE SKIP LOCKED`, `INTERACTIVE`/`NORMAL`/`BACKGROUND` priorities,
+      heartbeat, dead-letter on attempt exhaustion
+- [ ] **Lease-expiry reclaim** — `claim_next` selects only `PENDING`, so a job orphaned by a
+      crashed worker stays `RUNNING` for ever and is never picked up again
+- [ ] **Exponential backoff on retry** — `ProcessingJob.requeue` exists and nothing calls it; a
+      failed job sits at `FAILED` with no scheduler to return it to the queue
+- [x] Separate worker process sharing domain and application code, graceful shutdown
+- [x] Status polling endpoint (per-stage progress still pending — there is one status, not a
+      stage breakdown, because the stages it would report belong to phases 5–7)
+- [ ] **`DELETE_DOCUMENT` consumer** — `DELETE /documents/{id}` marks `DELETING` and enqueues the
+      job, but the worker claims only `DOCUMENT_INGESTION`, so the row and its objects are never
+      actually removed
+- [x] Security tests: upload into a foreign KB, storage-key isolation
+- [ ] Signed-URL expiry test — no endpoint issues a presigned URL yet, so there is nothing to
+      expire; the adapter method exists and is unit-tested
+- [x] UC-04, UC-05 (subject to ingestion being a skeleton — see Phase 5)
 
 ## Phase 5 — PDF parsing, page classification & OCR
 
 Covers §13, §14, §15, §16.
+
+**Status: not started.** `app/infrastructure/parsing/` and `app/infrastructure/ocr/` are empty
+packages. What exists instead is a deliberate placeholder: `_extract_pdf_pages` in
+`app/worker/__main__.py` reads native text with `pypdf` and skips pages that return none. A
+scanned page yields nothing and the document still completes, so it is indexed as though empty.
+The `PageKind`, `ProcessingMethod` and `ElementType` enums are defined and unused.
 
 - [ ] `pypdf` metadata and native text · `pdfplumber` layout, blocks, tables · `pypdfium2`
       rendering · Pillow, with OpenCV only where preprocessing is necessary
@@ -961,6 +1014,12 @@ Covers §13, §14, §15, §16.
 
 Covers §17, §18.
 
+**Status: not started.** Nothing produces a table, figure, chart or diagram record. The
+`ChunkType` enum carries `TABLE`, `FIGURE`, `CHART` and `DIAGRAM`, and `Chunk.carries_a_visual`
+is written and tested against them, but no chunk is ever created with any type other than `TEXT`.
+`Conversation.active_table_id` and `active_figure_id` are stored and never set, because there is
+nothing to select. Blocked on Phase 5.
+
 - [ ] Tables: detect → title and caption → headers, rows, units → crop → JSON → Markdown →
       optional HTML → retrieval-oriented text → bbox, page, confidence
 - [ ] Large tables split by row group, **repeating title, headers, units and row labels in every
@@ -979,57 +1038,112 @@ Covers §17, §18.
 
 Covers §13 complete, §19, §20. **Milestone: ingestion works end to end.**
 
-- [ ] Child chunks 300–500 tokens, max ~700, ~50 overlap; parents 800–1500 (§19)
-- [ ] Split priority chapter → section → subsection → paragraph → sentence only if unavoidable
-- [ ] Chunk types `TEXT`, `TABLE`, `FIGURE`, `CHART`, `DIAGRAM`, `FORMULA`, `DEFINITION`,
-      `EXAMPLE` — separate but linked
-- [ ] Full §19 chunk metadata
-- [ ] `bge-small-en-v1.5` on GPU, batched, over text, table text, descriptions and captions
-- [ ] pgvector writes with HNSW; `tsvector` population with `rum` indexes
-- [ ] Index versioning and reindex job (§20)
-- [ ] `GENERATE_EMBEDDINGS` job; document flips to `COMPLETED`
-- [ ] Nothing with `processing_status != COMPLETED` is ever retrievable
+**Status: ~35%.** The embedding and indexing half is real; the chunking half is not. `_split_text`
+in `app/application/commands/ingest_document.py` is a fixed-width character window with overlap —
+it has no notion of a sentence, a paragraph or a heading, so a chunk boundary lands mid-word as
+readily as anywhere else. This is the single largest constraint on retrieval quality in the
+system, and no amount of reranking above it recovers what a bad split destroyed.
+
+- [ ] **Child chunks 300–500 tokens, max ~700, 70 overlap; parents 800–1500** (§19, D-29) —
+      currently one flat tier sized in characters, with token counts estimated as `len // 4`
+- [ ] **Split priority chapter → section → subsection → paragraph → sentence** — no structural
+      awareness at all
+- [ ] **Chunk types** beyond `TEXT` — every chunk is hardcoded `ChunkType.TEXT`
+- [ ] **Full §19 chunk metadata** — `heading_path` is always `HeadingPath.root()`, `chapter`,
+      `section`, `element_type` and `bounding_box` are never populated, and `parent_chunk_id` is
+      never set, so parent expansion in Phase 10 has nothing to expand to
+- [x] `bge-small-en-v1.5` on GPU, batched
+- [x] pgvector writes with HNSW; `tsvector` population with `rum` indexes
+- [x] Index versioning columns written on every chunk (`index_version`, `embedding_version`)
+- [ ] Reindex job (§20) — the columns support it, no job exists
+- [x] Embeddings generated during `DOCUMENT_INGESTION`; document flips to `COMPLETED`
+- [ ] Separate `GENERATE_EMBEDDINGS` job — embedding runs inline in the ingestion job instead
+- [x] Nothing with `processing_status != COMPLETED` is ever retrievable — enforced in SQL and
+      covered by `tests/security/test_retrieval_security.py` as a release gate
 - [ ] **Check:** a real textbook PDF completes every stage and is queryable
 
 ## Phase 8 — Model Gateway
 
 Covers §48, §49, §50, §51, §52, §53, §54, and §55's warm-model requirement.
 
-- [ ] Gateway façade → task router → capability registry → provider adapter
-- [ ] Four capability interfaces: text generation, multimodal, embeddings, reranking
-- [ ] §49 capability metadata including `data_boundary`
-- [ ] §50 routing for all ten model tasks
-- [ ] Ollama and OpenAI-compatible adapters implemented; Gemini and Anthropic raise
-      `NotImplementedError` (D-17)
-- [ ] Internal model keys resolvable at deployment, task or Knowledge Base level; no provider model
-      names in application code (§51)
+**Status: ~25%.** One adapter satisfies `ModelGatewayPort` directly and is wired straight into the
+container — there is no gateway in front of it. Everything the gateway exists to provide (routing,
+privacy enforcement, fallback, normalization) is therefore absent, and the single-provider setup
+hides that, because with one local provider none of it is exercised.
+
+- [ ] **Gateway façade → task router → capability registry → provider adapter** — the container
+      holds `OllamaModelGateway` in the `model_gateway` slot; nothing sits between caller and
+      provider
+- [ ] Four capability interfaces: text generation, multimodal, embeddings, reranking — embeddings
+      and reranking are separate ports (`EmbeddingPort`, `RerankerPort`), not gateway capabilities
+- [x] §49 capability metadata including `data_boundary` — `ModelProfile` carries it
+- [ ] §50 routing for all ten model tasks — `ModelProfile.tasks` declares the nine text tasks and
+      `profile_for` rejects unsupported ones, but there is no router choosing between models
+- [x] Ollama adapter implemented
+- [ ] OpenAI-compatible adapter; Gemini and Anthropic raising `NotImplementedError` (D-17)
+- [ ] Internal model keys resolvable at deployment, task or Knowledge Base level (§51) — one model
+      id comes from settings and is passed to the adapter's constructor
 - [ ] **Privacy policy (§52):** pre-flight `data_boundary` check; **no silent local-to-external
-      fallback** — it raises
-- [ ] **Fallback (§53):** capability check → call → retryable → one retry → approved fallback.
-      Non-retryable fails immediately. Every fallback logged.
-- [ ] **Prompt normalization (§54)** and per-model prompt profiles
-- [ ] Warm-up at startup for every configured model (§55)
-- [ ] `model_invocations` written on every call
+      fallback** — nothing reads `data_boundary` at call time
+- [ ] **Fallback (§53):** `ProviderError` carries a `retryable` flag and no caller acts on it —
+      there is no retry, no approved-fallback chain, and nothing logged
+- [ ] **Prompt normalization (§54)** and per-model prompt profiles — the seven-slot `ModelRequest`
+      is mapped to Ollama's chat array inside the adapter, which is the normalization step done
+      once for one provider rather than as a shared stage
+- [ ] Warm-up at startup for every configured model (§55) — `warm_models_on_startup` is defined in
+      settings and read by nothing
+- [ ] `model_invocations` written on every call — no such table exists;
+      `write_model_invocation()` emits a structlog event only
 - [ ] Security test: external-provider privacy violation blocked
 
 ## Phase 9 — Conversations, query understanding & retrieval core
 
 Covers §23 through reranking, §24, §25, §26, §27, §28, §29, §41.
 
-- [ ] Conversation and message persistence; user message stored **before** generation; statuses
-      `RECEIVED`/`PROCESSING`/`COMPLETED`/`FAILED`; `rolling_summary`; active document, page,
-      figure and table
-- [ ] Query rewriting — follow-ups to standalone queries; both forms stored (§24)
-- [ ] Deterministic classification into all 13 §25 classes — rule-based routing, not an agent
-- [ ] Multi-query expansion: 2–3 variants, max 4, temperature 0; **skipped** for exact quotations,
-      identifiers, selected tables, selected figures, chapter summarisation, resolved scopes (§26)
-- [ ] Hybrid retrieval: pgvector + full-text per variant, run concurrently, with **mandatory
+**Status: ~95%.** Built out of order, ahead of phases 5–8. The retrieval pipeline is complete and
+the persistence layer was finished in steps 9.11–9.15, which also closed a defect where the
+conversations router never committed — every write on this path was being discarded, and no unit
+test could see it because they all assert against a mocked repository.
+
+All fifteen steps are done. The open boxes below are individual fields and one unrun test, not
+remaining stages — which is why the checkbox count reads lower than the percentage.
+
+| Step | Deliverable | Done |
+|---|---|---|
+| 9.1–9.8 | Classifier, retrievers, fusion, expander, rewriter, reranker, orchestrator, stage timing | ✅ |
+| 9.9 | Retrieval security tests — scope, document status, empty filters | ✅ |
+| 9.10 | User and assistant message persistence around the stream | ✅ |
+| 9.11 | `save_retrieval_chunks` on the repository | ✅ |
+| 9.12 | Evidence record written from `AnswerUseCase` | ✅ |
+| 9.13 | Evidence-record gate — stored set must equal prompt set | ✅ |
+| 9.14 | Commit on conversation creation | ✅ |
+| 9.15 | `ConversationUnitOfWork`; streamed writes commit in their own transaction | ✅ |
+
+- [x] Conversation and message persistence; user message stored **before** generation; statuses
+      `RECEIVED`/`COMPLETED`/`FAILED`; active document, page, figure and table
+- [ ] `PROCESSING` status never used — a message goes `RECEIVED` → terminal
+- [ ] **`rolling_summary`** — column exists, absent from the `Conversation` entity, never written.
+      Deferrable: nothing reads it until Phase 14
+- [x] Query rewriting — follow-ups resolved to standalone queries before search
+- [ ] **Both forms stored (§24)** — the rewriter's output is used for retrieval and reranking and
+      then discarded; `Message.rewritten_query` and `with_rewritten_query()` exist and are unused
+- [ ] **Model metadata on assistant messages** — `model_id`, `prompt_tokens`,
+      `completion_tokens` are always null, because `generate_stream` yields bare strings and
+      never reports usage. Properly a Phase 8 fix
+- [x] Deterministic classification into all 13 §25 classes — rule-based, no agent
+- [x] Multi-query expansion: 2–3 variants, temperature 0, skipped when the plan forbids it (§26)
+- [x] Hybrid retrieval: pgvector + full-text per variant, run concurrently, with **mandatory
       `user_id`, `knowledge_base_id`, `processing_status = COMPLETED` filters inside every query**
-- [ ] RRF with `k`=60 (§28)
-- [ ] Dense and keyword top-k 25–30 per query, RRF pool 40–60, `ms-marco-MiniLM-L6-v2` on GPU over
-      30–50 candidates, fed the **resolved standalone question** (§29)
-- [ ] Every §62 retrieval stage timed
-- [ ] Security tests: cross-KB retrieval, deleted-document retrieval, retrieval without filters
+- [x] RRF with `k`=60 (§28)
+- [x] Dense and keyword top-k, RRF pool, `ms-marco-MiniLM-L6-v2` over the candidate pool, fed the
+      **resolved standalone question** (§29) — all sized from settings per D-20
+- [x] Retrieval stages timed via `StageTimer` and emitted as structlog events
+- [x] Security tests: cross-KB retrieval, non-`COMPLETED` document retrieval, empty-filter bypass
+- [x] Evidence record persisted per answer, gated on equality with the prompt set — the
+      prerequisite for Phase 11's "was this citation in context?" validation
+- [ ] **Unverified:** `tests/integration/test_answer_persistence.py` proves the streamed writes
+      reach PostgreSQL, and has never been run — it needs `TEST_DATABASE_URL` and commits real
+      rows. Until it runs, durability on this path is argued, not demonstrated
 
 ## Phase 10 — Evidence selection & context assembly
 
@@ -1143,7 +1257,13 @@ Covers §46, §47.
 
 Covers §55, §56, §58.
 
-- [ ] `CacheStore` on UNLOGGED PostgreSQL — no Redis (D-14, ADR-005)
+**Status: ~5%.** Groundwork only, laid by earlier phases: the UNLOGGED `cache_entries` table and
+its `pg_cron` sweep exist from step 2.7, and `R2CacheAdapter` with TTL-on-read exists from Phase 4.
+No `CacheStore` port implementation reads or writes `cache_entries`, and the deletion path is
+half-built — see the `DELETE_DOCUMENT` gap in Phase 4.
+
+- [ ] `CacheStore` on UNLOGGED PostgreSQL — no Redis (D-14, ADR-005); table and sweep exist,
+      nothing uses them
 - [ ] All eleven §56 cacheable item types
 - [ ] Full §56 answer cache key including `conversation_state_hash`, `index_version`,
       `prompt_version`, `generation_policy_version`
@@ -1168,8 +1288,18 @@ Covers §55, §56, §58.
 
 Covers §62, §63, §64, and closes §30's calibration debt.
 
-- [ ] All 17 §62 stage timers, model metrics and operational metrics
-- [ ] **Logs never contain full private documents or prompts by default** (§62)
+**Status: ~15%.** The observability baseline arrived early in step 3.4 and the security suite has
+been growing alongside each phase — 109 tests marked `security`, 75 marked `gate`. What is entirely
+absent is evaluation: no gold dataset, no metric harness, and no calibration, which means every
+tuning number in `settings.py` is still the placeholder it was written as, and D-23's promise to
+replace the derived latency budgets with measured p95 is unmet.
+
+- [x] Stage timers via `StageTimer`, emitted as structlog events with elapsed milliseconds —
+      retrieval stages only; the full §62 set spans phases not yet built
+- [ ] Model metrics and operational metrics
+- [x] **Logs never contain full private documents or prompts by default** (§62) — redaction
+      processor strips `prompt`, `document_text` and `model_output` unless
+      `DEBUG_ALLOW_CONTENT_LOGGING` is set
 - [ ] Gold dataset: 40–60 labelled pairs from user-supplied PDFs across every query class (D-22)
 - [ ] Retrieval evaluation: Recall@k, Precision@k, MRR, NDCG, document and page coverage, table,
       visual and graph-edge accuracy
@@ -1178,10 +1308,13 @@ Covers §62, §63, §64, and closes §30's calibration debt.
 - [ ] Multi-hop evaluation: all seven §63 metrics
 - [ ] Memory evaluation: all seven §63 metrics
 - [ ] Instruction-following evaluation: all five §63 metrics
-- [ ] **All ten §64 security tests** in one suite
-- [ ] **Six release gates as failing tests:** cross-user leakage 0 · cross-KB leakage 0 ·
-      fabricated citation acceptance 0 · deleted memory retrieval 0 · unauthorized cache reuse 0 ·
-      graph edge without provenance 0
+- [ ] **All ten §64 security tests** in one suite — five files exist under `tests/security/`
+      covering KB access, RLS through the API, upload, document deletion, retrieval scope and the
+      evidence record; the rest await the phases they test
+- [ ] **Six release gates as failing tests:** cross-user leakage 0 ✅ · cross-KB leakage 0 ✅ ·
+      fabricated citation acceptance 0 (Phase 11 — the evidence record it depends on is in place)
+      · deleted memory retrieval 0 (Phase 14) · unauthorized cache reuse 0 (Phase 16) · graph edge
+      without provenance 0 (Phase 12)
 - [ ] Threshold calibration; latency NFRs recalibrated against measured p95 (D-23)
 - [ ] `evaluation_results` persisted; results written into `REQUIREMENTS.md`
 
@@ -1286,9 +1419,16 @@ Verify each with `uv run python scripts/verify_environment.py` after supplying i
 
 | Input | Needed by | Status |
 |---|---|---|
-| Supabase project URL, anon key, service key, database URL | Phase 2 | ☐ |
-| Cloudflare R2 account ID, bucket name, access key ID, secret | Phase 4 | ☐ |
-| Ollama installed with `gemma3:4b` pulled | Phase 8 | ☐ — confirmed not installed |
+| Supabase project URL, anon key, service key, database URL | Phase 2 | ✅ supplied; migrations applied at `0008 (head)` |
+| Cloudflare R2 account ID, bucket name, access key ID, secret | Phase 4 | ✅ supplied as the `STORAGE_*` settings |
+| Ollama installed with `gemma3:4b` pulled | Phase 8 | ☐ — not responding on `localhost:11434` |
 | 2–3 educational PDFs with real tables and charts, for the gold evaluation set | Phase 17 | ☐ |
+| `TEST_DATABASE_URL` for the integration suite | Phase 9 onward | ☐ — unset, so 15 integration tests skip |
 
-None of these block Phase 1, which builds the domain layer and its ports against nothing external.
+Ollama being down does not fail the test suite, because every test that touches the gateway uses
+a fake — which also means no test in the repository has ever exercised a real model call.
+
+`TEST_DATABASE_URL` was not previously listed and should have been. Without it the integration
+tests silently skip, including the one that proves streamed writes reach PostgreSQL. Per the
+Supabase pooler note, it wants the session pooler host on port 5432, and the connection needs a
+network that does not block outbound Postgres.

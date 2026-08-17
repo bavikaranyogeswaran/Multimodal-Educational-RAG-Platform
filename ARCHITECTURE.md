@@ -175,6 +175,7 @@ configuration change; no caller is aware.
 | Port | Adapter | Phase |
 |---|---|---|
 | `KnowledgeBaseRepository`, `DocumentRepository`, `ChunkRepository`, `ConversationRepository`, `MemoryRepository`, `GraphRepository`, `JobRepository` | SQLAlchemy + psycopg | 2 |
+| `ConversationUnitOfWork` | SQLAlchemy session opened per unit of work — see §5.4 | 9 |
 | `StoragePort` | Cloudflare R2, S3-compatible presigned URLs | 4 |
 | `PdfParserPort` | pypdf · pdfplumber · pypdfium2 | 5 |
 | `OcrPort` | PaddleOCR PP-OCRv6, PaddleOCR-VL fallback | 5 |
@@ -283,6 +284,9 @@ An exact-answer cache is consulted after classification and before expansion; it
 conversation state, index version, prompt version and model, so a stale or cross-scope hit is not
 representable (`FR-CCH-03`, `NFR-SEC-08`).
 
+The first and last steps of this flow — persisting the question, and persisting the answer with
+its evidence record — do not share a transaction, and cannot. See §5.4.
+
 ### 5.3 Scope enforcement
 
 ```mermaid
@@ -309,6 +313,67 @@ sequenceDiagram
 Three independent gates. The repository cannot be called without a `ScopeContext`, the SQL carries
 the predicate inline, and RLS enforces it again at the database. Filtering happens **before**
 ranking or traversal, never after (`NFR-SEC-02`).
+
+### 5.4 Transaction boundaries
+
+Most endpoints read, write and return, so one session per request is the right unit and the
+session dependency provides it. Streaming an answer does not fit that shape. The response is a
+generator: the handler returns as soon as the stream is handed to the framework, and the tokens —
+along with the answer worth storing and the record of the evidence behind it — are produced
+afterwards. A write made at that point against the request's session is written into something
+already on its way out.
+
+The rule that follows is that **work not bounded by a request does not borrow a request's
+transaction.** It opens its own, from the application-scoped session factory, which depends only
+on the engine, and the engine lives as long as the process.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant H as Stream handler
+    participant U as AnswerUseCase
+    participant T1 as Transaction 1
+    participant R as Retrieval + model
+    participant T2 as Transaction 2
+
+    C->>H: POST conversation stream
+    H->>U: execute(command)
+    U->>T1: open
+    T1->>T1: load history · store question
+    T1-->>U: commit
+    U->>R: retrieve evidence · build prompt
+    U-->>H: generator
+    H-->>C: 200, streaming
+    Note over H: handler has returned
+    C->>H: consume tokens
+    H-->>C: last token
+    U->>T2: open
+    T2->>T2: store answer · store evidence record
+    T2-->>U: commit
+```
+
+One turn is therefore two transactions, because it is two moments. The question commits on
+arrival, before retrieval or generation can fail, so **a question that was asked stays recorded
+however the rest of the turn goes**. The answer and its evidence record commit in a second block
+that opens after the last token, and does so whether generation succeeded or failed — a
+half-streamed answer can still carry a citation somebody will later need to check.
+
+The worker already worked this way for the same reason, taking a session per pipeline stage rather
+than one for a job that may run for minutes. §5.4 makes the pattern explicit rather than
+introducing it.
+
+**Why a port rather than passing the session factory.** The application layer must not know what a
+session is. `ConversationUnitOfWork` is a callable returning an async context manager over a
+`ConversationRepository` — typed entirely from the standard library, so the domain still imports
+nothing else. The use case asks for a unit of work and receives a repository already inside one;
+the block commits when it completes and rolls back if it raises. Which database is behind it, and
+whether a transaction is even involved, stays in infrastructure.
+
+The cost is that a repository handed to a use case ready-made is no longer the default shape, and
+the two forms now coexist: request-scoped repositories for handlers that read and return, units of
+work for anything that outlives its caller. The distinction is not cosmetic and choosing wrongly
+fails silently — writes are accepted, appear in tests that assert against a repository, and never
+reach a table.
 
 ---
 
