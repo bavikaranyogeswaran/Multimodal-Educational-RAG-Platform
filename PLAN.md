@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **5.2** — native-text parser |
+| Next step | **5.3** — rewire ingestion |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -991,7 +991,7 @@ nothing consumes them.
 
 Covers §13, §14, §15, §16.
 
-**Status: in progress — 1 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
+**Status: in progress — 2 of 6 steps in the first pass.** `app/infrastructure/parsing/` and
 `app/infrastructure/ocr/` are empty packages. What exists instead is a deliberate placeholder:
 `_extract_pdf_pages` in `app/worker/__main__.py` reads native text with `pypdf` and skips pages
 that return none. A scanned page yields nothing and the document still completes, so it is
@@ -1016,7 +1016,7 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 5.1 | `PageClassifier` — pure rules over per-page signals → `PageKind` | S | ✅ |
-| 5.2 | `PdfPlumberParser` behind `PdfParserPort`; golden-file tests introduced | M | ☐ |
+| 5.2 | `PdfPlumberParser` behind `PdfParserPort`; golden-file tests introduced | M | ✅ |
 | 5.3 | Rewire ingestion — parse, classify, persist pages and elements | M | ☐ |
 | 5.4 | Element typing — headings, lists, captions, formulas, table and figure regions | M | ☐ |
 | 5.5 | Reading-order resolution, multi-column handling, `heading_path` | M | ☐ |
@@ -1036,18 +1036,18 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 - [x] Tests: each of the four kinds; behaviour exactly at every threshold boundary; a page with
       no signals at all classifies rather than raising
 
-### 5.2 — Native-text parser
+### 5.2 — Native-text parser ✅
 
-- [ ] `app/infrastructure/parsing/pdfplumber_parser.py` implementing `PdfParserPort` — `pypdf`
+- [x] `app/infrastructure/parsing/pdfplumber_parser.py` implementing `PdfParserPort` — `pypdf`
       for document metadata, `pdfplumber` for per-page words, blocks and dimensions
-- [ ] Emits one `DocumentPage` per page carrying kind, width, height and rotation
-- [ ] Emits `DocumentElement`s typed `PARAGRAPH` with `processing_method = NATIVE_TEXT`, bounding
+- [x] Emits one `DocumentPage` per page carrying kind, width, height and rotation
+- [x] Emits `DocumentElement`s typed `PARAGRAPH` with `processing_method = NATIVE_TEXT`, bounding
       boxes and sequential `reading_order`. Typing beyond paragraph is 5.4
-- [ ] `SCANNED` and `COMPLEX` pages return an empty element sequence, per the port's contract
-- [ ] **Golden-file tests introduced here** — a small fixture PDF committed with its expected
+- [x] `SCANNED` and `COMPLEX` pages return an empty element sequence, per the port's contract
+- [x] **Golden-file tests introduced here** — a small fixture PDF committed with its expected
       page and element output; every later step in this phase extends the expectations rather
       than adding a separate test pass at the end
-- [ ] Tests: encrypted PDF, zero-page PDF and a malformed file all raise rather than returning
+- [x] Tests: encrypted PDF, zero-page PDF and a malformed file all raise rather than returning
       partial output
 
 ### 5.3 — Rewire ingestion

@@ -234,6 +234,32 @@ class OcrSettings(BaseSettings):
 
 
 # ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+class ParsingSettings(BaseSettings):
+    model_config = _config("PARSING_")
+
+    #: Consecutive text lines closer than this multiple of their own height belong to
+    #: the same paragraph. Expressed as a multiple rather than in points so it holds
+    #: across type sizes: a gap that separates paragraphs in 10pt body text is ordinary
+    #: leading in a 24pt heading.
+    paragraph_gap_multiplier: float = 1.6
+
+    #: Text shorter than this after stripping is discarded rather than kept as an
+    #: element. Page numbers and stray marks would otherwise each become a paragraph.
+    min_element_characters: int = 2
+
+    @model_validator(mode="after")
+    def _gap_multiplier_exceeds_one_line(self) -> ParsingSettings:
+        if self.paragraph_gap_multiplier <= 1.0:
+            raise ValueError(
+                "paragraph_gap_multiplier must exceed 1.0 — at or below it, ordinary "
+                "line spacing reads as a paragraph break and every line becomes its own"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Chunking
 # ---------------------------------------------------------------------------
 class ChunkingSettings(BaseSettings):
@@ -441,6 +467,7 @@ class Settings(BaseSettings):
     embedding: Annotated[EmbeddingSettings, Field(default_factory=EmbeddingSettings)]
     reranker: Annotated[RerankerSettings, Field(default_factory=RerankerSettings)]
     ocr: Annotated[OcrSettings, Field(default_factory=OcrSettings)]
+    parsing: Annotated[ParsingSettings, Field(default_factory=ParsingSettings)]
     chunking: Annotated[ChunkingSettings, Field(default_factory=ChunkingSettings)]
     retrieval: Annotated[RetrievalSettings, Field(default_factory=RetrievalSettings)]
     evidence: Annotated[EvidenceSettings, Field(default_factory=EvidenceSettings)]

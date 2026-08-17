@@ -1,0 +1,81 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 2759 >>
+stream
+BT /F1 16 Tf 72 720 Td (Introduction to Backpropagation) Tj ET
+BT /F1 10 Tf 72 686.0 Td (Backpropagation computes the gradient of the loss function with) Tj ET
+BT /F1 10 Tf 72 672.0 Td (respect to every weight in the network by applying the chain rule) Tj ET
+BT /F1 10 Tf 72 658.0 Td (backwards through each layer in turn. The algorithm is what makes) Tj ET
+BT /F1 10 Tf 72 644.0 Td (training a deep network tractable, because it reuses the partial) Tj ET
+BT /F1 10 Tf 72 630.0 Td (results of one layer when computing the gradients of the next.) Tj ET
+BT /F1 10 Tf 72 616.0 Td (Without it, each weight would need its own forward evaluation.) Tj ET
+BT /F1 10 Tf 72 580.0 Td (The algorithm proceeds in two passes over the network. The forward) Tj ET
+BT /F1 10 Tf 72 566.0 Td (pass computes the activation of every unit and stores it, because) Tj ET
+BT /F1 10 Tf 72 552.0 Td (the backward pass will need those stored values to evaluate the) Tj ET
+BT /F1 10 Tf 72 538.0 Td (local derivatives. Memory therefore grows with the depth of the) Tj ET
+BT /F1 10 Tf 72 524.0 Td (network and the size of the batch being processed.) Tj ET
+BT /F1 10 Tf 72 480.0 Td (The backward pass begins at the loss and works towards the input.) Tj ET
+BT /F1 10 Tf 72 466.0 Td (At each layer it receives the gradient of the loss with respect to) Tj ET
+BT /F1 10 Tf 72 452.0 Td (that layer's output, and produces two things from it: the gradient) Tj ET
+BT /F1 10 Tf 72 438.0 Td (with respect to the layer's parameters, which the optimiser will) Tj ET
+BT /F1 10 Tf 72 424.0 Td (use, and the gradient with respect to the layer's input, which is) Tj ET
+BT /F1 10 Tf 72 410.0 Td (what the preceding layer receives in its turn.) Tj ET
+BT /F1 10 Tf 72 380.0 Td (Numerical stability deserves attention at this point. Gradients) Tj ET
+BT /F1 10 Tf 72 366.0 Td (that are repeatedly multiplied by values below one shrink towards) Tj ET
+BT /F1 10 Tf 72 352.0 Td (zero as they travel backwards, and the layers nearest the input) Tj ET
+BT /F1 10 Tf 72 338.0 Td (stop learning altogether. Multiplying by values above one has the) Tj ET
+BT /F1 10 Tf 72 324.0 Td (opposite effect and the gradients diverge. Both failures are) Tj ET
+BT /F1 10 Tf 72 310.0 Td (properties of the composition rather than of any single layer.) Tj ET
+BT /F1 10 Tf 72 280.0 Td (Practical implementations address this with careful initialisation,) Tj ET
+BT /F1 10 Tf 72 266.0 Td (normalisation between layers, and architectural choices that give) Tj ET
+BT /F1 10 Tf 72 252.0 Td (gradients a shorter path back to the input. None of these change) Tj ET
+BT /F1 10 Tf 72 238.0 Td (the algorithm itself. They change the numbers it operates on so) Tj ET
+BT /F1 10 Tf 72 224.0 Td (that the arithmetic stays within a usable range.) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 1000 >>
+stream
+BT /F1 16 Tf 72 720 Td (The Backward Pass in Detail) Tj ET
+BT /F1 10 Tf 72 686.0 Td (Gradients flow backwards from the output layer towards the input.) Tj ET
+BT /F1 10 Tf 72 672.0 Td (Each layer receives the gradient of the layer above it and applies) Tj ET
+BT /F1 10 Tf 72 658.0 Td (the local derivative of its own operation before passing the result) Tj ET
+BT /F1 10 Tf 72 644.0 Td (along. The composition of these local derivatives is exactly what) Tj ET
+BT /F1 10 Tf 72 630.0 Td (the chain rule describes.) Tj ET
+BT /F1 10 Tf 72 594.0 Td (Weight updates follow the optimiser's rule rather than the gradient) Tj ET
+BT /F1 10 Tf 72 580.0 Td (directly. Stochastic gradient descent subtracts a scaled gradient,) Tj ET
+BT /F1 10 Tf 72 566.0 Td (while adaptive methods maintain per-parameter statistics and scale) Tj ET
+BT /F1 10 Tf 72 552.0 Td (each update by them. The gradient computation is identical in both) Tj ET
+BT /F1 10 Tf 72 538.0 Td (cases; only what is done with the result differs.) Tj ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000191 00000 n 
+0000000317 00000 n 
+0000003128 00000 n 
+0000003254 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+4306
+%%EOF
