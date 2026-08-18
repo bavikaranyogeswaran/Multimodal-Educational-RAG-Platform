@@ -13,6 +13,10 @@ Chunking works from the elements rather than from flattened page text, so the bo
 it places are the document's own — a section ends, a paragraph ends — rather than a
 character count arriving mid-word. Deciding where those boundaries go is a rule, and
 lives in the domain; this use case supplies the elements and gives the results identities.
+
+Chunking produces two tiers, and only the smaller one is embedded. The larger passages are
+stored to be loaded once a search has already chosen something inside them, so putting them
+in the index would mean a section and a paragraph within it competing over the same query.
 """
 
 from __future__ import annotations
@@ -21,9 +25,9 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from app.domain.documents.chunker import ChunkDraft, Chunker
+from app.domain.documents.chunker import ChunkDraft, Chunker, ChunkFamily
 from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
 from app.domain.ports.adapters import EmbeddingPort, PdfParserPort, StoragePort
@@ -100,16 +104,22 @@ class IngestDocumentUseCase:
 
         if chunks:
             # Persist chunks (without embeddings) first so the DB row exists
-            # before we write the embedding vector to it.
+            # before we write the embedding vector to it. Parents come before the
+            # children naming them, so the reference is never to a row that is not
+            # there yet.
             await self._chunk_repo.save_batch(scope, chunks)
 
-            # Generate embeddings for all chunk texts in one batched call
-            texts = [c.text.value for c in chunks]
+            # Only children are embedded. A parent is what a match expands into, not
+            # something to match against: embedding it would put a section and a
+            # paragraph inside that section into the same ranking, competing for the
+            # same slots and returning the same passage twice.
+            searchable = [chunk for chunk in chunks if chunk.is_child]
+            texts = [c.text.value for c in searchable]
             vectors = await self._embedder.embed_documents(texts)
 
             await self._chunk_repo.set_embeddings(
                 scope,
-                {c.id: v for c, v in zip(chunks, vectors, strict=True)},
+                {c.id: v for c, v in zip(searchable, vectors, strict=True)},
                 model_id=self._embedding_model_id,
                 dimension=self._embedder.dimension,
                 version=self._index_version,
@@ -126,7 +136,7 @@ class IngestDocumentUseCase:
 
 
 def _to_chunks(
-    drafts: Sequence[ChunkDraft],
+    families: Sequence[ChunkFamily],
     *,
     doc: Document,
     scope: ScopeContext,
@@ -138,28 +148,78 @@ def _to_chunks(
     The chunker settled what the chunks are. Everything added here — an id, a position
     in the document, which index version produced it — is about keeping them rather than
     about the document they came from.
+
+    The linkage is why identities are handed out here rather than in the chunker: a child
+    can only name its parent once the parent has an id, and ids belong to whoever stores
+    the rows. Each parent is emitted immediately before the children that name it, so the
+    list can be written in order without a second pass.
+
+    The two tiers are numbered separately. An ordinal says where a chunk sits among the
+    chunks like it, and a single sequence across both would mean the chunk after child
+    seven is sometimes a parent — which would make the neighbours of a passage depend on
+    how the section above it happened to be divided.
     """
-    return [
-        Chunk(
-            id=uuid4(),
-            user_id=scope.user_id,
-            knowledge_base_id=scope.knowledge_base_id,
-            document_id=doc.id,
-            chunk_type=draft.chunk_type,
-            text=UntrustedText(draft.text),
-            token_count=draft.token_count,
-            ordinal=ordinal,
-            page_start=draft.page_start,
-            page_end=draft.page_end,
+    chunks: list[Chunk] = []
+    child_ordinal = 0
+
+    for parent_ordinal, family in enumerate(families):
+        parent = _chunk_from(
+            family.parent,
+            ordinal=parent_ordinal,
+            parent_chunk_id=None,
+            doc=doc,
+            scope=scope,
             index_version=index_version,
-            created_at=now,
-            language=doc.language,
-            content_hash=hashlib.sha256(draft.text.encode()).hexdigest(),
-            heading_path=draft.heading_path,
-            chapter=draft.chapter,
-            section=draft.section,
-            element_type=draft.element_type,
-            bounding_box=draft.bounding_box,
+            now=now,
         )
-        for ordinal, draft in enumerate(drafts)
-    ]
+        chunks.append(parent)
+
+        for draft in family.children:
+            chunks.append(
+                _chunk_from(
+                    draft,
+                    ordinal=child_ordinal,
+                    parent_chunk_id=parent.id,
+                    doc=doc,
+                    scope=scope,
+                    index_version=index_version,
+                    now=now,
+                )
+            )
+            child_ordinal += 1
+
+    return chunks
+
+
+def _chunk_from(
+    draft: ChunkDraft,
+    *,
+    ordinal: int,
+    parent_chunk_id: UUID | None,
+    doc: Document,
+    scope: ScopeContext,
+    index_version: int,
+    now: datetime,
+) -> Chunk:
+    return Chunk(
+        id=uuid4(),
+        user_id=scope.user_id,
+        knowledge_base_id=scope.knowledge_base_id,
+        document_id=doc.id,
+        parent_chunk_id=parent_chunk_id,
+        chunk_type=draft.chunk_type,
+        text=UntrustedText(draft.text),
+        token_count=draft.token_count,
+        ordinal=ordinal,
+        page_start=draft.page_start,
+        page_end=draft.page_end,
+        index_version=index_version,
+        created_at=now,
+        language=doc.language,
+        content_hash=hashlib.sha256(draft.text.encode()).hexdigest(),
+        heading_path=draft.heading_path,
+        chapter=draft.chapter,
+        section=draft.section,
+        element_type=draft.element_type,
+        bounding_box=draft.bounding_box,
+    )

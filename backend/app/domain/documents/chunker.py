@@ -11,6 +11,14 @@ ends, and — only where a single paragraph is too long to stand alone — a sen
 Falling to a lower level only when the level above cannot serve is what keeps chunks
 whole: most of them are simply the paragraphs somebody wrote.
 
+Chunks come in two tiers, because searching and reading want opposite sizes. What a query
+is matched against is the child: small, so a hit is not diluted by paragraphs that had
+nothing to do with the question. What the model is then given is the parent: the
+surrounding stretch of the section, which is where the sentence before the answer lives.
+Matching against a passage that large would blur the match; answering from one that small
+would strand the answer without its context. Both are produced here, and every child names
+the parent it was cut from.
+
 Three rules shape the rest.
 
 A chunk never spans two sections. Retrieval presents a fragment with the heading path it
@@ -34,6 +42,7 @@ from dataclasses import dataclass
 
 from app.domain.documents.entities import DocumentElement
 from app.domain.enums import ChunkType, ElementType
+from app.domain.errors import InvariantViolationError
 from app.domain.invariants import require_positive
 from app.domain.values import BoundingBox, HeadingPath
 
@@ -84,8 +93,22 @@ class ChunkDraft:
         return segments[1] if len(segments) > 1 else None
 
 
+@dataclass(frozen=True, slots=True)
+class ChunkFamily:
+    """A passage and the smaller pieces it was cut into.
+
+    The parent is a stretch of one section; the children are what a search matches inside
+    it. They are produced together because the relationship is the point — a child on its
+    own cannot say what it should expand to, and a parent on its own is too large to be
+    matched precisely.
+    """
+
+    parent: ChunkDraft
+    children: tuple[ChunkDraft, ...]
+
+
 class Chunker:
-    """Turn a document's elements into overlapping, section-bounded passages."""
+    """Turn the elements of a document into section-bounded parents and their children."""
 
     def __init__(
         self,
@@ -94,28 +117,87 @@ class Chunker:
         target_tokens: int,
         max_tokens: int,
         overlap_tokens: int,
+        parent_target_tokens: int,
+        parent_max_tokens: int,
     ) -> None:
         require_positive(target_tokens, "target_tokens")
         require_positive(max_tokens, "max_tokens")
+        require_positive(parent_target_tokens, "parent_target_tokens")
+        require_positive(parent_max_tokens, "parent_max_tokens")
+        if parent_target_tokens <= max_tokens:
+            raise InvariantViolationError(
+                "parent_target_tokens must exceed max_tokens — a parent no larger than "
+                "the child ceiling restores no context the child did not already carry"
+            )
+        if parent_max_tokens < parent_target_tokens:
+            raise InvariantViolationError(
+                "parent_max_tokens must not be below parent_target_tokens"
+            )
         self._count = count_tokens
         self._target = target_tokens
         self._max = max_tokens
         self._overlap = overlap_tokens
+        self._parent_target = parent_target_tokens
+        self._parent_max = parent_max_tokens
 
-    def chunk(self, elements: Sequence[DocumentElement]) -> list[ChunkDraft]:
+    def chunk(self, elements: Sequence[DocumentElement]) -> list[ChunkFamily]:
         """Every chunk the document yields, in reading order."""
-        drafts: list[ChunkDraft] = []
+        families: list[ChunkFamily] = []
         for section in _sections(elements):
-            drafts.extend(self._chunk_section(section))
-        return drafts
+            families.extend(self._chunk_section(section))
+        return families
 
     # -----------------------------------------------------------------------
 
-    def _chunk_section(self, section: Sequence[DocumentElement]) -> Iterator[ChunkDraft]:
-        """Chunks for one section, which is as far as any of them may reach."""
+    def _chunk_section(self, section: Sequence[DocumentElement]) -> Iterator[ChunkFamily]:
+        """Parents for one section, each with the children cut from it.
+
+        A section too long to be one parent is divided within itself rather than being
+        allowed to run on into the next one, so a parent is always a stretch of a single
+        section and expansion never returns content from somewhere else.
+        """
+        for group in self._parent_groups(section):
+            children = tuple(self._children(group))
+            if not children:
+                continue
+            text = _join(group)
+            parent = _draft_from(group, text, self._count(text), _kind_of(group))
+            yield ChunkFamily(parent=parent, children=children)
+
+    def _parent_groups(
+        self, section: Sequence[DocumentElement]
+    ) -> Iterator[list[DocumentElement]]:
+        """Runs of elements large enough to be worth loading as context.
+
+        Whole elements, because the children are cut from the same run: a parent built
+        from a slice of text could fail to contain a child that began inside it, and a
+        parent that does not contain its child expands to a passage the fragment is not
+        in.
+        """
+        group: list[DocumentElement] = []
+        for element in section:
+            if not element.text.value.strip():
+                continue
+            if group and self._count(_join([*group, element])) > self._parent_max:
+                yield group
+                group = []
+            group.append(element)
+            if self._count(_join(group)) >= self._parent_target:
+                yield group
+                group = []
+        if group:
+            yield group
+
+    def _children(self, group: Sequence[DocumentElement]) -> Iterator[ChunkDraft]:
+        """The searchable pieces of one parent, which is as far as any of them may reach.
+
+        Overlap stops at the parent boundary. A child carrying trailing text from the
+        previous parent would not be contained by its own, and expansion would then hand
+        back a passage that is missing the fragment it was asked to explain.
+        """
         buffer: list[DocumentElement] = []
 
-        for element in section:
+        for element in group:
             standalone = _STANDALONE.get(element.element_type)
             if standalone is not None:
                 # Flush first, so the prose before a table stays before it rather than
@@ -259,6 +341,19 @@ def _join(elements: Sequence[DocumentElement]) -> str:
     return "\n\n".join(
         element.text.value.strip() for element in elements if element.text.value.strip()
     ).strip()
+
+
+def _kind_of(elements: Sequence[DocumentElement]) -> ChunkType:
+    """What a run of elements is, when it is all one thing.
+
+    A section holding nothing but a table stays a table: calling it prose would hide it
+    from anything asking for tables, and the run reads exactly as the table does.
+    Anything mixed is prose, because no single kind describes it.
+    """
+    types = {element.element_type for element in elements}
+    if len(types) == 1:
+        return _STANDALONE.get(next(iter(types)), ChunkType.TEXT)
+    return ChunkType.TEXT
 
 
 def _draft_from(

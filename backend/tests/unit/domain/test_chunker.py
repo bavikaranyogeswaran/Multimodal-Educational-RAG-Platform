@@ -9,6 +9,10 @@ found. So the properties here are about where boundaries land, not about sizes.
 Token counting is a word count, not the real vocabulary. What is under test is where the
 splits go, and a fake counter keeps these tests independent of a downloaded vocabulary
 while making the arithmetic legible: a target of ten tokens means ten words.
+
+Most of what follows is about children, since those are what a search matches. The parent
+tests at the end cover the other half: that the larger passage a hit expands into really
+does contain the hit, and really does stop at the end of its section.
 """
 
 from __future__ import annotations
@@ -18,9 +22,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.documents.chunker import ChunkDraft, Chunker
+from app.domain.documents.chunker import ChunkDraft, Chunker, ChunkFamily
 from app.domain.documents.entities import DocumentElement
 from app.domain.enums import ChunkType, ElementType, ProcessingMethod
+from app.domain.errors import InvariantViolationError
 from app.domain.values import BoundingBox, HeadingPath, UntrustedText
 
 _NOW = datetime(2025, 6, 1, tzinfo=UTC)
@@ -33,9 +38,21 @@ def _count_words(text: str) -> int:
     return len(text.split())
 
 
-def _chunker(*, target: int = 20, maximum: int = 40, overlap: int = 5) -> Chunker:
+def _chunker(
+    *,
+    target: int = 20,
+    maximum: int = 40,
+    overlap: int = 5,
+    parent_target: int = 200,
+    parent_max: int = 400,
+) -> Chunker:
     return Chunker(
-        _count_words, target_tokens=target, max_tokens=maximum, overlap_tokens=overlap
+        _count_words,
+        target_tokens=target,
+        max_tokens=maximum,
+        overlap_tokens=overlap,
+        parent_target_tokens=parent_target,
+        parent_max_tokens=parent_max,
     )
 
 
@@ -68,8 +85,19 @@ def _words(n: int, *, prefix: str = "word") -> str:
     return " ".join(f"{prefix}{i}" for i in range(n))
 
 
-def _chunk(elements: list[DocumentElement], **kwargs: int) -> list[ChunkDraft]:
+def _families(elements: list[DocumentElement], **kwargs: int) -> list[ChunkFamily]:
     return _chunker(**kwargs).chunk(elements)  # type: ignore[arg-type]
+
+
+def _chunk(elements: list[DocumentElement], **kwargs: int) -> list[ChunkDraft]:
+    """The children, which are what a search matches and most of these tests are about."""
+    return [
+        child for family in _families(elements, **kwargs) for child in family.children
+    ]
+
+
+def _parents(elements: list[DocumentElement], **kwargs: int) -> list[ChunkDraft]:
+    return [family.parent for family in _families(elements, **kwargs)]
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +408,134 @@ class TestDegenerateInput:
             [_element("alpha", order=0), _element("  ", order=1), _element("beta", order=2)]
         )
         assert len(drafts) == 1
+
+
+# ---------------------------------------------------------------------------
+# Parents
+# ---------------------------------------------------------------------------
+
+
+def _normalised(text: str) -> str:
+    """Words in order, whitespace collapsed.
+
+    A child split out of a long paragraph rejoins its sentences on a single space, so it
+    is a run of the parent's words rather than a literal slice of its characters. What
+    has to hold is that the words are all there, in order.
+    """
+    return " ".join(text.split())
+
+
+class TestParents:
+    def test_a_section_produces_a_parent(self) -> None:
+        families = _families([_element("alpha beta gamma")])
+        assert len(families) == 1
+        assert families[0].parent.text == "alpha beta gamma"
+
+    def test_a_parent_contains_the_text_of_every_child(self) -> None:
+        """Expansion replaces a fragment with the passage around it. A parent missing
+        part of its child would hand back something the fragment is not in."""
+        elements = [
+            _element(_words(12, prefix=f"p{i}_"), order=i) for i in range(8)
+        ] + [_element("Run | Accuracy\n1 | 0.91", element_type=ElementType.TABLE, order=8)]
+
+        for family in _families(elements, target=20, maximum=40, parent_target=60):
+            for child in family.children:
+                assert _normalised(child.text) in _normalised(family.parent.text)
+
+    def test_a_section_shorter_than_the_target_still_produces_one_parent(self) -> None:
+        """A short section has no less right to be expanded into than a long one, and a
+        child with nowhere to expand to would need a branch everywhere it is read."""
+        families = _families([_element("two words")], parent_target=200)
+        assert len(families) == 1
+        assert families[0].children
+
+    def test_a_long_section_splits_into_several_parents(self) -> None:
+        """It divides within itself rather than running on into the next section."""
+        elements = [_element(_words(10, prefix=f"p{i}_"), order=i) for i in range(30)]
+        parents = _parents(elements, target=20, maximum=40, parent_target=50, parent_max=100)
+        assert len(parents) == 6
+
+    def test_an_element_that_would_breach_the_ceiling_starts_a_new_parent(self) -> None:
+        elements = [_element(_words(30, prefix=f"p{i}_"), order=i) for i in range(3)]
+        parents = _parents(
+            elements, target=20, maximum=40, parent_target=45, parent_max=50
+        )
+        assert len(parents) == 3
+        assert all(parent.token_count == 30 for parent in parents)
+
+    def test_a_parent_never_spans_two_sections(self) -> None:
+        parents = _parents(
+            [
+                _element("alpha beta", heading=("One",)),
+                _element("gamma delta", heading=("Two",)),
+            ],
+            parent_target=200,
+        )
+        assert len(parents) == 2
+        for parent in parents:
+            assert "alpha" not in parent.text or "gamma" not in parent.text
+
+    def test_a_parent_carries_the_heading_path_of_its_section(self) -> None:
+        parents = _parents([_element("alpha", heading=("Chapter", "Section"))])
+        assert parents[0].heading_path.segments == ("Chapter", "Section")
+        assert parents[0].chapter == "Chapter"
+        assert parents[0].section == "Section"
+
+    def test_a_parent_spans_the_pages_of_its_children(self) -> None:
+        families = _families(
+            [_element("alpha", page=3, order=0), _element("beta", page=5, order=1)]
+        )
+        parent = families[0].parent
+        assert (parent.page_start, parent.page_end) == (3, 5)
+        for child in families[0].children:
+            assert parent.page_start <= child.page_start
+            assert child.page_end <= parent.page_end
+
+    def test_a_section_of_nothing_but_a_table_is_a_table_parent(self) -> None:
+        """Calling it prose would hide it from anything that asks for tables."""
+        parents = _parents(
+            [_element("Run | Accuracy\n1 | 0.91", element_type=ElementType.TABLE)]
+        )
+        assert parents[0].chunk_type is ChunkType.TABLE
+
+    def test_a_parent_of_mixed_content_is_prose(self) -> None:
+        parents = _parents(
+            [
+                _element("some prose here", order=0),
+                _element("Run | Accuracy", element_type=ElementType.TABLE, order=1),
+            ]
+        )
+        assert parents[0].chunk_type is ChunkType.TEXT
+
+    def test_content_with_no_text_produces_no_parent(self) -> None:
+        """A parent with no children would be stored and never reachable, since nothing
+        searches parents."""
+        assert _families([_element("", element_type=ElementType.FIGURE)]) == []
+
+    def test_overlap_does_not_cross_a_parent_boundary(self) -> None:
+        """A child carrying text from the previous parent would not be contained by its
+        own, and expansion would return a passage the fragment is missing from."""
+        elements = [_element(_words(10, prefix=f"p{i}_"), order=i) for i in range(10)]
+        families = _families(
+            elements, target=20, maximum=40, overlap=10, parent_target=50, parent_max=100
+        )
+        assert len(families) > 1
+
+        earlier = set(families[0].parent.text.split())
+        for child in families[1].children:
+            assert not set(child.text.split()) & earlier
+
+
+class TestParentSizeRules:
+    def test_a_parent_target_below_the_child_ceiling_is_rejected(self) -> None:
+        """Loading such a parent would restore nothing the child did not already hold."""
+        with pytest.raises(InvariantViolationError, match="parent_target_tokens"):
+            _chunker(maximum=400, parent_target=400, parent_max=800)
+
+    def test_a_parent_ceiling_below_its_target_is_rejected(self) -> None:
+        with pytest.raises(InvariantViolationError, match="parent_max_tokens"):
+            _chunker(maximum=40, parent_target=200, parent_max=100)
+
+    def test_a_parent_target_of_zero_is_rejected(self) -> None:
+        with pytest.raises(InvariantViolationError):
+            _chunker(parent_target=0, parent_max=100)

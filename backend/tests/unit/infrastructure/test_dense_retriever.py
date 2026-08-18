@@ -126,6 +126,21 @@ class TestSqlStructure:
         assert "embedding" in compiled
         assert "NULL" in compiled.upper()
 
+    async def test_excludes_parent_chunks(self) -> None:
+        """Only the small chunks are searched. Their parents are loaded around a hit,
+        and matching those as well would return the same content twice — once as the
+        paragraph, once as the section holding it — for two slots in one ranking."""
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result([]))
+
+        await _retriever(scope, session).search(
+            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+        )
+
+        compiled = str(session.execute.call_args[0][0].compile())
+        assert "parent_chunk_id IS NOT NULL" in compiled
+
     async def test_applies_cosine_distance_ordering(self) -> None:
         scope = _make_scope()
         session = AsyncMock()

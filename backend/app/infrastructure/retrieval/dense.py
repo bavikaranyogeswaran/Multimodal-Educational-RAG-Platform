@@ -36,6 +36,11 @@ class SqlDenseRetriever(ScopedRepository):
             self._scope_filter(ChunkModel),
             DocumentModel.status == "COMPLETED",
             ChunkModel.embedding.isnot(None),
+            # Only the small chunks are searched. The larger passages they were cut
+            # from are stored to be loaded around a hit, and matching them as well
+            # would return the same content twice — once as the paragraph, once as
+            # the section containing it — for two slots in the same ranking.
+            ChunkModel.parent_chunk_id.isnot(None),
         ]
 
         if filters.document_ids:

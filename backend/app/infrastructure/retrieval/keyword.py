@@ -50,6 +50,11 @@ class SqlKeywordRetriever(ScopedRepository):
             DocumentModel.status == "COMPLETED",
             ChunkModel.tsv.isnot(None),
             ChunkModel.tsv.op("@@")(ts_query),
+            # Only the small chunks are searched. The trigger builds a tsvector for
+            # every row it is given, so without this the larger passages they were cut
+            # from would match too, returning the same content twice — once as the
+            # paragraph, once as the section containing it.
+            ChunkModel.parent_chunk_id.isnot(None),
         ]
 
         if filters.document_ids:

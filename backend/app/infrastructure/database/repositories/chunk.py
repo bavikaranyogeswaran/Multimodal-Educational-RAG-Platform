@@ -50,7 +50,13 @@ class SqlChunkRepository(ScopedRepository):
                 ChunkModel.document_id == document_id,
                 self._scope_filter(ChunkModel),
             )
-            .order_by(ChunkModel.ordinal.asc())
+            # Parents first, then the children, because the two tiers are numbered
+            # separately — ordering on the number alone would interleave a section
+            # with an unrelated paragraph that happens to share its position.
+            .order_by(
+                ChunkModel.parent_chunk_id.is_(None).desc(),
+                ChunkModel.ordinal.asc(),
+            )
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_to_entity(row) for row in rows]

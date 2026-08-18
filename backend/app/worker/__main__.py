@@ -171,6 +171,8 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
                     target_tokens=settings.chunking.child_target_tokens,
                     max_tokens=settings.chunking.child_max_tokens,
                     overlap_tokens=settings.chunking.child_overlap_tokens,
+                    parent_target_tokens=settings.chunking.parent_target_tokens,
+                    parent_max_tokens=settings.chunking.parent_max_tokens,
                 ),
                 embedding_model_id=settings.embedding.model_id,
                 index_version=settings.embedding.index_version,

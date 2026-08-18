@@ -99,6 +99,21 @@ class TestSqlStructure:
         assert "status" in str(compiled)
         assert "COMPLETED" in compiled.params.values()
 
+    async def test_excludes_parent_chunks(self) -> None:
+        """The trigger builds a tsvector for every row it is given, so without this the
+        larger passages the children were cut from would match too, returning the same
+        content twice — once as the paragraph, once as the section holding it."""
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result([]))
+
+        await _retriever(scope, session).search(
+            scope, "gradient descent", top_k=5, filters=RetrievalFilters()
+        )
+
+        compiled = str(session.execute.call_args[0][0].compile())
+        assert "parent_chunk_id IS NOT NULL" in compiled
+
     async def test_joins_to_documents_table(self) -> None:
         scope = _make_scope()
         session = AsyncMock()

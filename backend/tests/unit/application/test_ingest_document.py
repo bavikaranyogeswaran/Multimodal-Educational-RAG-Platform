@@ -139,6 +139,8 @@ def _make_use_case(
     parser: AsyncMock | None = None,
     target_tokens: int = 500,
     max_tokens: int = 900,
+    parent_target_tokens: int = 1200,
+    parent_max_tokens: int = 1500,
 ) -> IngestDocumentUseCase:
     if chunk_repo is None:
         chunk_repo = AsyncMock()
@@ -162,6 +164,8 @@ def _make_use_case(
             target_tokens=target_tokens,
             max_tokens=max_tokens,
             overlap_tokens=0,
+            parent_target_tokens=parent_target_tokens,
+            parent_max_tokens=parent_max_tokens,
         ),
         embedding_model_id="test-model",
         index_version=1,
@@ -247,10 +251,10 @@ class TestHappyPath:
         use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
-        saved_chunks = chunk_repo.save_batch.call_args.args[1]
-        assert len(saved_chunks) == 1
-        assert saved_chunks[0].page_start == 1
-        assert saved_chunks[0].page_end == 2
+        children = [c for c in chunk_repo.save_batch.call_args.args[1] if c.is_child]
+        assert len(children) == 1
+        assert children[0].page_start == 1
+        assert children[0].page_end == 2
 
 
 # ---------------------------------------------------------------------------
@@ -381,3 +385,153 @@ class TestPageAndElementPersistence:
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         text = chunk_repo.save_batch.call_args.args[1][0].text.value
         assert text == "first para\n\nsecond para"
+
+
+# ---------------------------------------------------------------------------
+# The two tiers
+# ---------------------------------------------------------------------------
+
+
+def _split_use_case(chunk_repo: AsyncMock) -> IngestDocumentUseCase:
+    """Sizes small enough that the prepared pages produce several children per parent."""
+    return _make_use_case(
+        chunk_repo=chunk_repo,
+        parser=_make_parser(
+            [(1, [f"paragraph number {i}" for i in range(4)]), (2, ["a closing remark"])]
+        ),
+        target_tokens=3,
+        max_tokens=8,
+        parent_target_tokens=9,
+        parent_max_tokens=20,
+    )
+
+
+def _chunk_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.save_batch = AsyncMock()
+    repo.set_embeddings = AsyncMock()
+    return repo
+
+
+class TestParentAndChildChunks:
+    async def test_both_tiers_are_written(self) -> None:
+        repo = _chunk_repo()
+        await _split_use_case(repo).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        saved = repo.save_batch.call_args.args[1]
+        assert any(c.is_parent for c in saved)
+        assert any(c.is_child for c in saved)
+
+    async def test_every_child_names_a_parent(self) -> None:
+        """Expansion has to have something to follow, and a child with no parent would
+        be retrieved and then presented with no more context than it already had."""
+        repo = _chunk_repo()
+        await _split_use_case(repo).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        saved = repo.save_batch.call_args.args[1]
+        parent_ids = {c.id for c in saved if c.is_parent}
+        children = [c for c in saved if c.is_child]
+
+        assert children
+        for child in children:
+            assert child.parent_chunk_id in parent_ids
+
+    async def test_a_parent_is_written_before_the_children_naming_it(self) -> None:
+        """The column is a foreign key onto the same table, so a child inserted first
+        would point at a row that does not exist yet."""
+        repo = _chunk_repo()
+        await _split_use_case(repo).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        saved = repo.save_batch.call_args.args[1]
+        seen: set[uuid.UUID] = set()
+        for chunk in saved:
+            if chunk.parent_chunk_id is not None:
+                assert chunk.parent_chunk_id in seen
+            seen.add(chunk.id)
+
+    async def test_a_parent_holds_the_text_of_its_children(self) -> None:
+        repo = _chunk_repo()
+        await _split_use_case(repo).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        saved = repo.save_batch.call_args.args[1]
+        parents = {c.id: c for c in saved if c.is_parent}
+
+        for child in (c for c in saved if c.is_child):
+            parent = parents[child.parent_chunk_id]
+            assert " ".join(child.text.value.split()) in " ".join(parent.text.value.split())
+
+    async def test_the_tiers_are_numbered_separately(self) -> None:
+        """An ordinal places a chunk among the chunks like it. One sequence across both
+        would make the neighbours of a passage depend on how the tier above was cut."""
+        repo = _chunk_repo()
+        await _split_use_case(repo).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        saved = repo.save_batch.call_args.args[1]
+
+        assert [c.ordinal for c in saved if c.is_parent] == list(
+            range(len([c for c in saved if c.is_parent]))
+        )
+        assert [c.ordinal for c in saved if c.is_child] == list(
+            range(len([c for c in saved if c.is_child]))
+        )
+
+    async def test_only_children_are_embedded(self) -> None:
+        """A parent is what a hit expands into, not something to match: indexing it
+        would put a section and a paragraph inside it in the same ranking."""
+        repo = _chunk_repo()
+        embedder = _make_embedder()
+        use_case = _make_use_case(
+            chunk_repo=repo,
+            embedder=embedder,
+            parser=_make_parser(
+                [(1, [f"paragraph number {i}" for i in range(4)]), (2, ["a closing remark"])]
+            ),
+            target_tokens=3,
+            max_tokens=8,
+            parent_target_tokens=9,
+            parent_max_tokens=20,
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = repo.save_batch.call_args.args[1]
+        child_texts = {c.text.value for c in saved if c.is_child}
+        embedded = embedder.embed_documents.call_args.args[0]
+
+        assert set(embedded) == child_texts
+        assert len(embedded) == len([c for c in saved if c.is_child])
+
+    async def test_embeddings_are_written_only_against_children(self) -> None:
+        repo = _chunk_repo()
+        embedder = _make_embedder()
+        use_case = _make_use_case(
+            chunk_repo=repo,
+            embedder=embedder,
+            parser=_make_parser(
+                [(1, [f"paragraph number {i}" for i in range(4)]), (2, ["a closing remark"])]
+            ),
+            target_tokens=3,
+            max_tokens=8,
+            parent_target_tokens=9,
+            parent_max_tokens=20,
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = repo.save_batch.call_args.args[1]
+        child_ids = {c.id for c in saved if c.is_child}
+        written = set(repo.set_embeddings.call_args.args[1])
+
+        assert written == child_ids
+
+    async def test_a_parent_carries_the_documents_scope(self) -> None:
+        repo = _chunk_repo()
+        await _split_use_case(repo).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        for chunk in repo.save_batch.call_args.args[1]:
+            assert chunk.scope == _SCOPE
+            assert chunk.document_id == _DOC_ID

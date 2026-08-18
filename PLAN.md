@@ -28,19 +28,20 @@ system design specification.
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
 | In progress | **Phase 9** — ~95%, three persistence gaps left |
-| Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
-| Not started | Phase 5, 6, 10–16, 18–20 |
-| Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **7.3** — parent chunks |
-| Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
+| Partially built | Phase 4 (~85%) · Phase 5 (~70%) · Phase 7 (~75%) · Phase 8 (~25%) · Phase 17 (~15%) |
+| Not started | Phase 6, 10–16, 18–20 |
+| Tests | 1,823 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
+| Next step | **7.4** waits on a textbook PDF; **7.5** — install the `ml` group — can run meanwhile |
+| Last updated | 18 August 2026 (chunking complete through step 7.3) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
-retrieval once the data model and API surface were in place. Phases 5 and 6 have not been started
-at all, which is the substantive hole: ingestion currently extracts native PDF text with `pypdf`
-and splits it on a fixed character window, so nothing scanned, tabular or visual is retrievable
-and §19's chunking strategy is unbuilt. Retrieval quality is capped there regardless of what
-phases 10 and 11 add on top.
+retrieval once the data model and API surface were in place. Ingestion now parses into typed
+elements in reading order and chunks on the structure those elements carry, so §19 is built and
+the ceiling it put on retrieval quality is lifted. Two holes remain on that path: pages whose
+text layer cannot be trusted are recorded and left unread, since Phase 5 deferred recognition
+pending a real textbook to calibrate against, and Phase 6 has not been started at all, so nothing
+visual is described or answerable.
 
 Migration `0008` applied at `0008 (head)` against Supabase; fourteen SQLAlchemy models registered
 with `Base.metadata`. ruff and mypy clean across `app/`.
@@ -1198,22 +1199,33 @@ nothing to select. Blocked on Phase 5.
 
 Covers §13 complete, §19, §20. **Milestone: ingestion works end to end.**
 
-**Status: ~35% — chunking divided into steps, 7.1 next.** The embedding and indexing half is
-real; the chunking half is not. `_split_text` in `app/application/commands/ingest_document.py` is
-a fixed-width character window with overlap — it has no notion of a sentence, a paragraph or a
-heading, so a chunk boundary lands mid-word as readily as anywhere else. This is the single
-largest constraint on retrieval quality in the system, and no amount of reranking above it
-recovers what a bad split destroyed.
+**Status: ~75% — all three chunking steps done.** The fixed-width character window is gone.
+Chunking now consumes the typed elements Phase 5 produces, places boundaries on the structure
+they carry, counts sizes in real tokens, and writes two tiers: small children that retrieval
+searches and the section-bounded parents they expand into. That was the single largest
+constraint on retrieval quality in the system, and it is lifted.
 
-The structure §19 wants now exists. Phase 5 produces typed elements, in reading order, each
-carrying the heading path of the section it sits in — so splitting on chapter, section and
-paragraph boundaries has something to split on, which it did not when the placeholder was written.
+What remains is not chunking. The reindex job has columns and no job, embedding still runs
+inline in the ingestion job rather than as its own, and the milestone check — a real textbook
+through every stage — has never been run, because the `ml` group is not installed in the active
+environment (A-358) and no real model call has yet happened in this repository.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 7.1 | Real token counting behind a port | M | ✅ |
 | 7.2 | Structure-aware child chunks, built from elements | L | ✅ |
-| 7.3 | Parent chunks from sections, with `parent_chunk_id` linkage | M | ☐ |
+| 7.3 | Parent chunks from sections, with `parent_chunk_id` linkage | M | ✅ |
+| 7.4 | Parse and chunk a real textbook offline, and report what it did | M | ◐ |
+| 7.5 | Install the `ml` group; prove the embedder runs | S | ☐ |
+| 7.6 | Full ingestion against the real database and object store | M | ☐ |
+| 7.7 | Query the ingested textbook end to end | M | ☐ |
+| 7.8 | Recalibrate the tuning numbers from what was found | S | ☐ |
+
+Steps 7.4 to 7.8 are the milestone check, divided so that each one adds a single dependency
+rather than all of them at once. 7.4 needs nothing that is not already installed — no database,
+no object store, no models — because the parser and the chunker are where the untested
+assumptions are, and finding them there is far cheaper than finding them behind a worker, a
+queue and a 2.5 GB download.
 
 ### 7.1 — Token counting ✅
 
@@ -1243,27 +1255,82 @@ paragraph boundaries has something to split on, which it did not when the placeh
       together; overlap is real text from the neighbouring chunk; a paragraph longer than
       the ceiling splits on sentences rather than mid-clause
 
-### 7.3 — Parent chunks
+### 7.3 — Parent chunks ✅
 
-- [ ] A parent is the content under one heading, which is what `heading_path` records.
+- [x] A parent is the content under one heading, which is what `heading_path` records.
       Loading one restores the section a fragment came from, which is what parent
       expansion exists to do
-- [ ] Parents 800–1500 tokens; a section longer than the ceiling splits within itself
+- [x] Parents 800–1500 tokens; a section longer than the ceiling splits within itself
       rather than merging with its neighbour
-- [ ] `parent_chunk_id` set on every child, so expansion has something to follow — the
+- [x] `parent_chunk_id` set on every child, so expansion has something to follow — the
       column has existed since Phase 2 and has never been written
-- [ ] Tests: every child names a parent; a parent contains its children's text; a section
+- [x] Tests: every child names a parent; a parent contains its children's text; a section
       shorter than the floor still produces one parent rather than none; parents never
       straddle two sections
+- [x] Only children are searched. Both retrievers exclude parents outright rather than
+      relying on a parent having no embedding — the full-text trigger indexes every row it
+      is given, so a section and a paragraph inside it would otherwise be returned as two
+      separate results competing for the same slots
 
-- [ ] **Child chunks 300–500 tokens, max ~700, 70 overlap; parents 800–1500** (§19, D-29) —
-      currently one flat tier sized in characters, with token counts estimated as `len // 4`
-- [ ] **Split priority chapter → section → subsection → paragraph → sentence** — no structural
-      awareness at all
-- [ ] **Chunk types** beyond `TEXT` — every chunk is hardcoded `ChunkType.TEXT`
-- [ ] **Full §19 chunk metadata** — `heading_path` is always `HeadingPath.root()`, `chapter`,
-      `section`, `element_type` and `bounding_box` are never populated, and `parent_chunk_id` is
-      never set, so parent expansion in Phase 10 has nothing to expand to
+### 7.4 — Parse and chunk a real textbook offline — tool built, assessment blocked
+
+- [x] `scripts/inspect_parse.py` takes a PDF path, runs the real `PdfPlumberParser` and
+      `Chunker`, and reports what came out: page kinds, elements per page by type, the heading
+      paths it inferred, chunk and parent counts, the token distribution against the configured
+      targets, how many chunks breach the ceiling, and how many parents hold only one child
+- [x] No database, no object store, no models — pdfplumber and the tokenizer are already
+      installed, so this runs today on any machine with the file
+- [x] Verified against all eight fixtures: columns reported on the two-column page, a chunk
+      spanning the break on the section-across-pages page, and a refused file answered with a
+      sentence rather than a traceback
+- [x] The report carries its own unit tests, against the usual habit for scripts — it decides
+      which tuning numbers move in 7.8, and both of its rules had defects (A-383, A-384)
+- [ ] **Blocked:** read the output against the document itself — are the columns right, do the
+      headings match the real section titles, does reading order follow the page. Needs a
+      textbook PDF; the repository holds only fixtures this repository wrote (A-387)
+- [ ] **Blocked:** the written assessment of where the parser is wrong and which tuning numbers
+      need to move
+
+### 7.5 — Install the `ml` group; prove the embedder runs
+
+- [ ] `uv sync --group ml` — torch from the cu126 index, sentence-transformers, and the CPU
+      PaddleOCR wheels. Roughly 2.5 GB, and the first thing in this repository to need the GPU
+- [ ] Embed a handful of the chunks 7.4 produced: right dimension, stable across calls, and
+      batching actually batches
+- [ ] Closes A-358 — `container.embedder` and `container.reranker` stop being `_Unimplemented`
+
+### 7.6 — Full ingestion against the real database and object store
+
+- [ ] Needs tethering, since home Wi-Fi blocks Postgres, and R2 credentials
+- [ ] Upload → job enqueued → worker claims it → pages, elements, chunks and embeddings persisted
+      → document reaches `COMPLETED`
+- [ ] First opportunity to run the integration suite, unrun since it was written (A-283)
+- [ ] Expect to iterate, and re-ingestion still duplicates rather than replaces (A-312) — delete
+      and re-upload between attempts, which the deletion path built in 4.11 supports
+
+### 7.7 — Query the ingested textbook end to end
+
+- [ ] Needs Ollama running with a model pulled; no real model call has ever happened here
+- [ ] Ask real questions of the real document: dense and keyword retrieval, fusion, reranking,
+      evidence assembly, a streamed answer with citations that open at the right page
+- [ ] The first observation of retrieval quality on anything other than fixtures
+
+### 7.8 — Recalibrate the tuning numbers from what was found
+
+- [ ] Turn the findings into configuration changes and, where the fault is structural, code fixes
+- [ ] Settle `complex_vector_drawing_threshold` (A-296), which was set to 400 without evidence
+- [ ] Decide OCR on evidence rather than in advance: how many pages of a real textbook actually
+      defeat the text layer decides whether 5.7 to 5.9 are worth building
+
+- [x] **Child chunks 300–500 tokens, max ~700, 70 overlap; parents 800–1500** (§19, D-29) —
+      two tiers, sized in real tokens counted against the embedding vocabulary
+- [x] **Split priority chapter → section → subsection → paragraph → sentence** — boundaries come
+      from the parsed structure, and sentences only where one paragraph exceeds the ceiling alone
+- [x] **Chunk types** beyond `TEXT` — a table becomes a `TABLE` chunk holding its rows, a figure
+      region a `FIGURE` chunk, never dissolved into the prose around them
+- [x] **Full §19 chunk metadata** — `heading_path`, `chapter`, `section`, `element_type`,
+      `bounding_box` and the page range all written from the elements a chunk came from, and
+      `parent_chunk_id` set on every child, so Phase 10 has something to expand to
 - [x] `bge-small-en-v1.5` on GPU, batched
 - [x] pgvector writes with HNSW; `tsvector` population with `rum` indexes
 - [x] Index versioning columns written on every chunk (`index_version`, `embedding_version`)

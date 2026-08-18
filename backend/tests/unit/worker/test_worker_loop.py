@@ -106,6 +106,8 @@ def _make_settings() -> MagicMock:
     s.chunking.child_target_tokens = 400
     s.chunking.child_max_tokens = 700
     s.chunking.child_overlap_tokens = 70
+    s.chunking.parent_target_tokens = 1200
+    s.chunking.parent_max_tokens = 1500
     s.job.backoff_base_seconds = 10
     s.job.backoff_max_seconds = 900
     return s
