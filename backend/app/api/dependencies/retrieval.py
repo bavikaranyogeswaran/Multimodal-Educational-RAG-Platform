@@ -22,6 +22,7 @@ from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.fusion import RRFusion
 from app.domain.retrieval.rewriter import QueryRewriter
+from app.domain.retrieval.selector import EvidenceSelector
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import get_session
 from app.infrastructure.retrieval.dense import SqlDenseRetriever
@@ -47,5 +48,11 @@ async def get_retrieval_orchestrator(
         keyword_top_k=settings.retrieval.keyword_top_k,
         candidate_pool_size=settings.retrieval.candidate_pool_size,
         max_rerank_candidates=settings.reranker.max_candidates,
-        relative_score_margin=settings.evidence.relative_score_margin,
+        selector=EvidenceSelector(
+            container.token_counter.count,
+            min_items=settings.evidence.min_items,
+            max_items=settings.evidence.max_items,
+            relative_score_margin=settings.evidence.relative_score_margin,
+            token_budget=settings.evidence.context_token_budget,
+        ),
     )

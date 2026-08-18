@@ -1,7 +1,11 @@
 """Use case: orchestrate the full retrieval pipeline for a student query.
 
-Classify → rewrite → plan → expand → search concurrently → fuse → rerank.
+Classify → rewrite → plan → expand → search concurrently → fuse → rerank → select.
 The result is a ranked, relabelled evidence sequence ready for the prompt.
+
+How many passages come back is decided at the end, from the class the query was given
+at the start — a direct factual question and a comparison need different amounts of
+material, and a single number chosen by the caller is wrong for one of them.
 """
 
 from __future__ import annotations
@@ -16,10 +20,11 @@ from app.application.observability.timer import StageTimer
 from app.domain.models.entities import ConversationTurn
 from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, RerankerPort
 from app.domain.retrieval.classifier import QueryClassifier
-from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters, RetrievalPlan
+from app.domain.retrieval.entities import Evidence, RetrievalFilters, RetrievalPlan
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.fusion import RRFusion
 from app.domain.retrieval.rewriter import QueryRewriter
+from app.domain.retrieval.selector import EvidenceSelector
 from app.domain.scope import ScopeContext
 
 _log = structlog.get_logger(__name__)
@@ -30,7 +35,6 @@ class RetrieveEvidenceQuery:
     scope: ScopeContext
     query: str
     filters: RetrievalFilters
-    top_k: int
     history: tuple[ConversationTurn, ...] = ()
 
 
@@ -52,7 +56,7 @@ class RetrievalOrchestrator:
         keyword_top_k: int,
         candidate_pool_size: int,
         max_rerank_candidates: int,
-        relative_score_margin: float,
+        selector: EvidenceSelector,
     ) -> None:
         self._classifier = classifier
         self._rewriter = rewriter
@@ -66,7 +70,7 @@ class RetrievalOrchestrator:
         self._keyword_top_k = keyword_top_k
         self._candidate_pool_size = candidate_pool_size
         self._max_rerank_candidates = max_rerank_candidates
-        self._relative_score_margin = relative_score_margin
+        self._selector = selector
 
     async def execute(self, query: RetrieveEvidenceQuery) -> Sequence[Evidence]:
         with StageTimer("classify") as _timer:
@@ -98,7 +102,7 @@ class RetrievalOrchestrator:
 
         with StageTimer("search") as _timer:
             search_tasks = []
-            for q, emb in zip(expanded, embeddings):
+            for q, emb in zip(expanded, embeddings, strict=True):
                 search_tasks.append(
                     self._dense_retriever.search(
                         query.scope, emb, top_k=self._dense_top_k, filters=plan.filters
@@ -133,18 +137,27 @@ class RetrievalOrchestrator:
         with StageTimer("rerank") as _timer:
             texts = [c.chunk.text.value for c in candidates]
             scores = await self._reranker.rerank(standalone, texts)
-            scored = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
-            top_score = scored[0][1]
-            threshold = top_score - abs(top_score) * self._relative_score_margin
-            filtered = [(e, s) for e, s in scored if s >= threshold]
+            scored = sorted(
+                zip(candidates, scores, strict=True), key=lambda x: x[1], reverse=True
+            )
+            ranked = [replace(e, rerank_score=s) for e, s in scored]
         _log.info(
             "retrieval_stage",
             stage="rerank",
             elapsed_ms=_timer.elapsed_ms(),
-            results=len(filtered),
+            results=len(ranked),
         )
 
-        return [
-            replace(e, label=EvidenceLabel(i + 1), rank=i, rerank_score=s)
-            for i, (e, s) in enumerate(filtered[: query.top_k])
-        ]
+        # How many of these reach the model is a question about the question, not a
+        # number the caller supplies.
+        with StageTimer("select") as _timer:
+            selected = self._selector.select(ranked, query_class=query_class)
+        _log.info(
+            "retrieval_stage",
+            stage="select",
+            elapsed_ms=_timer.elapsed_ms(),
+            query_class=query_class.value,
+            considered=len(ranked),
+            selected=len(selected),
+        )
+        return selected

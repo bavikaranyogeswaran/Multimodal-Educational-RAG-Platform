@@ -136,18 +136,14 @@ class TestAnswerUseCase:
         query_arg: RetrieveEvidenceQuery = retrieve.execute.call_args.args[0]
         assert query_arg.scope == _SCOPE
 
-    async def test_retrieve_uses_default_top_k(self) -> None:
+    async def test_the_caller_does_not_say_how_much_evidence_to_send(self) -> None:
+        """It used to pass a count, and one count is wrong for one of any two questions:
+        it dilutes a direct answer and starves a comparison. How many passages are worth
+        sending follows from the class the query is given, and is decided downstream."""
         retrieve = _mock_retrieve()
         await _make_use_case(retrieve=retrieve).execute(_BASE_CMD)
         query_arg: RetrieveEvidenceQuery = retrieve.execute.call_args.args[0]
-        assert query_arg.top_k == 8
-
-    async def test_custom_top_k_forwarded(self) -> None:
-        retrieve = _mock_retrieve()
-        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q", top_k=15)
-        await _make_use_case(retrieve=retrieve).execute(cmd)
-        query_arg: RetrieveEvidenceQuery = retrieve.execute.call_args.args[0]
-        assert query_arg.top_k == 15
+        assert not hasattr(query_arg, "top_k")
 
     async def test_history_loaded_with_conversation_id(self) -> None:
         repo = _mock_repo()

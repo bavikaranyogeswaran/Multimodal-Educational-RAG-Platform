@@ -7,15 +7,16 @@ classify → rewrite → plan → expand → embed + search concurrently → fus
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog.testing
 
-from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery, RetrievalOrchestrator
+from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
 from app.domain.enums import MessageRole, QueryClass, RetrieverKind
 from app.domain.models.entities import ConversationTurn
 from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters
+from app.domain.retrieval.selector import EvidenceSelector
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
 
@@ -42,14 +43,12 @@ def _query(
     *,
     scope: ScopeContext | None = None,
     text: str = "what is photosynthesis",
-    top_k: int = 10,
     filters: RetrievalFilters | None = None,
     history: tuple[ConversationTurn, ...] = (),
 ) -> RetrieveEvidenceQuery:
     return RetrieveEvidenceQuery(
         scope=scope if scope is not None else _scope(),
         query=text,
-        top_k=top_k,
         filters=filters if filters is not None else RetrievalFilters(),
         history=history,
     )
@@ -70,6 +69,7 @@ def _make_orchestrator(
     candidate_pool_size: int = 50,
     max_rerank_candidates: int = 40,
     relative_score_margin: float = 0.35,
+    max_items: int = 8,
 ) -> tuple[RetrievalOrchestrator, dict[str, MagicMock]]:
     classifier = MagicMock()
     classifier.classify.return_value = classify_return
@@ -119,7 +119,13 @@ def _make_orchestrator(
         keyword_top_k=keyword_top_k,
         candidate_pool_size=candidate_pool_size,
         max_rerank_candidates=max_rerank_candidates,
-        relative_score_margin=relative_score_margin,
+        selector=EvidenceSelector(
+            lambda text: len(text.split()),
+            min_items=1,
+            max_items=max_items,
+            relative_score_margin=relative_score_margin,
+            token_budget=10_000,
+        ),
     )
 
     return orc, mocks
@@ -246,7 +252,7 @@ class TestFusion:
             candidate_pool_size=3,
             max_rerank_candidates=40,
         )
-        await orc.execute(_query(top_k=10))
+        await orc.execute(_query())
         texts_sent = [c.chunk.text.value for c in fused[:3]]
         rerank_texts = mocks["reranker"].rerank.call_args.args[1]
         assert list(rerank_texts) == texts_sent
@@ -260,7 +266,7 @@ class TestFusion:
             candidate_pool_size=50,
             max_rerank_candidates=2,
         )
-        await orc.execute(_query(top_k=10))
+        await orc.execute(_query())
         rerank_texts = mocks["reranker"].rerank.call_args.args[1]
         assert len(rerank_texts) == 2
 
@@ -310,13 +316,16 @@ class TestScoringAndFiltering:
         ev2 = _evidence(1, text="B")
         ev3 = _evidence(2, text="C")
         # fused order: ev1, ev2, ev3; scores: 0.3, 0.9, 0.5 → sorted: ev2, ev3, ev1
-        # margin=1.0 → threshold=0.0, so all positive scores pass
+        # margin=1.0 → threshold=0.0, so all positive scores pass. Classified broad,
+        # because a direct question is deliberately answered with fewer passages than
+        # this asserts the order of.
         orc, _ = _make_orchestrator(
             fused_results=[ev1, ev2, ev3],
             rerank_scores=[0.3, 0.9, 0.5],
             relative_score_margin=1.0,
+            classify_return=QueryClass.SUMMARY,
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert result[0].rerank_score == pytest.approx(0.9)
         assert result[1].rerank_score == pytest.approx(0.5)
         assert result[2].rerank_score == pytest.approx(0.3)
@@ -330,7 +339,7 @@ class TestScoringAndFiltering:
             rerank_scores=[1.0, 0.6],
             relative_score_margin=0.5,
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert len(result) == 2
 
     async def test_relative_margin_drops_distant_scores(self) -> None:
@@ -342,20 +351,23 @@ class TestScoringAndFiltering:
             rerank_scores=[1.0, 0.3],
             relative_score_margin=0.5,
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert len(result) == 1
         assert result[0].rerank_score == pytest.approx(1.0)
 
-    async def test_results_capped_at_top_k(self) -> None:
+    async def test_results_capped_by_the_selector(self) -> None:
+        """The ceiling belongs to the selector now. The caller used to pass a count,
+        which made every question the same size whatever it was asking for."""
         fused = [_evidence(i, text=f"p{i}") for i in range(5)]
         scores = [0.9, 0.8, 0.7, 0.6, 0.5]
-        # margin=1.0 → threshold=0.0, all 5 pass; then top_k=3 caps the output
         orc, _ = _make_orchestrator(
             fused_results=fused,
             rerank_scores=scores,
             relative_score_margin=1.0,
+            classify_return=QueryClass.SUMMARY,
+            max_items=3,
         )
-        result = await orc.execute(_query(top_k=3))
+        result = await orc.execute(_query())
         assert len(result) == 3
 
     async def test_results_relabelled_from_s1(self) -> None:
@@ -367,7 +379,7 @@ class TestScoringAndFiltering:
             rerank_scores=[0.9, 0.7],
             relative_score_margin=1.0,
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert result[0].label == EvidenceLabel(1)
         assert result[1].label == EvidenceLabel(2)
 
@@ -380,7 +392,7 @@ class TestScoringAndFiltering:
             rerank_scores=[0.9, 0.7],
             relative_score_margin=1.0,
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert result[0].rank == 0
         assert result[1].rank == 1
 
@@ -390,7 +402,7 @@ class TestScoringAndFiltering:
             fused_results=[ev],
             rerank_scores=[0.75],
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert result[0].rerank_score == pytest.approx(0.75)
 
     async def test_negative_scores_use_absolute_value_for_margin(self) -> None:
@@ -403,7 +415,7 @@ class TestScoringAndFiltering:
             rerank_scores=[-10.0, -12.0],
             relative_score_margin=0.35,
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert len(result) == 2
 
     async def test_single_candidate_always_passes_margin_filter(self) -> None:
@@ -413,7 +425,7 @@ class TestScoringAndFiltering:
             rerank_scores=[0.5],
             relative_score_margin=0.99,
         )
-        result = await orc.execute(_query(top_k=10))
+        result = await orc.execute(_query())
         assert len(result) == 1
 
 
@@ -423,9 +435,18 @@ class TestScoringAndFiltering:
 
 
 class TestStageTimingLogs:
-    _STAGES = ("classify", "rewrite", "plan_expand", "embed", "search", "fuse", "rerank")
+    _STAGES = (
+        "classify",
+        "rewrite",
+        "plan_expand",
+        "embed",
+        "search",
+        "fuse",
+        "rerank",
+        "select",
+    )
 
-    async def test_all_seven_stages_emit_retrieval_stage_event(self) -> None:
+    async def test_every_stage_emits_a_retrieval_stage_event(self) -> None:
         ev = _evidence(0, text="passage")
         orc, _ = _make_orchestrator(fused_results=[ev], rerank_scores=[0.9])
         with structlog.testing.capture_logs() as logs:
@@ -499,7 +520,7 @@ class TestStageTimingLogs:
             relative_score_margin=1.0,
         )
         with structlog.testing.capture_logs() as logs:
-            await orc.execute(_query(top_k=10))
+            await orc.execute(_query())
         event = next(
             e for e in logs if e.get("event") == "retrieval_stage" and e["stage"] == "rerank"
         )

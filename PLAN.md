@@ -27,12 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 9** — ~95%, three persistence gaps left |
-| Partially built | Phase 4 (~85%) · Phase 5 (~70%) · Phase 7 (~75%) · Phase 8 (~25%) · Phase 17 (~15%) |
-| Not started | Phase 6, 10–16, 18–20 |
-| Tests | 1,833 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **7.6** — full ingestion, now unblocked; **7.4** still waits on a textbook PDF |
-| Last updated | 18 August 2026 (chunking complete through step 7.3) |
+| In progress | **Phase 9** — ~95%, four field-level gaps left |
+| Mostly built | Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
+| Foundations only | Phase 10 (~25%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
+| Not started | Phase 6, 13, 15, 19–20 |
+| Tests | 1,863 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
+| Next step | **10.2** — deduplication and diversity caps; **7.4** still waits on a textbook PDF |
+| Last updated | 18 August 2026 (audited against the codebase; integration suite run) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1438,13 +1439,128 @@ remaining stages — which is why the checkbox count reads lower than the percen
 - [x] Security tests: cross-KB retrieval, non-`COMPLETED` document retrieval, empty-filter bypass
 - [x] Evidence record persisted per answer, gated on equality with the prompt set — the
       prerequisite for Phase 11's "was this citation in context?" validation
-- [ ] **Unverified:** `tests/integration/test_answer_persistence.py` proves the streamed writes
-      reach PostgreSQL, and has never been run — it needs `TEST_DATABASE_URL` and commits real
-      rows. Until it runs, durability on this path is argued, not demonstrated
+- [x] **Verified against the live database on 18 August 2026.** The whole integration suite ran
+      for the first time since it was written: 14 passed, 1 skipped, the skip being the
+      destructive migration round-trip which stays behind its own flag. Durability on the
+      streamed write path is now demonstrated rather than argued, and the schema matches the
+      models against a real PostgreSQL 17.6 rather than SQLite
 
 ## Phase 10 — Evidence selection & context assembly
 
 Covers §30, §31, §32, §33, §36, §37.
+
+**Status: ~25% — 10.1 done, 10.2 next.** How many passages reach the model now follows from
+what the question is, rather than from a number the caller passed. Everything after the count
+— deduplication, parent expansion, compression, the prompt itself — is still unbuilt.
+
+Retrieval currently ends at reranking and hands the surviving chunks to the model as raw
+text. Everything between those two points is this phase: how many passages to send, which
+of them are saying the same thing twice, when a fragment needs the section it came from,
+what to cut when it will not fit, and in what order the whole prompt is assembled. None of
+it exists, and the pieces built for it are already in place and unread — parent chunks have
+been written on every ingestion since step 7.3 and nothing loads them, and
+`Chunk.with_compressed_text` has never been called.
+
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 10.1 | Dynamic evidence selection, sized by query class | M | ✅ |
+| 10.2 | Deduplication and diversity caps | M | ☐ |
+| 10.3 | Parent expansion, on the five conditions only | L | ☐ |
+| 10.4 | Extractive compression | L | ☐ |
+| 10.5 | Context builder — twelve slots and the token budget | L | ☐ |
+| 10.6 | Structured instruction handling | M | ☐ |
+
+### 10.1 — Dynamic evidence selection ✅
+
+- [x] `EvidenceSelector` in the domain decides how many passages survive. `top_k` is gone
+      from both `RetrieveEvidenceQuery` and `AnswerCommand` — the caller no longer says
+      (FR-EVD-01)
+- [x] Counts follow the query class, every class mapped, clamped by the configured global
+      bounds of one and eight (FR-EVD-02, FR-EVD-04)
+- [~] The decision weighs reranker score, relative margin, token budget and count.
+      Diversity and source coverage are step 10.2's caps; modality needs Phase 6 (FR-EVD-03)
+- [x] The margin and the global bounds stay in configuration. The per-class ranges are a
+      domain table rather than twenty-six environment variables, injectable so any one of
+      them can be lifted out when there is an evaluation set to calibrate it against
+      (FR-EVD-05, D-20, A-407)
+- [x] Tests: a direct question does not receive five passages; a comparison does not receive
+      one; a weak second is kept for a comparison and dropped for a direct question; the
+      budget overrides the class minimum and one passage overrides the budget
+- [x] A new `select` stage is timed and logged alongside the other seven
+
+### 10.2 — Deduplication and diversity caps
+
+- [ ] Remove exact duplicates, strongly overlapping passages, parent–child duplicates,
+      repeated table rows and duplicate visual descriptions before generation (FR-EVD-06).
+      Parent–child duplication is real now rather than hypothetical: overlap means adjacent
+      children genuinely share sentences
+- [ ] Caps: at most two children per parent, three chunks per page, a configured maximum per
+      document, and distinct sources preferred for comparisons (FR-EVD-07)
+- [ ] The highest-ranked primary evidence survives every filter, unconditionally — a
+      deduplication rule that can drop the best passage is worse than none (FR-EVD-08)
+- [ ] Tests: near-identical passages collapse to one; the top result survives a cap that
+      would otherwise remove it; a document cannot monopolise the evidence list
+
+### 10.3 — Parent expansion
+
+- [ ] A child is replaced by its parent only when it is incomplete on its own: it begins
+      mid-explanation, it contains a pronoun pointing at earlier text, it is a table needing
+      its caption, a formula needing its definition, or a figure needing nearby explanation
+      (FR-EVD-09). Never by default (FR-EVD-10)
+- [ ] Needs a batch load of parents by id on `ChunkRepository`, which does not exist yet —
+      one query for the whole evidence list rather than one per child
+- [ ] This is the step that first reads the tier step 7.3 wrote. Until it lands, every
+      parent chunk in the database is storage nobody queries
+- [ ] Tests: a self-contained passage is not expanded; a passage opening with "This means
+      that" is; expansion respects the token budget rather than blowing it
+
+### 10.4 — Extractive compression
+
+- [ ] Sentence selection rather than generation (FR-EVD-11). `Chunk.with_compressed_text`
+      already exists for this and has never been called
+- [ ] Preserves negations, conditions, qualifiers, numerical values, units, table headers,
+      figure labels and citation offsets (FR-EVD-12) — the parts whose loss changes the
+      meaning rather than shortening it
+- [ ] Tables keep title, headers, units and the relevant rows (FR-EVD-13); graph evidence
+      keeps the relationship, the passage and its provenance (FR-EVD-14)
+- [ ] Generative compression is flag-gated and off, because it distorts values and weakens
+      citation alignment (FR-EVD-15)
+- [ ] Property tests: compression never drops a number, a unit or a negation. A dropped
+      "not" inverts an answer while leaving it fluent, which is the failure that cannot be
+      spotted by reading the output
+
+### 10.5 — Context builder
+
+- [ ] Assembles the prompt in the twelve-slot order: system and security policies, task
+      objective, mandatory requirements, active Knowledge Base state, pinned durable memory,
+      relevant historical memory, rolling conversation summary, recent raw turns, source
+      evidence, current question, required output schema, final critical checklist (FR-CTX-01)
+- [ ] Owns token allocation and sheds low-priority slots when the limit is reached, rather
+      than letting the model silently truncate whichever slot happened to be last (FR-CTX-02)
+- [ ] Replaces the seven-slot `ModelRequest`, so the Ollama adapter and `AnswerUseCase`
+      change with it
+- [ ] Evidence is rendered **with its label**, which it is not today: the adapter joins
+      passage text and drops `EvidenceLabel` entirely, so the model cannot cite and Phase 11
+      has nothing to validate. Phase 11 owns the citation contract; this step is what makes
+      it reachable
+- [ ] Tests: slot order is fixed; the lowest-priority slot is dropped first at the limit;
+      security policy is never the slot that gets dropped
+
+### 10.6 — Structured instruction handling
+
+- [ ] Instructions are structured, never a wall of text (FR-CTX-03), in priority order:
+      security and privacy, grounding and source use, task objective, output contract, user
+      constraints, style preferences, optional enhancements (FR-CTX-04)
+- [ ] Each requirement is classified `CRITICAL`, `REQUIRED` or `PREFERRED` (FR-CTX-05) and
+      carries a stable identifier so Phase 17 can score compliance per requirement (FR-CTX-06)
+- [ ] Conflicts resolve before generation: critical over required over preferred, security
+      rules not overridable at all, and a recent explicit correction supersedes an older
+      preference (FR-CTX-07)
+- [ ] Independent tasks become separate model calls rather than one combined prompt (FR-CTX-08)
+- [ ] Tests: a user preference cannot override a security rule; a later correction wins over
+      an earlier preference; every requirement in a built prompt carries an identifier
+
+### Definition of done
 
 - [ ] Dynamic evidence selection — no fixed top-5; min 1, max 8 ordinary; per-class ranges (§30)
 - [ ] Thresholds are configuration, calibrated in Phase 17 — never hardcoded

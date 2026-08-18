@@ -53,7 +53,6 @@ class AnswerCommand:
     scope: ScopeContext
     conversation_id: uuid.UUID
     query: str
-    top_k: int = 8
     max_history: int = 10
 
 
@@ -104,7 +103,6 @@ class AnswerUseCase:
                 scope=command.scope,
                 query=command.query,
                 filters=RetrievalFilters(),
-                top_k=command.top_k,
                 history=history,
             )
         )
