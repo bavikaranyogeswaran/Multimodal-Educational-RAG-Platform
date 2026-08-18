@@ -21,6 +21,7 @@ from app.configuration.settings import get_settings
 from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.fusion import RRFusion
+from app.domain.retrieval.pruning import EvidencePruner
 from app.domain.retrieval.rewriter import QueryRewriter
 from app.domain.retrieval.selector import EvidenceSelector
 from app.domain.scope import ScopeContext
@@ -48,6 +49,12 @@ async def get_retrieval_orchestrator(
         keyword_top_k=settings.retrieval.keyword_top_k,
         candidate_pool_size=settings.retrieval.candidate_pool_size,
         max_rerank_candidates=settings.reranker.max_candidates,
+        pruner=EvidencePruner(
+            overlap_threshold=settings.evidence.duplicate_overlap_threshold,
+            max_children_per_parent=settings.evidence.max_children_per_parent,
+            max_chunks_per_page=settings.evidence.max_chunks_per_page,
+            max_chunks_per_document=settings.evidence.max_chunks_per_document,
+        ),
         selector=EvidenceSelector(
             container.token_counter.count,
             min_items=settings.evidence.min_items,

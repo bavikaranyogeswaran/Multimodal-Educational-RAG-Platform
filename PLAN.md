@@ -29,10 +29,10 @@ system design specification.
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
 | In progress | **Phase 9** — ~95%, four field-level gaps left |
 | Mostly built | Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
-| Foundations only | Phase 10 (~25%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
+| Foundations only | Phase 10 (~40%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 1,863 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
-| Next step | **10.2** — deduplication and diversity caps; **7.4** still waits on a textbook PDF |
+| Tests | 1,885 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
+| Next step | **10.3** — parent expansion, which first reads the tier step 7.3 wrote; **7.4** still waits on a textbook PDF |
 | Last updated | 18 August 2026 (audited against the codebase; integration suite run) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1449,9 +1449,10 @@ remaining stages — which is why the checkbox count reads lower than the percen
 
 Covers §30, §31, §32, §33, §36, §37.
 
-**Status: ~25% — 10.1 done, 10.2 next.** How many passages reach the model now follows from
-what the question is, rather than from a number the caller passed. Everything after the count
-— deduplication, parent expansion, compression, the prompt itself — is still unbuilt.
+**Status: ~40% — 10.1 and 10.2 done, 10.3 next.** The evidence list is now sized by what the
+question is and freed of passages that repeat each other or come from one crowded source.
+What remains is what happens to the passages themselves: expanding a fragment into its
+section, cutting what will not fit, and assembling the prompt.
 
 Retrieval currently ends at reranking and hands the surviving chunks to the model as raw
 text. Everything between those two points is this phase: how many passages to send, which
@@ -1464,7 +1465,7 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 10.1 | Dynamic evidence selection, sized by query class | M | ✅ |
-| 10.2 | Deduplication and diversity caps | M | ☐ |
+| 10.2 | Deduplication and diversity caps | M | ✅ |
 | 10.3 | Parent expansion, on the five conditions only | L | ☐ |
 | 10.4 | Extractive compression | L | ☐ |
 | 10.5 | Context builder — twelve slots and the token budget | L | ☐ |
@@ -1488,18 +1489,25 @@ been written on every ingestion since step 7.3 and nothing loads them, and
       budget overrides the class minimum and one passage overrides the budget
 - [x] A new `select` stage is timed and logged alongside the other seven
 
-### 10.2 — Deduplication and diversity caps
+### 10.2 — Deduplication and diversity caps ✅
 
-- [ ] Remove exact duplicates, strongly overlapping passages, parent–child duplicates,
-      repeated table rows and duplicate visual descriptions before generation (FR-EVD-06).
-      Parent–child duplication is real now rather than hypothetical: overlap means adjacent
-      children genuinely share sentences
-- [ ] Caps: at most two children per parent, three chunks per page, a configured maximum per
-      document, and distinct sources preferred for comparisons (FR-EVD-07)
-- [ ] The highest-ranked primary evidence survives every filter, unconditionally — a
-      deduplication rule that can drop the best passage is worse than none (FR-EVD-08)
-- [ ] Tests: near-identical passages collapse to one; the top result survives a cap that
-      would otherwise remove it; a document cannot monopolise the evidence list
+- [x] `EvidencePruner` in the domain, running between reranking and selection. Removes the
+      same chunk retrieved twice, identical text under different ids, a matching content
+      hash, a passage contained within a longer one, a child and the parent it came from,
+      and tables sharing their rows (FR-EVD-06)
+- [~] Duplicate visual descriptions and repeated graph evidence go through the same
+      comparison, but nothing produces either until phases 6 and 12, so both are covered by
+      argument rather than by a test with the real thing in it (A-417)
+- [x] Caps: two children per parent, three chunks per page, a configured maximum per
+      document, all from configuration. For comparisons the document allowance is halved, so
+      one book cannot supply the whole answer to a question about two (FR-EVD-07, A-414)
+- [x] The highest-ranked passage is admitted outright, before any rule is consulted — a
+      guarantee that is now the shape of the loop rather than a condition that never fired
+      (FR-EVD-08, A-415)
+- [x] Order is never changed. Promoting a passage here would overrule the reranker, which is
+      the one stage that looked at the query and the passage together
+- [x] Tests: 22, covering each kind of repetition, each cap, and the survival of the top
+      result under caps that would otherwise remove it
 
 ### 10.3 — Parent expansion
 

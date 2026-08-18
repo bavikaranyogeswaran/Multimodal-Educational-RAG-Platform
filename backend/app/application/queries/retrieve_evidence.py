@@ -1,6 +1,6 @@
 """Use case: orchestrate the full retrieval pipeline for a student query.
 
-Classify → rewrite → plan → expand → search concurrently → fuse → rerank → select.
+Classify → rewrite → plan → expand → search concurrently → fuse → rerank → prune → select.
 The result is a ranked, relabelled evidence sequence ready for the prompt.
 
 How many passages come back is decided at the end, from the class the query was given
@@ -23,6 +23,7 @@ from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.entities import Evidence, RetrievalFilters, RetrievalPlan
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.fusion import RRFusion
+from app.domain.retrieval.pruning import EvidencePruner
 from app.domain.retrieval.rewriter import QueryRewriter
 from app.domain.retrieval.selector import EvidenceSelector
 from app.domain.scope import ScopeContext
@@ -56,6 +57,7 @@ class RetrievalOrchestrator:
         keyword_top_k: int,
         candidate_pool_size: int,
         max_rerank_candidates: int,
+        pruner: EvidencePruner,
         selector: EvidenceSelector,
     ) -> None:
         self._classifier = classifier
@@ -70,6 +72,7 @@ class RetrievalOrchestrator:
         self._keyword_top_k = keyword_top_k
         self._candidate_pool_size = candidate_pool_size
         self._max_rerank_candidates = max_rerank_candidates
+        self._pruner = pruner
         self._selector = selector
 
     async def execute(self, query: RetrieveEvidenceQuery) -> Sequence[Evidence]:
@@ -148,16 +151,28 @@ class RetrievalOrchestrator:
             results=len(ranked),
         )
 
+        # Repetition first, then the count. Choosing five and then discovering three
+        # were the same passage would leave two, having spent the budget on the copies.
+        with StageTimer("prune") as _timer:
+            distinct = self._pruner.prune(ranked, query_class=query_class)
+        _log.info(
+            "retrieval_stage",
+            stage="prune",
+            elapsed_ms=_timer.elapsed_ms(),
+            before=len(ranked),
+            after=len(distinct),
+        )
+
         # How many of these reach the model is a question about the question, not a
         # number the caller supplies.
         with StageTimer("select") as _timer:
-            selected = self._selector.select(ranked, query_class=query_class)
+            selected = self._selector.select(distinct, query_class=query_class)
         _log.info(
             "retrieval_stage",
             stage="select",
             elapsed_ms=_timer.elapsed_ms(),
             query_class=query_class.value,
-            considered=len(ranked),
+            considered=len(distinct),
             selected=len(selected),
         )
         return selected

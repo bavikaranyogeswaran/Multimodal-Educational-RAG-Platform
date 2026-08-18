@@ -380,6 +380,13 @@ class EvidenceSettings(BaseSettings):
     #: most reliable way to prevent its misuse. Calibrated against the gold set.
     relative_score_margin: float = Field(default=0.35, ge=0.0, le=1.0)
 
+    #: How much of the shorter passage has to sit inside the longer one before the two
+    #: are the same evidence. Neighbouring child chunks share their overlap by design,
+    #: which is a small fraction of either, so this sits well above that: what it is
+    #: meant to catch is a passage retrieved twice by two retrievers, or a child and the
+    #: parent it was cut from.
+    duplicate_overlap_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+
     #: Diversity caps, so one verbose page cannot crowd out every other source.
     max_children_per_parent: int = 2
     max_chunks_per_page: int = 3
