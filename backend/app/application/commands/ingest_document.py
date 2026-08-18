@@ -2,41 +2,35 @@
 
 Receives a Document entity that is already in PROCESSING state. Downloads the bytes from
 object storage, parses them into pages and layout elements, persists both, splits the
-text into overlapping chunks, generates dense embeddings, and persists those. Returns the
-document in COMPLETED state — the caller is responsible for saving it and committing.
+elements into overlapping chunks, generates dense embeddings, and persists those. Returns
+the document in COMPLETED state — the caller is responsible for saving it and committing.
 
 Pages and elements are written before chunking begins. They are what the parse actually
 established, and they stay useful whether or not the stages after them succeed: a page
 recorded as needing recognition is a fact worth keeping even if this run then fails.
 
-Chunking still consumes page text rather than the elements directly. Rewriting the
-splitter to work over structure is worth doing once, after the parser can tell a heading
-from a paragraph — doing it now would mean writing it twice.
+Chunking works from the elements rather than from flattened page text, so the boundaries
+it places are the document's own — a section ends, a paragraph ends — rather than a
+character count arriving mid-word. Deciding where those boundaries go is a rule, and
+lives in the domain; this use case supplies the elements and gives the results identities.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from app.domain.documents.chunker import ChunkDraft, Chunker
 from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
-from app.domain.enums import ChunkType
-from app.domain.ports.adapters import (
-    EmbeddingPort,
-    PdfParserPort,
-    StoragePort,
-    TokenCounterPort,
-)
+from app.domain.ports.adapters import EmbeddingPort, PdfParserPort, StoragePort
 from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
-from app.domain.values import HeadingPath, UntrustedText
+from app.domain.values import UntrustedText
 
-# (1-indexed page number, text for that page)
-PageText = tuple[int, str]
 ParsedPage = tuple[DocumentPage, Sequence[DocumentElement]]
 
 
@@ -64,22 +58,18 @@ class IngestDocumentUseCase:
         embedder: EmbeddingPort,
         *,
         parser: PdfParserPort,
-        token_counter: TokenCounterPort,
+        chunker: Chunker,
         embedding_model_id: str,
         index_version: int,
-        chunk_chars: int,
-        chunk_overlap_chars: int,
     ) -> None:
         self._chunk_repo = chunk_repo
         self._document_repo = document_repo
         self._storage = storage
         self._embedder = embedder
         self._parser = parser
-        self._token_counter = token_counter
+        self._chunker = chunker
         self._embedding_model_id = embedding_model_id
         self._index_version = index_version
-        self._chunk_chars = chunk_chars
-        self._chunk_overlap_chars = chunk_overlap_chars
 
     async def execute(self, command: IngestDocumentCommand) -> Document:
         scope = command.scope
@@ -100,16 +90,12 @@ class IngestDocumentUseCase:
         if elements:
             await self._document_repo.save_elements(scope, elements)
 
-        # Build chunks from the text the parse recovered
-        chunks = _build_chunks(
-            _page_texts(parsed),
+        chunks = _to_chunks(
+            self._chunker.chunk(elements),
             doc=doc,
             scope=scope,
-            chunk_chars=self._chunk_chars,
-            overlap_chars=self._chunk_overlap_chars,
             index_version=self._index_version,
             now=now,
-            count_tokens=self._token_counter.count,
         )
 
         if chunks:
@@ -135,86 +121,45 @@ class IngestDocumentUseCase:
 
 
 # ---------------------------------------------------------------------------
-# Chunking helpers
+# Assembly
 # ---------------------------------------------------------------------------
 
 
-def _page_texts(parsed: Sequence[ParsedPage]) -> list[PageText]:
-    """Flatten each page's elements back to text, in reading order.
-
-    The bridge between a parser that produces structure and a splitter that does not use
-    it yet. Paragraphs are joined with a blank line rather than a space so the boundaries
-    survive in the text, ready for the splitter that will eventually respect them.
-    """
-    return [
-        (page.page_number, "\n\n".join(element.text.value for element in elements))
-        for page, elements in parsed
-        if elements
-    ]
-
-
-def _build_chunks(
-    pages: Sequence[PageText],
+def _to_chunks(
+    drafts: Sequence[ChunkDraft],
     *,
     doc: Document,
     scope: ScopeContext,
-    chunk_chars: int,
-    overlap_chars: int,
     index_version: int,
     now: datetime,
-    count_tokens: Callable[[str], int],
 ) -> list[Chunk]:
-    chunks: list[Chunk] = []
-    ordinal = 0
-    for page_num, page_text in pages:
-        if not page_text.strip():
-            continue
-        for segment in _split_text(page_text, chunk_chars, overlap_chars):
-            if not segment.strip():
-                continue
-            # Counted with the embedding model's own vocabulary rather than estimated
-            # from length. The two agree on ordinary prose and diverge badly on dense
-            # material — formulae and table rows run to roughly twice what a
-            # character estimate predicts, which is how a chunk sized to fit arrives
-            # over the model's limit and loses its tail.
-            token_estimate = max(1, count_tokens(segment))
-            chunks.append(
-                Chunk(
-                    id=uuid4(),
-                    user_id=scope.user_id,
-                    knowledge_base_id=scope.knowledge_base_id,
-                    document_id=doc.id,
-                    chunk_type=ChunkType.TEXT,
-                    text=UntrustedText(segment),
-                    token_count=token_estimate,
-                    ordinal=ordinal,
-                    page_start=page_num,
-                    page_end=page_num,
-                    index_version=index_version,
-                    created_at=now,
-                    language=doc.language,
-                    content_hash=hashlib.sha256(segment.encode()).hexdigest(),
-                    heading_path=HeadingPath.root(),
-                )
-            )
-            ordinal += 1
-    return chunks
+    """Give each decided chunk an identity and the attributes storage needs.
 
-
-def _split_text(text: str, chunk_chars: int, overlap_chars: int) -> list[str]:
-    """Split text into overlapping windows of at most chunk_chars characters."""
-    if len(text) <= chunk_chars:
-        return [text]
-    segments: list[str] = []
-    start = 0
-    while start < len(text):
-        end = min(start + chunk_chars, len(text))
-        # Absorb a tiny tail into the current chunk rather than emitting a
-        # separate segment smaller than the overlap window.
-        if len(text) - end <= overlap_chars:
-            end = len(text)
-        segments.append(text[start:end])
-        if end >= len(text):
-            break
-        start = end - overlap_chars
-    return segments
+    The chunker settled what the chunks are. Everything added here — an id, a position
+    in the document, which index version produced it — is about keeping them rather than
+    about the document they came from.
+    """
+    return [
+        Chunk(
+            id=uuid4(),
+            user_id=scope.user_id,
+            knowledge_base_id=scope.knowledge_base_id,
+            document_id=doc.id,
+            chunk_type=draft.chunk_type,
+            text=UntrustedText(draft.text),
+            token_count=draft.token_count,
+            ordinal=ordinal,
+            page_start=draft.page_start,
+            page_end=draft.page_end,
+            index_version=index_version,
+            created_at=now,
+            language=doc.language,
+            content_hash=hashlib.sha256(draft.text.encode()).hexdigest(),
+            heading_path=draft.heading_path,
+            chapter=draft.chapter,
+            section=draft.section,
+            element_type=draft.element_type,
+            bounding_box=draft.bounding_box,
+        )
+        for ordinal, draft in enumerate(drafts)
+    ]

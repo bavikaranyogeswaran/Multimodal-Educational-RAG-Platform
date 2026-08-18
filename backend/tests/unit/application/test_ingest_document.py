@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock
 from app.application.commands.ingest_document import (
     IngestDocumentCommand,
     IngestDocumentUseCase,
-    _split_text,
 )
+from app.domain.documents.chunker import Chunker
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
 from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
 from app.domain.scope import ScopeContext
@@ -108,6 +108,21 @@ class _FakeTokenCounter:
         return self.count(text) <= self.max_input_tokens
 
 
+def _make_embedder() -> AsyncMock:
+    """Returns one vector per text it is given.
+
+    Chunk counts are a property of the chunker, not of these tests. An embedder with a
+    fixed-length reply forces every caller to predict how many chunks it will produce,
+    which makes an unrelated chunking change look like a failure here.
+    """
+    embedder = AsyncMock()
+    embedder.embed_documents = AsyncMock(
+        side_effect=lambda texts: [[0.1] * 384 for _ in texts]
+    )
+    embedder.dimension = 384
+    return embedder
+
+
 def _make_document_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.save_pages = AsyncMock()
@@ -122,8 +137,8 @@ def _make_use_case(
     storage: AsyncMock | None = None,
     embedder: AsyncMock | None = None,
     parser: AsyncMock | None = None,
-    chunk_chars: int = 500,
-    chunk_overlap_chars: int = 50,
+    target_tokens: int = 500,
+    max_tokens: int = 900,
 ) -> IngestDocumentUseCase:
     if chunk_repo is None:
         chunk_repo = AsyncMock()
@@ -133,9 +148,7 @@ def _make_use_case(
         storage = AsyncMock()
         storage.get = AsyncMock(return_value=b"%PDF fake bytes")
     if embedder is None:
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384])
-        embedder.dimension = 384
+        embedder = _make_embedder()
     if parser is None:
         parser = _make_parser([(1, ["Sample page text."])])
     return IngestDocumentUseCase(
@@ -144,11 +157,14 @@ def _make_use_case(
         storage=storage,
         embedder=embedder,
         parser=parser,
-        token_counter=_FakeTokenCounter(),
+        chunker=Chunker(
+            _FakeTokenCounter().count,
+            target_tokens=target_tokens,
+            max_tokens=max_tokens,
+            overlap_tokens=0,
+        ),
         embedding_model_id="test-model",
         index_version=1,
-        chunk_chars=chunk_chars,
-        chunk_overlap_chars=chunk_overlap_chars,
     )
 
 
@@ -167,9 +183,7 @@ class TestHappyPath:
     async def test_page_count_comes_from_the_parse(self) -> None:
         """The parse counted the pages, so it is the authority — not the count the
         document was carrying from upload-time validation."""
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384, [0.2] * 384])
-        embedder.dimension = 384
+        embedder = _make_embedder()
         use_case = _make_use_case(
             parser=_make_parser([(1, ["a"]), (2, ["b"])]), embedder=embedder
         )
@@ -223,20 +237,20 @@ class TestHappyPath:
         assert kw["dimension"] == 384
         assert kw["version"] == 1
 
-    async def test_multi_page_document_produces_one_chunk_per_page(self) -> None:
+    async def test_chunks_follow_sections_rather_than_pages(self) -> None:
+        """A section that continues onto the next page is one passage, not two. The old
+        splitter chunked per page and cut every section at the page break."""
         parser = _make_parser([(1, ["Page one text."]), (2, ["Page two text."])])
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384, [0.2] * 384])
-        embedder.dimension = 384
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
         chunk_repo.set_embeddings = AsyncMock()
-        use_case = _make_use_case(
-            parser=parser, embedder=embedder, chunk_repo=chunk_repo
-        )
+        use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
         saved_chunks = chunk_repo.save_batch.call_args.args[1]
-        assert len(saved_chunks) == 2
+        assert len(saved_chunks) == 1
+        assert saved_chunks[0].page_start == 1
+        assert saved_chunks[0].page_end == 2
 
 
 # ---------------------------------------------------------------------------
@@ -321,9 +335,7 @@ class TestPageAndElementPersistence:
     async def test_elements_from_every_page_are_saved_together(self) -> None:
         document_repo = _make_document_repo()
         parser = _make_parser([(1, ["one", "two"]), (2, ["three"])])
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384, [0.2] * 384])
-        embedder.dimension = 384
+        embedder = _make_embedder()
         use_case = _make_use_case(
             parser=parser, document_repo=document_repo, embedder=embedder
         )
@@ -369,30 +381,3 @@ class TestPageAndElementPersistence:
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         text = chunk_repo.save_batch.call_args.args[1][0].text.value
         assert text == "first para\n\nsecond para"
-
-
-# ---------------------------------------------------------------------------
-# Chunking helpers
-# ---------------------------------------------------------------------------
-
-
-class TestSplitText:
-    def test_short_text_returns_single_segment(self) -> None:
-        result = _split_text("hello world", chunk_chars=100, overlap_chars=20)
-        assert result == ["hello world"]
-
-    def test_long_text_is_split(self) -> None:
-        text = "a" * 200
-        result = _split_text(text, chunk_chars=100, overlap_chars=10)
-        assert len(result) == 2
-        assert len(result[0]) == 100
-        assert len(result[1]) == 110  # 200 - 100 + 10
-
-    def test_overlap_is_included_in_next_segment(self) -> None:
-        text = "abcde" * 40  # 200 chars
-        result = _split_text(text, chunk_chars=100, overlap_chars=20)
-        assert result[0][-20:] == result[1][:20]
-
-    def test_exact_length_text_returns_single_segment(self) -> None:
-        result = _split_text("x" * 100, chunk_chars=100, overlap_chars=10)
-        assert result == ["x" * 100]

@@ -32,6 +32,7 @@ from app.application.commands.ingest_document import IngestDocumentCommand, Inge
 from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
 from app.configuration.wire import build_container
+from app.domain.documents.chunker import Chunker
 from app.domain.enums import DocumentStatus, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
@@ -165,11 +166,14 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
                 storage=container.storage,
                 embedder=container.embedder,
                 parser=container.pdf_parser,
-                token_counter=container.token_counter,
+                chunker=Chunker(
+                    container.token_counter.count,
+                    target_tokens=settings.chunking.child_target_tokens,
+                    max_tokens=settings.chunking.child_max_tokens,
+                    overlap_tokens=settings.chunking.child_overlap_tokens,
+                ),
                 embedding_model_id=settings.embedding.model_id,
                 index_version=settings.embedding.index_version,
-                chunk_chars=settings.chunking.child_target_tokens * 4,
-                chunk_overlap_chars=settings.chunking.child_overlap_tokens * 4,
             )
             completed_doc = await use_case.execute(
                 IngestDocumentCommand(scope=scope, document=processing_doc)

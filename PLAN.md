@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **7.2** — child chunks from elements |
+| Next step | **7.3** — parent chunks |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1212,7 +1212,7 @@ paragraph boundaries has something to split on, which it did not when the placeh
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 7.1 | Real token counting behind a port | M | ✅ |
-| 7.2 | Structure-aware child chunks, built from elements | L | ☐ |
+| 7.2 | Structure-aware child chunks, built from elements | L | ✅ |
 | 7.3 | Parent chunks from sections, with `parent_chunk_id` linkage | M | ☐ |
 
 ### 7.1 — Token counting ✅
@@ -1227,19 +1227,19 @@ paragraph boundaries has something to split on, which it did not when the placeh
       cached rather than rebuilt per call; a missing vocabulary fails loudly at startup
       rather than silently producing estimates
 
-### 7.2 — Child chunks from elements
+### 7.2 — Child chunks from elements ✅
 
-- [ ] Chunking consumes `DocumentElement`s rather than flattened page text, which is the
+- [x] Chunking consumes `DocumentElement`s rather than flattened page text, which is the
       dependency 5.3 deliberately left in place until headings existed
-- [ ] Split priority chapter → section → subsection → paragraph, and a sentence split only
+- [x] Split priority chapter → section → subsection → paragraph, and a sentence split only
       where a single paragraph exceeds the ceiling on its own
-- [ ] Children 300–500 tokens, hard maximum ~700, overlap 70 (D-29)
-- [ ] Chunk types carried from element types: a table becomes a `TABLE` chunk holding its
+- [x] Children 300–500 tokens, hard maximum ~700, overlap 70 (D-29)
+- [x] Chunk types carried from element types: a table becomes a `TABLE` chunk holding its
       rows, a figure region a `FIGURE` chunk — separate but linked, never dissolved into
       the prose around them
-- [ ] Full §19 metadata: `heading_path`, `chapter`, `section`, `element_type`,
+- [x] Full §19 metadata: `heading_path`, `chapter`, `section`, `element_type`,
       `bounding_box`, `page_start` and `page_end` from the elements the chunk came from
-- [ ] Tests: no chunk splits a word; a chunk never spans two sections; a table's rows stay
+- [x] Tests: no chunk splits a word; a chunk never spans two sections; a table's rows stay
       together; overlap is real text from the neighbouring chunk; a paragraph longer than
       the ceiling splits on sentences rather than mid-clause
 

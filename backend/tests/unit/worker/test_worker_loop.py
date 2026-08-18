@@ -104,7 +104,10 @@ def _make_settings() -> MagicMock:
     s.embedding.model_id = "test-model"
     s.embedding.index_version = 1
     s.chunking.child_target_tokens = 400
+    s.chunking.child_max_tokens = 700
     s.chunking.child_overlap_tokens = 70
+    s.job.backoff_base_seconds = 10
+    s.job.backoff_max_seconds = 900
     return s
 
 
