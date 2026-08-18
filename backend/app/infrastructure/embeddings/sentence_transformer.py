@@ -30,7 +30,19 @@ class SentenceTransformerEmbedder:
 
     @property
     def dimension(self) -> int:
-        dim = self._model.get_sentence_embedding_dimension()
+        """What the model actually produces, asked of the model rather than configured.
+
+        The width is also declared in settings and reserved in the vector column, and the
+        point of reading it here is to notice when they disagree. Sentence-Transformers
+        renamed this accessor in 5.6 and the old name still answers, with a warning on
+        every call — which in a worker log is noise that trains people to skim.
+        """
+        read = getattr(
+            self._model,
+            "get_embedding_dimension",
+            self._model.get_sentence_embedding_dimension,
+        )
+        dim = read()
         return int(dim) if dim is not None else 0
 
     async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:

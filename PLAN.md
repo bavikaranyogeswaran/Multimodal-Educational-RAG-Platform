@@ -30,8 +30,8 @@ system design specification.
 | In progress | **Phase 9** — ~95%, three persistence gaps left |
 | Partially built | Phase 4 (~85%) · Phase 5 (~70%) · Phase 7 (~75%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 6, 10–16, 18–20 |
-| Tests | 1,823 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **7.4** waits on a textbook PDF; **7.5** — install the `ml` group — can run meanwhile |
+| Tests | 1,833 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
+| Next step | **7.4** waits on a textbook PDF; **7.6** is blocked until the worker can reach Postgres (A-388) |
 | Last updated | 18 August 2026 (chunking complete through step 7.3) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1216,7 +1216,7 @@ environment (A-358) and no real model call has yet happened in this repository.
 | 7.2 | Structure-aware child chunks, built from elements | L | ✅ |
 | 7.3 | Parent chunks from sections, with `parent_chunk_id` linkage | M | ✅ |
 | 7.4 | Parse and chunk a real textbook offline, and report what it did | M | ◐ |
-| 7.5 | Install the `ml` group; prove the embedder runs | S | ☐ |
+| 7.5 | Install the `ml` group; prove the embedder runs | S | ✅ |
 | 7.6 | Full ingestion against the real database and object store | M | ☐ |
 | 7.7 | Query the ingested textbook end to end | M | ☐ |
 | 7.8 | Recalibrate the tuning numbers from what was found | S | ☐ |
@@ -1291,16 +1291,31 @@ queue and a 2.5 GB download.
 - [ ] **Blocked:** the written assessment of where the parser is wrong and which tuning numbers
       need to move
 
-### 7.5 — Install the `ml` group; prove the embedder runs
+### 7.5 — Install the `ml` group; prove the embedder runs ✅
 
-- [ ] `uv sync --group ml` — torch from the cu126 index, sentence-transformers, and the CPU
-      PaddleOCR wheels. Roughly 2.5 GB, and the first thing in this repository to need the GPU
-- [ ] Embed a handful of the chunks 7.4 produced: right dimension, stable across calls, and
-      batching actually batches
-- [ ] Closes A-358 — `container.embedder` and `container.reranker` stop being `_Unimplemented`
+- [x] `uv sync --group ml` — torch 2.13.0+cu126, sentence-transformers 5.6.1, transformers
+      5.14.1, paddle 3.3.1 and paddleocr 3.7.0 as the CPU build, exactly as D-27 specified
+- [x] The card is real and usable: RTX 3050 6 GB, driver 555.97, sm_86, and a matmul on it
+- [x] Ten tests over the real model — 384 dimensions matching the reserved column width, one
+      unit-length vector per text, stable across calls, unchanged by what it was batched
+      alongside, and closer to a paraphrase than to another subject
+- [x] Closes A-358 — `container.embedder` and `container.reranker` hold real adapters
+- [ ] **Left open by decision:** the suite went from 26 seconds to 242, because sixteen tests
+      build a container and each one now loads two models onto the GPU (A-391)
+
+Three findings here matter more than the step did. The worker cannot reach Postgres on Windows
+at all — `psycopg` refuses the event loop `asyncio.run` gives it, before any I/O — which blocks
+7.6 until it is fixed (A-388). The API escapes the same fault only because the documented run
+command uses `--reload` (A-389). And the environment verifier has been reporting a Postgres
+failure that says nothing about the network (A-390).
 
 ### 7.6 — Full ingestion against the real database and object store
 
+- [ ] **First:** give the worker an event loop `psycopg` will run on. It calls plain
+      `asyncio.run`, which on Windows means the loop `psycopg` refuses outright, so every
+      database call fails before reaching the network (A-388). The same one-line fix belongs in
+      the environment verifier, whose Postgres check has never been able to pass (A-390), and
+      the API needs it too rather than relying on `--reload` to supply it (A-389)
 - [ ] Needs tethering, since home Wi-Fi blocks Postgres, and R2 credentials
 - [ ] Upload → job enqueued → worker claims it → pages, elements, chunks and embeddings persisted
       → document reaches `COMPLETED`
