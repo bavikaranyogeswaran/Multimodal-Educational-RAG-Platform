@@ -151,6 +151,55 @@ class TestSaveBatch:
 
 
 # ---------------------------------------------------------------------------
+# get_many
+# ---------------------------------------------------------------------------
+
+
+class TestGetMany:
+    async def test_applies_scope_filter(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result_scalars([]))
+        repo = _repo(scope, session)
+
+        await repo.get_many(scope, [uuid.uuid4(), uuid.uuid4()])
+
+        compiled = str(session.execute.call_args[0][0].compile())
+        assert "user_id" in compiled
+        assert "knowledge_base_id" in compiled
+
+    async def test_asks_for_every_id_in_one_query(self) -> None:
+        """Parent loading calls this once for a whole evidence list. A query per id would
+        put the database inside the wait for an answer once per passage."""
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result_scalars([]))
+        repo = _repo(scope, session)
+
+        await repo.get_many(scope, [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()])
+
+        session.execute.assert_called_once()
+        assert "IN" in str(session.execute.call_args[0][0].compile()).upper()
+
+    async def test_no_ids_makes_no_query(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        repo = _repo(scope, session)
+
+        assert await repo.get_many(scope, []) == []
+        session.execute.assert_not_called()
+
+    async def test_rejects_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _repo(_make_scope(), session)
+
+        with pytest.raises(ScopeViolationError):
+            await repo.get_many(_make_scope(), [uuid.uuid4()])
+
+        session.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # list_for_document
 # ---------------------------------------------------------------------------
 

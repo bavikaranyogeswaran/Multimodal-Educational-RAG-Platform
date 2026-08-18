@@ -1,6 +1,7 @@
 """Use case: orchestrate the full retrieval pipeline for a student query.
 
-Classify → rewrite → plan → expand → search concurrently → fuse → rerank → prune → select.
+Classify → rewrite → plan → expand queries → search → fuse → rerank → prune → expand
+parents → select.
 The result is a ranked, relabelled evidence sequence ready for the prompt.
 
 How many passages come back is decided at the end, from the class the query was given
@@ -13,15 +14,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from uuid import UUID
 
 import structlog
 
 from app.application.observability.timer import StageTimer
 from app.domain.models.entities import ConversationTurn
 from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, RerankerPort
+from app.domain.ports.repositories import ChunkRepository
 from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.entities import Evidence, RetrievalFilters, RetrievalPlan
 from app.domain.retrieval.expander import QueryExpander
+from app.domain.retrieval.expansion import ExpansionReason, ExpansionRules
 from app.domain.retrieval.fusion import RRFusion
 from app.domain.retrieval.pruning import EvidencePruner
 from app.domain.retrieval.rewriter import QueryRewriter
@@ -58,6 +62,8 @@ class RetrievalOrchestrator:
         candidate_pool_size: int,
         max_rerank_candidates: int,
         pruner: EvidencePruner,
+        expansion_rules: ExpansionRules,
+        chunks: ChunkRepository,
         selector: EvidenceSelector,
     ) -> None:
         self._classifier = classifier
@@ -73,6 +79,8 @@ class RetrievalOrchestrator:
         self._candidate_pool_size = candidate_pool_size
         self._max_rerank_candidates = max_rerank_candidates
         self._pruner = pruner
+        self._expansion_rules = expansion_rules
+        self._chunks = chunks
         self._selector = selector
 
     async def execute(self, query: RetrieveEvidenceQuery) -> Sequence[Evidence]:
@@ -163,16 +171,70 @@ class RetrievalOrchestrator:
             after=len(distinct),
         )
 
+        # Before the count, because expansion changes how much each passage costs and
+        # the budget is spent in the step after this one.
+        with StageTimer("expand_parents") as _timer:
+            complete = await self._expand_incomplete(query.scope, distinct)
+        _log.info(
+            "retrieval_stage",
+            stage="expand_parents",
+            elapsed_ms=_timer.elapsed_ms(),
+            expanded=sum(1 for e in complete if e.parent_expanded),
+        )
+
         # How many of these reach the model is a question about the question, not a
         # number the caller supplies.
         with StageTimer("select") as _timer:
-            selected = self._selector.select(distinct, query_class=query_class)
+            selected = self._selector.select(complete, query_class=query_class)
         _log.info(
             "retrieval_stage",
             stage="select",
             elapsed_ms=_timer.elapsed_ms(),
             query_class=query_class.value,
-            considered=len(distinct),
+            considered=len(complete),
             selected=len(selected),
         )
         return selected
+
+    # -----------------------------------------------------------------------
+
+    async def _expand_incomplete(
+        self, scope: ScopeContext, evidence: Sequence[Evidence]
+    ) -> list[Evidence]:
+        """Replace the fragments that cannot be read alone with the sections holding them.
+
+        One query for the whole list rather than one per passage: this runs while somebody
+        waits for an answer, and a round trip per fragment would put the database inside
+        that wait as many times as there are passages.
+
+        Where two fragments come from the same section, only the first is expanded. The
+        second would become a copy of the first, which is the repetition the step before
+        this one exists to remove, arriving after it has finished looking.
+        """
+        wanted: dict[UUID, ExpansionReason] = {}
+        for item in evidence:
+            reason = self._expansion_rules.reason_to_expand(item.chunk)
+            if reason is not None and item.chunk.parent_chunk_id is not None:
+                wanted.setdefault(item.chunk.parent_chunk_id, reason)
+
+        if not wanted:
+            return list(evidence)
+
+        parents = {
+            parent.id: parent
+            for parent in await self._chunks.get_many(scope, list(wanted))
+        }
+
+        expanded: list[Evidence] = []
+        used: set[UUID] = set()
+        for item in evidence:
+            parent_id = item.chunk.parent_chunk_id
+            parent = parents.get(parent_id) if parent_id is not None else None
+            # A parent that has been deleted, or that this scope cannot see, leaves the
+            # fragment exactly as retrieval found it. Incomplete is better than absent.
+            if parent is None or parent_id in used or parent_id not in wanted:
+                expanded.append(item)
+                continue
+            used.add(parent_id)
+            expanded.append(replace(item, chunk=parent, parent_expanded=True))
+        return expanded

@@ -20,11 +20,13 @@ from app.configuration.container import Container
 from app.configuration.settings import get_settings
 from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.expander import QueryExpander
+from app.domain.retrieval.expansion import ExpansionRules
 from app.domain.retrieval.fusion import RRFusion
 from app.domain.retrieval.pruning import EvidencePruner
 from app.domain.retrieval.rewriter import QueryRewriter
 from app.domain.retrieval.selector import EvidenceSelector
 from app.domain.scope import ScopeContext
+from app.infrastructure.database.repositories.chunk import SqlChunkRepository
 from app.infrastructure.database.session import get_session
 from app.infrastructure.retrieval.dense import SqlDenseRetriever
 from app.infrastructure.retrieval.keyword import SqlKeywordRetriever
@@ -55,6 +57,8 @@ async def get_retrieval_orchestrator(
             max_chunks_per_page=settings.evidence.max_chunks_per_page,
             max_chunks_per_document=settings.evidence.max_chunks_per_document,
         ),
+        expansion_rules=ExpansionRules(),
+        chunks=SqlChunkRepository(scope, session),
         selector=EvidenceSelector(
             container.token_counter.count,
             min_items=settings.evidence.min_items,

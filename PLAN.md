@@ -29,10 +29,10 @@ system design specification.
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
 | In progress | **Phase 9** — ~95%, four field-level gaps left |
 | Mostly built | Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
-| Foundations only | Phase 10 (~40%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
+| Foundations only | Phase 10 (~55%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 1,885 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
-| Next step | **10.3** — parent expansion, which first reads the tier step 7.3 wrote; **7.4** still waits on a textbook PDF |
+| Tests | 1,922 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
+| Next step | **10.4** — extractive compression; **7.4** still waits on a textbook PDF |
 | Last updated | 18 August 2026 (audited against the codebase; integration suite run) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1449,10 +1449,10 @@ remaining stages — which is why the checkbox count reads lower than the percen
 
 Covers §30, §31, §32, §33, §36, §37.
 
-**Status: ~40% — 10.1 and 10.2 done, 10.3 next.** The evidence list is now sized by what the
-question is and freed of passages that repeat each other or come from one crowded source.
-What remains is what happens to the passages themselves: expanding a fragment into its
-section, cutting what will not fit, and assembling the prompt.
+**Status: ~55% — 10.1 to 10.3 done, 10.4 next.** The evidence list is sized by what the
+question is, freed of passages that repeat each other, and fragments that cannot be read
+alone are replaced by the sections holding them. What remains is cutting what will not fit
+and assembling the prompt.
 
 Retrieval currently ends at reranking and hands the surviving chunks to the model as raw
 text. Everything between those two points is this phase: how many passages to send, which
@@ -1466,7 +1466,7 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 |---|---|---|---|
 | 10.1 | Dynamic evidence selection, sized by query class | M | ✅ |
 | 10.2 | Deduplication and diversity caps | M | ✅ |
-| 10.3 | Parent expansion, on the five conditions only | L | ☐ |
+| 10.3 | Parent expansion, on the five conditions only | L | ✅ |
 | 10.4 | Extractive compression | L | ☐ |
 | 10.5 | Context builder — twelve slots and the token budget | L | ☐ |
 | 10.6 | Structured instruction handling | M | ☐ |
@@ -1509,18 +1509,24 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 - [x] Tests: 22, covering each kind of repetition, each cap, and the survival of the top
       result under caps that would otherwise remove it
 
-### 10.3 — Parent expansion
+### 10.3 — Parent expansion ✅
 
-- [ ] A child is replaced by its parent only when it is incomplete on its own: it begins
-      mid-explanation, it contains a pronoun pointing at earlier text, it is a table needing
-      its caption, a formula needing its definition, or a figure needing nearby explanation
-      (FR-EVD-09). Never by default (FR-EVD-10)
-- [ ] Needs a batch load of parents by id on `ChunkRepository`, which does not exist yet —
-      one query for the whole evidence list rather than one per child
-- [ ] This is the step that first reads the tier step 7.3 wrote. Until it lands, every
-      parent chunk in the database is storage nobody queries
-- [ ] Tests: a self-contained passage is not expanded; a passage opening with "This means
-      that" is; expansion respects the token budget rather than blowing it
+- [x] `ExpansionRules` in the domain names all five ways a fragment can be incomplete in
+      itself: it opens mid-sentence or on a continuation word, it opens by pointing at
+      something it does not contain, it is a table without its caption, a formula without
+      its definitions, or a visual whose explanation is the prose beside it (FR-EVD-09)
+- [x] Never by default. The rules decline wherever they would have to guess, because a
+      missed expansion leaves the passage as retrieval found it while a wrong one replaces
+      a precise passage with a section several times its size (FR-EVD-10, A-423)
+- [x] `get_many` added to `ChunkRepository` and the SQL implementation — one scoped query
+      for the whole evidence list rather than one per fragment (A-425)
+- [x] Runs before selection, since expansion changes what each passage costs and the budget
+      is spent in the step after (A-419)
+- [x] Two fragments from one section yield one expansion, not two copies of it (A-421); a
+      parent that cannot be loaded leaves its fragment alone (A-422)
+- [x] The tier step 7.3 wrote is now read. Parent chunks stop being storage nobody queries
+- [x] Tests: 26 on the rules, 7 on the loading, 4 on the batch query, and a new
+      `expand_parents` stage timed alongside the rest
 
 ### 10.4 — Extractive compression
 

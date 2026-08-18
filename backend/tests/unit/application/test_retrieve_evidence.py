@@ -16,6 +16,7 @@ from app.application.queries.retrieve_evidence import RetrievalOrchestrator, Ret
 from app.domain.enums import MessageRole, QueryClass, RetrieverKind
 from app.domain.models.entities import ConversationTurn
 from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters
+from app.domain.retrieval.expansion import ExpansionRules
 from app.domain.retrieval.pruning import EvidencePruner
 from app.domain.retrieval.selector import EvidenceSelector
 from app.domain.scope import ScopeContext
@@ -71,6 +72,7 @@ def _make_orchestrator(
     max_rerank_candidates: int = 40,
     relative_score_margin: float = 0.35,
     max_items: int = 8,
+    parents: list[object] | None = None,
 ) -> tuple[RetrievalOrchestrator, dict[str, MagicMock]]:
     classifier = MagicMock()
     classifier.classify.return_value = classify_return
@@ -96,6 +98,9 @@ def _make_orchestrator(
     reranker = MagicMock()
     reranker.rerank = AsyncMock(return_value=rerank_scores or [])
 
+    chunks = MagicMock()
+    chunks.get_many = AsyncMock(return_value=parents or [])
+
     mocks: dict[str, MagicMock] = {
         "classifier": classifier,
         "rewriter": rewriter,
@@ -105,6 +110,7 @@ def _make_orchestrator(
         "keyword_retriever": keyword_retriever,
         "fuser": fuser,
         "reranker": reranker,
+        "chunks": chunks,
     }
 
     orc = RetrievalOrchestrator(
@@ -120,6 +126,8 @@ def _make_orchestrator(
         keyword_top_k=keyword_top_k,
         candidate_pool_size=candidate_pool_size,
         max_rerank_candidates=max_rerank_candidates,
+        expansion_rules=ExpansionRules(),
+        chunks=chunks,
         pruner=EvidencePruner(
             overlap_threshold=0.8,
             max_children_per_parent=99,
@@ -451,6 +459,7 @@ class TestStageTimingLogs:
         "fuse",
         "rerank",
         "prune",
+        "expand_parents",
         "select",
     )
 
@@ -533,3 +542,155 @@ class TestStageTimingLogs:
             e for e in logs if e.get("event") == "retrieval_stage" and e["stage"] == "rerank"
         )
         assert event["results"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Parent expansion
+# ---------------------------------------------------------------------------
+
+
+def _real_chunk(text: str, *, parent_id: uuid.UUID | None, chunk_id: uuid.UUID | None = None):
+    from datetime import UTC, datetime
+
+    from app.domain.documents.chunks import Chunk
+    from app.domain.enums import ChunkType
+
+    return Chunk(
+        id=chunk_id if chunk_id is not None else uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        knowledge_base_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        parent_chunk_id=parent_id,
+        chunk_type=ChunkType.TEXT,
+        text=UntrustedText(text),
+        token_count=max(1, len(text.split())),
+        ordinal=0,
+        page_start=1,
+        page_end=1,
+        index_version=1,
+        created_at=datetime(2025, 6, 1, tzinfo=UTC),
+    )
+
+
+def _real_evidence(text: str, *, parent_id: uuid.UUID | None, rank: int = 0) -> Evidence:
+    return Evidence(
+        label=EvidenceLabel(rank + 1),
+        chunk=_real_chunk(text, parent_id=parent_id),
+        retrievers=frozenset({RetrieverKind.DENSE}),
+        rank=rank,
+    )
+
+
+_NEEDS_ITS_SECTION = "This means the gradient vanishes before it reaches the input layer."
+_STANDS_ALONE = "Backpropagation computes the gradient of the loss for every weight."
+
+
+class TestParentExpansion:
+    async def test_an_incomplete_fragment_is_replaced_by_its_section(self) -> None:
+        """The fragment matched the query and cannot be read on its own, because what it
+        points at was cut into a different chunk."""
+        parent_id = uuid.uuid4()
+        parent = _real_chunk("The whole section, several paragraphs of it.",
+                             parent_id=None, chunk_id=parent_id)
+        orc, _mocks = _make_orchestrator(
+            fused_results=[_real_evidence(_NEEDS_ITS_SECTION, parent_id=parent_id)],
+            rerank_scores=[0.9],
+            parents=[parent],
+        )
+        result = await orc.execute(_query())
+
+        assert result[0].chunk.id == parent_id
+        assert result[0].parent_expanded is True
+
+    async def test_a_self_contained_fragment_is_left_as_it_was(self) -> None:
+        """Replacing it would spend several times its size in budget to say the same
+        thing less precisely."""
+        chunk_id, parent_id = uuid.uuid4(), uuid.uuid4()
+        evidence = Evidence(
+            label=EvidenceLabel(1),
+            chunk=_real_chunk(_STANDS_ALONE, parent_id=parent_id, chunk_id=chunk_id),
+            retrievers=frozenset({RetrieverKind.DENSE}),
+        )
+        # The parent is available, so the fragment surviving means the rules declined
+        # to expand it rather than that there was nothing to expand into.
+        orc, _mocks = _make_orchestrator(
+            fused_results=[evidence],
+            rerank_scores=[0.9],
+            parents=[_real_chunk("the whole section", parent_id=None, chunk_id=parent_id)],
+        )
+        result = await orc.execute(_query())
+
+        assert result[0].chunk.id == chunk_id
+        assert result[0].parent_expanded is False
+
+    async def test_nothing_incomplete_means_no_query_at_all(self) -> None:
+        orc, mocks = _make_orchestrator(
+            fused_results=[_real_evidence(_STANDS_ALONE, parent_id=uuid.uuid4())],
+            rerank_scores=[0.9],
+        )
+        await orc.execute(_query())
+        mocks["chunks"].get_many.assert_not_called()
+
+    async def test_every_parent_is_loaded_in_one_query(self) -> None:
+        """This runs while somebody waits, so a round trip per fragment would put the
+        database inside that wait once per passage."""
+        first, second = uuid.uuid4(), uuid.uuid4()
+        orc, mocks = _make_orchestrator(
+            classify_return=QueryClass.SUMMARY,
+            fused_results=[
+                _real_evidence(_NEEDS_ITS_SECTION, parent_id=first, rank=0),
+                _real_evidence("However, the loss stops falling entirely.",
+                               parent_id=second, rank=1),
+            ],
+            rerank_scores=[0.9, 0.8],
+            relative_score_margin=1.0,
+            parents=[
+                _real_chunk("first section", parent_id=None, chunk_id=first),
+                _real_chunk("second section", parent_id=None, chunk_id=second),
+            ],
+        )
+        await orc.execute(_query())
+        mocks["chunks"].get_many.assert_called_once()
+
+    async def test_two_fragments_of_one_section_do_not_both_become_it(self) -> None:
+        """The second would be a copy of the first, which is the repetition the step
+        before this one exists to remove — arriving after it has finished looking."""
+        parent_id = uuid.uuid4()
+        orc, _ = _make_orchestrator(
+            classify_return=QueryClass.SUMMARY,
+            fused_results=[
+                _real_evidence(_NEEDS_ITS_SECTION, parent_id=parent_id, rank=0),
+                _real_evidence("However, the loss stops falling.", parent_id=parent_id, rank=1),
+            ],
+            rerank_scores=[0.9, 0.8],
+            relative_score_margin=1.0,
+            parents=[_real_chunk("the section", parent_id=None, chunk_id=parent_id)],
+        )
+        result = await orc.execute(_query())
+
+        expanded = [e for e in result if e.parent_expanded]
+        assert len(expanded) == 1
+        assert len({e.chunk.id for e in result}) == len(result)
+
+    async def test_a_missing_parent_leaves_the_fragment_alone(self) -> None:
+        """Deleted, or belonging to another scope. Incomplete is better than absent."""
+        orc, _ = _make_orchestrator(
+            fused_results=[_real_evidence(_NEEDS_ITS_SECTION, parent_id=uuid.uuid4())],
+            rerank_scores=[0.9],
+            parents=[],
+        )
+        result = await orc.execute(_query())
+
+        assert len(result) == 1
+        assert result[0].parent_expanded is False
+
+    async def test_the_load_is_scoped_to_the_caller(self) -> None:
+        scope = _scope()
+        parent_id = uuid.uuid4()
+        orc, mocks = _make_orchestrator(
+            fused_results=[_real_evidence(_NEEDS_ITS_SECTION, parent_id=parent_id)],
+            rerank_scores=[0.9],
+            parents=[_real_chunk("the section", parent_id=None, chunk_id=parent_id)],
+        )
+        await orc.execute(_query(scope=scope))
+        assert mocks["chunks"].get_many.call_args.args[0] == scope

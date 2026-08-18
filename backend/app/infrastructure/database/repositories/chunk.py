@@ -33,6 +33,21 @@ class SqlChunkRepository(ScopedRepository):
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _to_entity(row) if row else None
 
+    async def get_many(
+        self, scope: ScopeContext, chunk_ids: Sequence[UUID]
+    ) -> Sequence[Chunk]:
+        self._require_scope(scope)
+        if not chunk_ids:
+            # An empty IN list is valid SQL that matches nothing, so this is only about
+            # not making the round trip to be told so.
+            return []
+        stmt = select(ChunkModel).where(
+            ChunkModel.id.in_(list(chunk_ids)),
+            self._scope_filter(ChunkModel),
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_to_entity(row) for row in rows]
+
     async def save_batch(
         self, scope: ScopeContext, chunks: Sequence[Chunk]
     ) -> None:

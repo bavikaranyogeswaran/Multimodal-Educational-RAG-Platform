@@ -97,6 +97,18 @@ class ChunkRepository(Protocol):
 
     async def get(self, scope: ScopeContext, chunk_id: UUID) -> Chunk | None: ...
 
+    async def get_many(
+        self, scope: ScopeContext, chunk_ids: Sequence[UUID]
+    ) -> Sequence[Chunk]:
+        """Every chunk named that the caller is allowed to see, in no particular order.
+
+        One query rather than one per id: this exists for loading the parents of a whole
+        evidence list at once, and a round trip per passage would put the database in the
+        middle of a loop that runs while a student waits. Ids that do not exist, or belong
+        to someone else, are simply absent from the result.
+        """
+        ...
+
     async def save_batch(
         self, scope: ScopeContext, chunks: Sequence[Chunk]
     ) -> None: ...
