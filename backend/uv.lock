@@ -2196,6 +2196,7 @@ core = [
     { name = "sse-starlette" },
     { name = "structlog" },
     { name = "tenacity" },
+    { name = "tokenizers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 dev = [
@@ -2241,6 +2242,7 @@ core = [
     { name = "sse-starlette", specifier = ">=3.0" },
     { name = "structlog", specifier = ">=25.5" },
     { name = "tenacity", specifier = ">=9.1" },
+    { name = "tokenizers", specifier = ">=0.20" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38" },
 ]
 dev = [

@@ -52,6 +52,12 @@ core = [
     # Observability
     "structlog>=25.5",
 
+    # Chunking. Deliberately here rather than in `ml`: chunk sizes are specified in
+    # tokens, so counting them is not optional, and `ml` is excluded from the default
+    # install. This is the tokenizer library alone — no torch, no model weights — and it
+    # loads the same vocabulary the embedding model uses.
+    "tokenizers>=0.20",
+
     # Utility
     "tenacity>=9.1",                 # bounded retry
 ]
@@ -194,6 +200,7 @@ strict = true
 module = [
     "aioboto3.*",
     "botocore.*",
+    "tokenizers.*",
     "paddle.*",
     "paddleocr.*",
     "pdfplumber.*",

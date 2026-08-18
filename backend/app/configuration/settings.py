@@ -174,6 +174,11 @@ class EmbeddingSettings(BaseSettings):
     dimension: int = 384
     device: Literal["cuda", "cpu"] = "cuda"
     batch_size: int = 64
+    #: The most the embedding model reads before discarding the end. bge-small-en-v1.5
+    #: inherits BERT's 512-token window; a chunk larger than this loses its tail
+    #: silently, which is where a paragraph usually says what it was getting at.
+    max_input_tokens: int = 512
+
     #: Changing the model requires a new index version, never an in-place swap:
     #: dimensions and similarity distributions differ between models.
     index_version: int = 1

@@ -17,7 +17,7 @@ from a paragraph — doing it now would mean writing it twice.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -25,7 +25,12 @@ from uuid import uuid4
 from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
 from app.domain.enums import ChunkType
-from app.domain.ports.adapters import EmbeddingPort, PdfParserPort, StoragePort
+from app.domain.ports.adapters import (
+    EmbeddingPort,
+    PdfParserPort,
+    StoragePort,
+    TokenCounterPort,
+)
 from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
 from app.domain.values import HeadingPath, UntrustedText
@@ -59,6 +64,7 @@ class IngestDocumentUseCase:
         embedder: EmbeddingPort,
         *,
         parser: PdfParserPort,
+        token_counter: TokenCounterPort,
         embedding_model_id: str,
         index_version: int,
         chunk_chars: int,
@@ -69,6 +75,7 @@ class IngestDocumentUseCase:
         self._storage = storage
         self._embedder = embedder
         self._parser = parser
+        self._token_counter = token_counter
         self._embedding_model_id = embedding_model_id
         self._index_version = index_version
         self._chunk_chars = chunk_chars
@@ -102,6 +109,7 @@ class IngestDocumentUseCase:
             overlap_chars=self._chunk_overlap_chars,
             index_version=self._index_version,
             now=now,
+            count_tokens=self._token_counter.count,
         )
 
         if chunks:
@@ -154,6 +162,7 @@ def _build_chunks(
     overlap_chars: int,
     index_version: int,
     now: datetime,
+    count_tokens: Callable[[str], int],
 ) -> list[Chunk]:
     chunks: list[Chunk] = []
     ordinal = 0
@@ -163,7 +172,12 @@ def _build_chunks(
         for segment in _split_text(page_text, chunk_chars, overlap_chars):
             if not segment.strip():
                 continue
-            token_estimate = max(1, len(segment) // 4)
+            # Counted with the embedding model's own vocabulary rather than estimated
+            # from length. The two agree on ordinary prose and diverge badly on dense
+            # material — formulae and table rows run to roughly twice what a
+            # character estimate predicts, which is how a chunk sized to fit arrives
+            # over the model's limit and loses its tail.
+            token_estimate = max(1, count_tokens(segment))
             chunks.append(
                 Chunk(
                     id=uuid4(),

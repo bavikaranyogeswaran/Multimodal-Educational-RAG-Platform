@@ -27,6 +27,7 @@ from app.domain.ports.adapters import (
     PdfParserPort,
     RerankerPort,
     StoragePort,
+    TokenCounterPort,
 )
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import (
@@ -42,6 +43,7 @@ from app.infrastructure.database.session import build_engine, build_session_fact
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.rendering.page_renderer import PageRenderer
 from app.infrastructure.storage.r2 import build_r2_adapters
+from app.infrastructure.tokenization.token_counter import HuggingFaceTokenCounter
 
 
 def _build_model_gateway(settings: Settings) -> ModelGatewayPort:
@@ -103,6 +105,19 @@ def _build_pdf_parser(settings: Settings) -> PdfParserPort:
         )
     except ImportError:
         return cast(PdfParserPort, _Unimplemented("PdfParserPort"))
+
+
+def _build_token_counter(settings: Settings) -> TokenCounterPort:
+    """Built eagerly, and allowed to fail.
+
+    Unlike the adapters around it there is no `_Unimplemented` fallback: a counter that
+    silently estimated would size every chunk wrongly and nothing downstream would show
+    it. Failing at startup is the only honest option.
+    """
+    return HuggingFaceTokenCounter(
+        model_id=settings.embedding.model_id,
+        max_input_tokens=settings.embedding.max_input_tokens,
+    )
 
 
 def _build_embedder(settings: Settings) -> EmbeddingPort:
@@ -187,6 +202,7 @@ def build_container(settings: Settings) -> Container:
         pdf_parser=_build_pdf_parser(settings),
         ocr=cast(OcrPort, _u("OcrPort")),
         embedder=_build_embedder(settings),
+        token_counter=_build_token_counter(settings),
         reranker=_build_reranker(settings),
         dense_retriever=cast(DenseRetriever, _u("DenseRetriever")),
         keyword_retriever=cast(KeywordRetriever, _u("KeywordRetriever")),

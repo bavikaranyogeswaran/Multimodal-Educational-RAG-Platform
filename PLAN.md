@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **Phase 7** — §19 chunking, or reassess |
+| Next step | **7.2** — child chunks from elements |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1198,11 +1198,63 @@ nothing to select. Blocked on Phase 5.
 
 Covers §13 complete, §19, §20. **Milestone: ingestion works end to end.**
 
-**Status: ~35%.** The embedding and indexing half is real; the chunking half is not. `_split_text`
-in `app/application/commands/ingest_document.py` is a fixed-width character window with overlap —
-it has no notion of a sentence, a paragraph or a heading, so a chunk boundary lands mid-word as
-readily as anywhere else. This is the single largest constraint on retrieval quality in the
-system, and no amount of reranking above it recovers what a bad split destroyed.
+**Status: ~35% — chunking divided into steps, 7.1 next.** The embedding and indexing half is
+real; the chunking half is not. `_split_text` in `app/application/commands/ingest_document.py` is
+a fixed-width character window with overlap — it has no notion of a sentence, a paragraph or a
+heading, so a chunk boundary lands mid-word as readily as anywhere else. This is the single
+largest constraint on retrieval quality in the system, and no amount of reranking above it
+recovers what a bad split destroyed.
+
+The structure §19 wants now exists. Phase 5 produces typed elements, in reading order, each
+carrying the heading path of the section it sits in — so splitting on chapter, section and
+paragraph boundaries has something to split on, which it did not when the placeholder was written.
+
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 7.1 | Real token counting behind a port | M | ✅ |
+| 7.2 | Structure-aware child chunks, built from elements | L | ☐ |
+| 7.3 | Parent chunks from sections, with `parent_chunk_id` linkage | M | ☐ |
+
+### 7.1 — Token counting ✅
+
+- [x] `TokenCounterPort` in the domain, and an implementation over the `tokenizers` library
+      loading the same vocabulary as the embedding model
+- [x] Counts match what the embedding model will actually see, including its own input
+      ceiling — a chunk sized against an estimate can exceed the model's limit and be
+      silently truncated, losing the end of a passage that retrieval then cannot find
+- [x] `Chunk.token_count` stops being `len(text) // 4`
+- [x] Tests: counts agree with the model's tokenizer on known strings; the counter is
+      cached rather than rebuilt per call; a missing vocabulary fails loudly at startup
+      rather than silently producing estimates
+
+### 7.2 — Child chunks from elements
+
+- [ ] Chunking consumes `DocumentElement`s rather than flattened page text, which is the
+      dependency 5.3 deliberately left in place until headings existed
+- [ ] Split priority chapter → section → subsection → paragraph, and a sentence split only
+      where a single paragraph exceeds the ceiling on its own
+- [ ] Children 300–500 tokens, hard maximum ~700, overlap 70 (D-29)
+- [ ] Chunk types carried from element types: a table becomes a `TABLE` chunk holding its
+      rows, a figure region a `FIGURE` chunk — separate but linked, never dissolved into
+      the prose around them
+- [ ] Full §19 metadata: `heading_path`, `chapter`, `section`, `element_type`,
+      `bounding_box`, `page_start` and `page_end` from the elements the chunk came from
+- [ ] Tests: no chunk splits a word; a chunk never spans two sections; a table's rows stay
+      together; overlap is real text from the neighbouring chunk; a paragraph longer than
+      the ceiling splits on sentences rather than mid-clause
+
+### 7.3 — Parent chunks
+
+- [ ] A parent is the content under one heading, which is what `heading_path` records.
+      Loading one restores the section a fragment came from, which is what parent
+      expansion exists to do
+- [ ] Parents 800–1500 tokens; a section longer than the ceiling splits within itself
+      rather than merging with its neighbour
+- [ ] `parent_chunk_id` set on every child, so expansion has something to follow — the
+      column has existed since Phase 2 and has never been written
+- [ ] Tests: every child names a parent; a parent contains its children's text; a section
+      shorter than the floor still produces one parent rather than none; parents never
+      straddle two sections
 
 - [ ] **Child chunks 300–500 tokens, max ~700, 70 overlap; parents 800–1500** (§19, D-29) —
       currently one flat tier sized in characters, with token counts estimated as `len // 4`

@@ -170,6 +170,28 @@ class EmbeddingPort(Protocol):
         ...
 
 
+class TokenCounterPort(Protocol):
+    """Counts text in the units the embedding model works in.
+
+    Synchronous, unlike every other port here, because it is a calculation rather than a
+    journey anywhere. Making it async would put an await in front of arithmetic and force
+    the chunker — which is otherwise pure — to become async to reach it.
+    """
+
+    @property
+    def max_input_tokens(self) -> int:
+        """The most the model will read before it starts discarding the end."""
+        ...
+
+    def count(self, text: str) -> int:
+        """Tokens in `text`, excluding the markers the model adds around an input."""
+        ...
+
+    def fits(self, text: str) -> bool:
+        """Whether `text` would reach the model whole rather than truncated."""
+        ...
+
+
 class RerankerPort(Protocol):
     """Cross-encoder reranker.
 

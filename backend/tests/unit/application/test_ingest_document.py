@@ -94,6 +94,20 @@ def _make_parser(
     return parser
 
 
+class _FakeTokenCounter:
+    """Counts words. Nothing here is about tokenisation — the real counter is covered
+    against the model's own vocabulary in the infrastructure tests — and a fake keeps
+    these from needing a downloaded vocabulary to run."""
+
+    max_input_tokens = 512
+
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+    def fits(self, text: str) -> bool:
+        return self.count(text) <= self.max_input_tokens
+
+
 def _make_document_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.save_pages = AsyncMock()
@@ -130,6 +144,7 @@ def _make_use_case(
         storage=storage,
         embedder=embedder,
         parser=parser,
+        token_counter=_FakeTokenCounter(),
         embedding_model_id="test-model",
         index_version=1,
         chunk_chars=chunk_chars,

@@ -25,6 +25,7 @@ from app.domain.ports.adapters import (
     PdfParserPort,
     RerankerPort,
     StoragePort,
+    TokenCounterPort,
 )
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import (
@@ -70,6 +71,7 @@ class Container:
     pdf_parser: PdfParserPort
     ocr: OcrPort
     embedder: EmbeddingPort
+    token_counter: TokenCounterPort
     reranker: RerankerPort
     dense_retriever: DenseRetriever
     keyword_retriever: KeywordRetriever

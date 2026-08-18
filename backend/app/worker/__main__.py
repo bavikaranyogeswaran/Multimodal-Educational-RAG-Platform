@@ -165,6 +165,7 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
                 storage=container.storage,
                 embedder=container.embedder,
                 parser=container.pdf_parser,
+                token_counter=container.token_counter,
                 embedding_model_id=settings.embedding.model_id,
                 index_version=settings.embedding.index_version,
                 chunk_chars=settings.chunking.child_target_tokens * 4,
