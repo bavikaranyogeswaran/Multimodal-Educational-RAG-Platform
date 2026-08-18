@@ -12,14 +12,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from app.domain.enums import JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.models.job import ProcessingJobModel
 from app.infrastructure.database.repositories.job import SqlJobRepository
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -65,6 +62,21 @@ def _make_job(
         created_at=ts,
         updated_at=ts,
     )
+
+
+def _make_failed_model(
+    *,
+    attempt_count: int = 1,
+    max_attempts: int = 3,
+    retry_at: datetime | None = None,
+) -> ProcessingJobModel:
+    """A job that has failed once and is waiting for its next attempt."""
+    model = _make_job_model(status=JobStatus.FAILED)
+    model.attempt_count = attempt_count
+    model.max_attempts = max_attempts
+    model.failure_reason = "connection timeout"
+    model.scheduled_at = retry_at
+    return model
 
 
 def _mock_result_scalar_none() -> MagicMock:
@@ -209,3 +221,129 @@ class TestListForScope:
         stmt = session.execute.call_args[0][0]
         compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
         assert str(scope.knowledge_base_id) in compiled
+
+
+# ---------------------------------------------------------------------------
+# claim_next — retries
+# ---------------------------------------------------------------------------
+
+
+class TestClaimNextPicksUpRetries:
+    """Failed jobs return to work through the same query that finds new work.
+
+    Before this, nothing requeued them: `requeue` existed and no caller ever called it,
+    so a job that failed once stayed failed and `max_attempts` meant nothing.
+    """
+
+    async def test_a_failed_job_is_claimed(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(
+            return_value=_mock_result_scalar(_make_failed_model())
+        )
+
+        claimed = await _repo(session).claim_next(
+            job_types=frozenset({JobType.DOCUMENT_INGESTION}),
+            worker_id="w-1",
+            lease_until=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+        assert claimed is not None
+        assert claimed.status is JobStatus.RUNNING
+
+    async def test_claiming_a_failed_job_counts_the_new_attempt(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(
+            return_value=_mock_result_scalar(_make_failed_model(attempt_count=1))
+        )
+
+        claimed = await _repo(session).claim_next(
+            job_types=frozenset({JobType.DOCUMENT_INGESTION}),
+            worker_id="w-1",
+            lease_until=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+        assert claimed is not None
+        assert claimed.attempt_count == 2
+
+    async def test_a_reclaimed_job_forgets_its_previous_failure(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(
+            return_value=_mock_result_scalar(_make_failed_model())
+        )
+
+        claimed = await _repo(session).claim_next(
+            job_types=frozenset({JobType.DOCUMENT_INGESTION}),
+            worker_id="w-1",
+            lease_until=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+        assert claimed is not None
+        assert claimed.failure_reason is None
+
+    async def test_a_claimed_retry_holds_a_lease(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(
+            return_value=_mock_result_scalar(_make_failed_model())
+        )
+        lease_until = datetime.now(UTC) + timedelta(minutes=5)
+
+        claimed = await _repo(session).claim_next(
+            job_types=frozenset({JobType.DOCUMENT_INGESTION}),
+            worker_id="w-1",
+            lease_until=lease_until,
+        )
+
+        assert claimed is not None
+        assert claimed.lease_expires_at == lease_until
+
+
+class TestClaimNextQuery:
+    """What the SELECT asks for, checked through its bound parameters.
+
+    The query is PostgreSQL-specific and cannot run here, so these read the compiled
+    parameters — the same approach the retrieval security tests use.
+    """
+
+    async def _claim(self, session: AsyncMock) -> None:
+        await _repo(session).claim_next(
+            job_types=frozenset({JobType.DOCUMENT_INGESTION}),
+            worker_id="w-1",
+            lease_until=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+    async def test_both_pending_and_failed_are_sought(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result_scalar_none())
+        await self._claim(session)
+
+        params = session.execute.call_args[0][0].compile().params
+        assert JobStatus.PENDING.value in params.values()
+        assert JobStatus.FAILED.value in params.values()
+
+    async def test_a_scheduled_time_in_the_future_is_excluded(self) -> None:
+        """The backoff is enforced in the query, so a job that is not yet due is never
+        handed to a worker in the first place."""
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result_scalar_none())
+        await self._claim(session)
+
+        sql = str(session.execute.call_args[0][0])
+        assert "scheduled_at IS NULL" in sql
+        assert "scheduled_at <=" in sql
+
+    async def test_exhausted_attempts_are_excluded(self) -> None:
+        """Guards the requeue, which refuses a job with no attempts left."""
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result_scalar_none())
+        await self._claim(session)
+
+        sql = str(session.execute.call_args[0][0])
+        assert "attempt_count < processing_jobs.max_attempts" in sql
+
+    async def test_priority_still_orders_the_queue(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result_scalar_none())
+        await self._claim(session)
+
+        sql = str(session.execute.call_args[0][0])
+        assert "ORDER BY processing_jobs.priority DESC" in sql

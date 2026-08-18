@@ -24,7 +24,7 @@ from app.application.commands.ingest_document import IngestDocumentCommand, Inge
 from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
 from app.configuration.wire import build_container
-from app.domain.enums import JobType
+from app.domain.enums import DocumentStatus, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
@@ -81,9 +81,15 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
         doc = await doc_repo.get(scope, doc_id)
         if doc is None:
             raise RuntimeError(f"document {doc_id} not found")
-        processing_doc = doc.mark_processing(now=now)
-        await doc_repo.save(scope, processing_doc)
-        await session.commit()
+        # On a retry the document is already PROCESSING — it stays that way between
+        # attempts — and marking it again would be a transition from a state to itself,
+        # which the entity refuses. Nothing needs saying when nothing has changed.
+        if doc.status is DocumentStatus.PROCESSING:
+            processing_doc = doc
+        else:
+            processing_doc = doc.mark_processing(now=now)
+            await doc_repo.save(scope, processing_doc)
+            await session.commit()
 
     log.info("document_ingestion_started")
 
@@ -169,17 +175,35 @@ async def _main() -> None:
             _log.exception("job_failed", job_id=str(job.id), error=str(exc))
             now = datetime.now(UTC)
             reason = (str(exc) or "unknown error")[:500]
+            failed = job.fail(
+                reason=reason,
+                now=now,
+                backoff_base_seconds=settings.job.backoff_base_seconds,
+                backoff_max_seconds=settings.job.backoff_max_seconds,
+            )
+            _log.info(
+                "job_failed_attempt",
+                job_id=str(job.id),
+                attempt=failed.attempt_count,
+                max_attempts=failed.max_attempts,
+                status=failed.status.value,
+                retry_at=failed.scheduled_at.isoformat() if failed.scheduled_at else None,
+            )
             try:
                 doc_id = uuid.UUID(job.payload["document_id"])
                 user_id = uuid.UUID(job.payload["user_id"])
                 kb_id = uuid.UUID(job.payload["knowledge_base_id"])
                 scope = ScopeContext(user_id=user_id, knowledge_base_id=kb_id)
                 async with container.session_factory() as session:
-                    doc_repo = SqlDocumentRepository(scope, session)
-                    doc = await doc_repo.get(scope, doc_id)
-                    if doc is not None and not doc.status.is_terminal:
-                        await doc_repo.save(scope, doc.mark_failed(reason, now=now))
-                    await SqlJobRepository(session).save(job.fail(reason=reason, now=now))
+                    # The document is only failed once there will be no further attempt.
+                    # While a retry is pending it is still being processed, and saying
+                    # otherwise would show a student a failure that is about to be undone.
+                    if failed.status is JobStatus.DEAD_LETTER:
+                        doc_repo = SqlDocumentRepository(scope, session)
+                        doc = await doc_repo.get(scope, doc_id)
+                        if doc is not None and not doc.status.is_terminal:
+                            await doc_repo.save(scope, doc.mark_failed(reason, now=now))
+                    await SqlJobRepository(session).save(failed)
                     await session.commit()
             except Exception as cleanup_exc:
                 _log.error(

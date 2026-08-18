@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **Reassess** — first pass of Phase 5 complete |
+| Next step | **4.10** — lease-expiry reclaim |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -960,9 +960,77 @@ directory name is what every later step follows (A-256).
 
 Covers §7 (worker), §11, §12, §60.
 
-**Status: ~85%.** Everything on the happy path works. What is missing is recovery — a job whose
-worker dies is never reclaimed, a failed job is never retried, and deletion jobs are enqueued but
-nothing consumes them.
+**Status: ~85% — divided into steps, 4.9 next.** Everything on the happy path works. What is
+missing is recovery, and the shape of what is missing is consistent: the job entity models a
+careful retry lifecycle that nothing is connected to.
+
+`claim()` sets `attempt_count` to 1, `fail()` sends the job to `FAILED`, and nothing ever calls
+`requeue()`. So `max_attempts` is fiction — every job gets exactly one attempt — `FAILED` is
+terminal in practice with no path out, and `DEAD_LETTER` is unreachable, because reaching it
+requires a requeue to have happened first. `JobSettings` already carries `max_attempts`,
+`backoff_base_seconds` and `backoff_max_seconds`; none of the three is read by anything.
+
+Deletion is worse than incomplete. `DELETE /documents/{id}` returns 202, marks the document
+`DELETING` and enqueues a job at `INTERACTIVE` priority — the highest there is — and the worker
+claims only `DOCUMENT_INGESTION`. Retrieval is correctly blocked so nothing leaks, but the data a
+student asked to have removed stays where it was, and the status keeps reporting progress toward
+something that will never happen.
+
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 4.9 | Retry with backoff — failed jobs return to the queue until attempts are exhausted | M | ✅ |
+| 4.10 | Lease-expiry reclaim — an orphaned job becomes a failed attempt | S | ☐ |
+| 4.11 | `DELETE_DOCUMENT` consumer — remove the stored file, the cached renders, and the row | M | ☐ |
+
+4.9 comes first because reclaim routes through the retry path: building 4.10 first would mean
+building the same machinery twice.
+
+### 4.9 — Retry with backoff ✅
+
+- [x] `ProcessingJob.fail` records when the job becomes eligible again, computed as an exponential
+      backoff from `attempt_count` and clamped to `backoff_max_seconds`. A job that has used its
+      last attempt goes to `DEAD_LETTER` instead, which is what finally makes that state reachable
+- [x] `claim_next` claims `PENDING` jobs and `FAILED` jobs whose delay has elapsed and whose
+      attempts remain, requeueing then claiming in one transaction. One query rather than a
+      separate scheduler, and `FAILED` stays an observable state between attempts rather than
+      being skipped through
+- [x] The worker no longer marks a document `FAILED` on every exception. It stays `PROCESSING`
+      while a retry is pending and flips to `FAILED` only when the job dead-letters — so the
+      status a student is shown means what it says
+- [x] Tests: backoff grows with each attempt and stops at the ceiling; a job is not claimable
+      before its delay elapses and is after; the last attempt dead-letters rather than failing;
+      a dead-lettered job is never claimed again
+
+### 4.10 — Lease-expiry reclaim
+
+- [ ] `claim_next` also considers `RUNNING` jobs whose lease has expired, treating the lost
+      attempt as a failure so it re-enters 4.9's path with its attempt counted
+- [ ] Routed through `FAILED` rather than straight back to `PENDING`: a crashed worker's job *is*
+      a failed attempt, and a job that reliably kills its worker would otherwise retry for ever
+      without ever exhausting its attempts
+- [ ] Tests: a job whose lease has expired is reclaimed; one whose lease is still valid is not,
+      even while its worker is silent; a reclaimed job counts the lost attempt; repeated crashes
+      eventually dead-letter rather than looping
+
+### 4.11 — Deletion consumer
+
+- [ ] The worker claims `DELETE_DOCUMENT` alongside `DOCUMENT_INGESTION`
+- [ ] The handler removes what the database cannot reach — the stored original, and the cached
+      page renders — then deletes the row. Chunks, elements and pages follow by cascade;
+      `graph_entities.source_document_id` is `SET NULL` deliberately, because §58 preserves
+      entities that other documents also support
+- [ ] Idempotent throughout, since a retried deletion must be safe: removing an object that is
+      already gone is a success, not a failure
+- [ ] Tests: the stored file is removed; cached renders are removed; the row is gone and its
+      chunks with it; running the handler twice succeeds; a document already deleted by another
+      path does not fail the job
+
+**Not in scope, deliberately.** Index-version bumping and cache invalidation belong to Phase 16,
+where the answer cache they would invalidate is actually built — writing them now would mean
+writing them against a consumer that does not exist. Knowledge Base deletion has the same gap one
+level up: `DELETE /knowledge-bases/{id}` removes the row and relies on cascades, which leaves every
+document's stored object orphaned in R2. It is a second job type and a second step, recorded here
+so it is not mistaken for done.
 
 - [x] R2 adapter behind `StoragePort` — S3-compatible presigned URLs, private bucket,
       `{user_id}/{kb_id}/{document_id}/original.pdf` (D-08)
@@ -972,16 +1040,9 @@ nothing consumes them.
 - [x] Status lifecycle `PENDING → PROCESSING → COMPLETED → FAILED → DELETING`
 - [x] Job queue: `FOR UPDATE SKIP LOCKED`, `INTERACTIVE`/`NORMAL`/`BACKGROUND` priorities,
       heartbeat, dead-letter on attempt exhaustion
-- [ ] **Lease-expiry reclaim** — `claim_next` selects only `PENDING`, so a job orphaned by a
-      crashed worker stays `RUNNING` for ever and is never picked up again
-- [ ] **Exponential backoff on retry** — `ProcessingJob.requeue` exists and nothing calls it; a
-      failed job sits at `FAILED` with no scheduler to return it to the queue
 - [x] Separate worker process sharing domain and application code, graceful shutdown
 - [x] Status polling endpoint (per-stage progress still pending — there is one status, not a
       stage breakdown, because the stages it would report belong to phases 5–7)
-- [ ] **`DELETE_DOCUMENT` consumer** — `DELETE /documents/{id}` marks `DELETING` and enqueues the
-      job, but the worker claims only `DOCUMENT_INGESTION`, so the row and its objects are never
-      actually removed
 - [x] Security tests: upload into a foreign KB, storage-key isolation
 - [ ] Signed-URL expiry test — no endpoint issues a presigned URL yet, so there is nothing to
       expire; the adapter method exists and is unit-tested

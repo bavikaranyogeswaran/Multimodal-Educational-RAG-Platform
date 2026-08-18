@@ -1,21 +1,48 @@
 """Background job entity.
 
 A job is the durability wrapper around async work. A worker claims it (acquires an
-exclusive lease), then either completes it or fails it. If the attempt limit is reached
-the job moves to dead-letter; otherwise it sits as FAILED until requeued by a scheduler.
-Heartbeats extend the lease while work is in progress so a crashed worker can be detected
-without a fixed timeout that would be too short for slow work.
+exclusive lease), then either completes it or fails it. Heartbeats extend the lease while
+work is in progress so a crashed worker can be detected without a fixed timeout that would
+be too short for slow work.
+
+Failure is not the end of a job unless its attempts are spent. A failed attempt records
+when the job becomes eligible again, and the interval grows with each attempt: whatever
+went wrong is more likely to still be true a second later than a minute later, and hammering
+a provider that is already struggling is how a transient fault becomes a sustained one. Once
+the attempts are gone the job dead-letters, which is terminal and deliberate — something has
+to stop, and stopping loudly is better than retrying quietly for ever.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from app.domain.enums import JobPriority, JobStatus, JobType
 from app.domain.errors import IllegalTransitionError, InvariantViolationError
+
+
+def backoff_seconds(attempt_count: int, *, base_seconds: int, max_seconds: int) -> int:
+    """How long to wait before the attempt after this one.
+
+    Doubles with each attempt already made and stops at the ceiling. Growth is what makes
+    a retry useful — a fault that is still present a second later may well be gone a
+    minute later — and the ceiling is what stops the last attempt of a long budget being
+    scheduled beyond anyone's patience.
+
+    Deliberately without jitter. One worker processes one job at a time here, so there is
+    no thundering herd to spread out, and a predictable delay is far easier to reason
+    about when reading why a job ran when it did.
+    """
+    if attempt_count <= 0:
+        return base_seconds
+    # Shifted rather than raised to a power, so the result is an integer by construction.
+    # The exponent is capped first: past a certain attempt count the doubling would build
+    # an enormous number that the ceiling below immediately discards.
+    doublings = min(attempt_count - 1, 32)
+    return min(base_seconds << doublings, max_seconds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,25 +141,62 @@ class ProcessingJob:
             updated_at=now,
         )
 
-    def fail(self, *, reason: str, now: datetime) -> ProcessingJob:
-        """Record a failed attempt.
+    def fail(
+        self,
+        *,
+        reason: str,
+        now: datetime,
+        backoff_base_seconds: int,
+        backoff_max_seconds: int,
+    ) -> ProcessingJob:
+        """Record a failed attempt, and say when the job may be tried again.
 
-        Moves to DEAD_LETTER when this attempt exhausts the budget; otherwise FAILED.
+        Moves to DEAD_LETTER when this attempt exhausts the budget; otherwise FAILED with
+        a `scheduled_at` in the future. A dead-lettered job carries no schedule, because
+        there is nothing left to schedule.
+
+        The backoff bounds are supplied rather than known here: they are calibration
+        values, and a domain that hardcoded them could not be recalibrated.
         """
         if not reason.strip():
             raise InvariantViolationError("failure reason must not be blank")
-        next_status = (
-            JobStatus.DEAD_LETTER
-            if self.attempt_count >= self.max_attempts
-            else JobStatus.FAILED
-        )
+
+        if self.attempt_count >= self.max_attempts:
+            return self._transition(
+                JobStatus.DEAD_LETTER,
+                lease_expires_at=None,
+                last_heartbeat_at=None,
+                scheduled_at=None,
+                failure_reason=reason,
+                updated_at=now,
+            )
+
         return self._transition(
-            next_status,
+            JobStatus.FAILED,
             lease_expires_at=None,
             last_heartbeat_at=None,
+            scheduled_at=now
+            + timedelta(
+                seconds=backoff_seconds(
+                    self.attempt_count,
+                    base_seconds=backoff_base_seconds,
+                    max_seconds=backoff_max_seconds,
+                )
+            ),
             failure_reason=reason,
             updated_at=now,
         )
+
+    @property
+    def attempts_remain(self) -> bool:
+        """Whether another attempt is permitted after the ones already made."""
+        return self.attempt_count < self.max_attempts
+
+    def is_retryable_at(self, now: datetime) -> bool:
+        """Whether this failed job is ready to be tried again."""
+        if self.status is not JobStatus.FAILED or not self.attempts_remain:
+            return False
+        return self.scheduled_at is None or self.scheduled_at <= now
 
     def requeue(self, *, now: datetime) -> ProcessingJob:
         """Return a FAILED job to the queue for another attempt."""

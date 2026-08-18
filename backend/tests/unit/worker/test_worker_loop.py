@@ -222,3 +222,65 @@ class TestRunJobFailure:
             pytest.raises(RuntimeError, match="not found"),
         ):
             await _run_job(container, settings, job)
+
+
+# ---------------------------------------------------------------------------
+# Retry-aware document status
+# ---------------------------------------------------------------------------
+
+
+def _failing_container(doc: Document) -> tuple[MagicMock, list[Document], AsyncMock]:
+    """A container whose storage raises, so _run_job always fails."""
+    session = AsyncMock()
+    session.commit = AsyncMock()
+
+    saved: list[Document] = []
+    doc_repo = AsyncMock()
+    doc_repo.get = AsyncMock(return_value=doc)
+    doc_repo.save = AsyncMock(side_effect=lambda _scope, d: saved.append(d))
+
+    storage = AsyncMock()
+    storage.get = AsyncMock(side_effect=RuntimeError("storage unreachable"))
+
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    container = MagicMock()
+    container.session_factory = MagicMock(return_value=ctx)
+    container.storage = storage
+    container.embedder = AsyncMock()
+    container.pdf_parser = AsyncMock()
+    return container, saved, doc_repo
+
+
+class TestDocumentStatusAcrossRetries:
+    async def test_an_already_processing_document_is_not_marked_again(self) -> None:
+        """A retry finds the document already PROCESSING, and a transition from a state
+        to itself is refused by the entity — so it must not be attempted."""
+        doc = _make_doc(status=DocumentStatus.PROCESSING)
+        container, saved, doc_repo = _failing_container(doc)
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo),
+            patch("app.worker.__main__.SqlChunkRepository"),
+            patch("app.worker.__main__.SqlJobRepository"),
+            pytest.raises(RuntimeError, match="storage unreachable"),
+        ):
+            await _run_job(container, _make_settings(), _make_job())
+
+        assert not any(d.status is DocumentStatus.PROCESSING for d in saved)
+
+    async def test_a_pending_document_is_marked_processing(self) -> None:
+        doc = _make_doc(status=DocumentStatus.PENDING)
+        container, saved, doc_repo = _failing_container(doc)
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo),
+            patch("app.worker.__main__.SqlChunkRepository"),
+            patch("app.worker.__main__.SqlJobRepository"),
+            pytest.raises(RuntimeError),
+        ):
+            await _run_job(container, _make_settings(), _make_job())
+
+        assert saved[0].status is DocumentStatus.PROCESSING

@@ -42,7 +42,12 @@ class SqlJobRepository:
         worker_id: str,
         lease_until: datetime,
     ) -> ProcessingJob | None:
-        """Atomically claim the highest-priority pending job of an eligible type.
+        """Atomically claim the highest-priority claimable job of an eligible type.
+
+        Claimable means either never yet attempted, or failed with attempts remaining and
+        its backoff elapsed. Retries are found by the same query that finds new work
+        rather than by a separate scheduler — one query, one transaction, and no window
+        in which a job is due but nothing has noticed.
 
         Uses SELECT ... FOR UPDATE SKIP LOCKED so concurrent workers each claim a
         distinct row without blocking each other. PostgreSQL-specific.
@@ -51,8 +56,17 @@ class SqlJobRepository:
         stmt = (
             select(ProcessingJobModel)
             .where(
-                ProcessingJobModel.status == JobStatus.PENDING.value,
                 ProcessingJobModel.job_type.in_([jt.value for jt in job_types]),
+                sa.or_(
+                    ProcessingJobModel.status == JobStatus.PENDING.value,
+                    sa.and_(
+                        ProcessingJobModel.status == JobStatus.FAILED.value,
+                        # Guards the requeue below, which refuses a job with no attempts
+                        # left. A dead-lettered job is already excluded by its status;
+                        # this also excludes one that reached the limit some other way.
+                        ProcessingJobModel.attempt_count < ProcessingJobModel.max_attempts,
+                    ),
+                ),
                 sa.or_(
                     ProcessingJobModel.scheduled_at.is_(None),
                     ProcessingJobModel.scheduled_at <= now,
@@ -65,7 +79,14 @@ class SqlJobRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             return None
-        claimed = _to_entity(row).claim(lease_until=lease_until, now=now)
+
+        job = _to_entity(row)
+        # A failed job returns to the queue before it can be claimed, because claiming is
+        # a transition out of PENDING. Both moves land in the same transaction, so no
+        # observer sees the job sitting requeued but unclaimed.
+        if job.status is JobStatus.FAILED:
+            job = job.requeue(now=now)
+        claimed = job.claim(lease_until=lease_until, now=now)
         await self._session.merge(_to_model(claimed))
         return claimed
 
