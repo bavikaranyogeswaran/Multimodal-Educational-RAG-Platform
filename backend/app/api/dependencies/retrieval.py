@@ -19,6 +19,7 @@ from app.application.queries.retrieve_evidence import RetrievalOrchestrator
 from app.configuration.container import Container
 from app.configuration.settings import get_settings
 from app.domain.retrieval.classifier import QueryClassifier
+from app.domain.retrieval.compression import EvidenceCompressor
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.expansion import ExpansionRules
 from app.domain.retrieval.fusion import RRFusion
@@ -65,5 +66,10 @@ async def get_retrieval_orchestrator(
             max_items=settings.evidence.max_items,
             relative_score_margin=settings.evidence.relative_score_margin,
             token_budget=settings.evidence.context_token_budget,
+        ),
+        compressor=EvidenceCompressor(
+            container.token_counter.count,
+            token_budget=settings.evidence.context_token_budget,
+            generative_enabled=settings.evidence.generative_compression_enabled,
         ),
     )

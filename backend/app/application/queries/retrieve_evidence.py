@@ -1,7 +1,7 @@
 """Use case: orchestrate the full retrieval pipeline for a student query.
 
 Classify → rewrite → plan → expand queries → search → fuse → rerank → prune → expand
-parents → select.
+parents → select → compress.
 The result is a ranked, relabelled evidence sequence ready for the prompt.
 
 How many passages come back is decided at the end, from the class the query was given
@@ -23,6 +23,7 @@ from app.domain.models.entities import ConversationTurn
 from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, RerankerPort
 from app.domain.ports.repositories import ChunkRepository
 from app.domain.retrieval.classifier import QueryClassifier
+from app.domain.retrieval.compression import EvidenceCompressor
 from app.domain.retrieval.entities import Evidence, RetrievalFilters, RetrievalPlan
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.expansion import ExpansionReason, ExpansionRules
@@ -65,6 +66,7 @@ class RetrievalOrchestrator:
         expansion_rules: ExpansionRules,
         chunks: ChunkRepository,
         selector: EvidenceSelector,
+        compressor: EvidenceCompressor,
     ) -> None:
         self._classifier = classifier
         self._rewriter = rewriter
@@ -82,6 +84,7 @@ class RetrievalOrchestrator:
         self._expansion_rules = expansion_rules
         self._chunks = chunks
         self._selector = selector
+        self._compressor = compressor
 
     async def execute(self, query: RetrieveEvidenceQuery) -> Sequence[Evidence]:
         with StageTimer("classify") as _timer:
@@ -194,7 +197,18 @@ class RetrievalOrchestrator:
             considered=len(complete),
             selected=len(selected),
         )
-        return selected
+        # Last, on the passages actually being sent. Shortening something that was never
+        # going to be sent is wasted, and shortening before the count would let a
+        # marginal passage in on the strength of a cut that discards its relevant half.
+        with StageTimer("compress") as _timer:
+            fitted = self._compressor.compress(selected, query=standalone)
+        _log.info(
+            "retrieval_stage",
+            stage="compress",
+            elapsed_ms=_timer.elapsed_ms(),
+            compressed=sum(1 for e in fitted if e.compressed),
+        )
+        return fitted
 
     # -----------------------------------------------------------------------
 

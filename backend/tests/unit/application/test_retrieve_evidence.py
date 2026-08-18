@@ -16,6 +16,7 @@ from app.application.queries.retrieve_evidence import RetrievalOrchestrator, Ret
 from app.domain.enums import MessageRole, QueryClass, RetrieverKind
 from app.domain.models.entities import ConversationTurn
 from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters
+from app.domain.retrieval.compression import EvidenceCompressor
 from app.domain.retrieval.expansion import ExpansionRules
 from app.domain.retrieval.pruning import EvidencePruner
 from app.domain.retrieval.selector import EvidenceSelector
@@ -133,6 +134,10 @@ def _make_orchestrator(
             max_children_per_parent=99,
             max_chunks_per_page=99,
             max_chunks_per_document=99,
+        ),
+        compressor=EvidenceCompressor(
+            lambda text: len(text.split()),
+            token_budget=100_000,
         ),
         selector=EvidenceSelector(
             lambda text: len(text.split()),
@@ -461,6 +466,7 @@ class TestStageTimingLogs:
         "prune",
         "expand_parents",
         "select",
+        "compress",
     )
 
     async def test_every_stage_emits_a_retrieval_stage_event(self) -> None:

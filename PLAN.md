@@ -29,10 +29,10 @@ system design specification.
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
 | In progress | **Phase 9** — ~95%, four field-level gaps left |
 | Mostly built | Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
-| Foundations only | Phase 10 (~55%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
+| Foundations only | Phase 10 (~70%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 1,922 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
-| Next step | **10.4** — extractive compression; **7.4** still waits on a textbook PDF |
+| Tests | 1,971 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
+| Next step | **10.5** — the context builder, which is also what unblocks Phase 11; **7.4** still waits on a textbook PDF |
 | Last updated | 18 August 2026 (audited against the codebase; integration suite run) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1449,10 +1449,11 @@ remaining stages — which is why the checkbox count reads lower than the percen
 
 Covers §30, §31, §32, §33, §36, §37.
 
-**Status: ~55% — 10.1 to 10.3 done, 10.4 next.** The evidence list is sized by what the
-question is, freed of passages that repeat each other, and fragments that cannot be read
-alone are replaced by the sections holding them. What remains is cutting what will not fit
-and assembling the prompt.
+**Status: ~70% — 10.1 to 10.4 done, 10.5 next.** Evidence is sized by the question, freed of
+repetition, expanded where a fragment cannot stand alone, and cut to fit without losing the
+sentences that carry the claim. What remains is the prompt: twelve slots in a fixed order,
+a budget that sheds the least important first, and instructions that are structured rather
+than a wall of text.
 
 Retrieval currently ends at reranking and hands the surviving chunks to the model as raw
 text. Everything between those two points is this phase: how many passages to send, which
@@ -1467,7 +1468,7 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 | 10.1 | Dynamic evidence selection, sized by query class | M | ✅ |
 | 10.2 | Deduplication and diversity caps | M | ✅ |
 | 10.3 | Parent expansion, on the five conditions only | L | ✅ |
-| 10.4 | Extractive compression | L | ☐ |
+| 10.4 | Extractive compression | L | ✅ |
 | 10.5 | Context builder — twelve slots and the token budget | L | ☐ |
 | 10.6 | Structured instruction handling | M | ☐ |
 
@@ -1528,20 +1529,25 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 - [x] Tests: 26 on the rules, 7 on the loading, 4 on the batch query, and a new
       `expand_parents` stage timed alongside the rest
 
-### 10.4 — Extractive compression
+### 10.4 — Extractive compression ✅
 
-- [ ] Sentence selection rather than generation (FR-EVD-11). `Chunk.with_compressed_text`
-      already exists for this and has never been called
-- [ ] Preserves negations, conditions, qualifiers, numerical values, units, table headers,
-      figure labels and citation offsets (FR-EVD-12) — the parts whose loss changes the
-      meaning rather than shortening it
-- [ ] Tables keep title, headers, units and the relevant rows (FR-EVD-13); graph evidence
-      keeps the relationship, the passage and its provenance (FR-EVD-14)
-- [ ] Generative compression is flag-gated and off, because it distorts values and weakens
-      citation alignment (FR-EVD-15)
-- [ ] Property tests: compression never drops a number, a unit or a negation. A dropped
-      "not" inverts an answer while leaving it fluent, which is the failure that cannot be
-      spotted by reading the output
+- [x] `EvidenceCompressor` selects whole sentences from the original, so what is sent is
+      word for word in the document and can therefore be cited (FR-EVD-11).
+      `Chunk.with_compressed_text` has its first caller
+- [x] Sentences carrying a negation, a number or a condition are kept whatever they score,
+      and past the budget if it comes to that. Units need no rule: they sit in the sentence
+      with their number (FR-EVD-12, A-426, A-427)
+- [x] Tables are cut by row, never by sentence, and keep their title and headings
+      unconditionally (FR-EVD-13). Formulas and captions are indivisible and go whole
+- [~] Graph evidence would be cut as prose. Nothing produces any until Phase 12, so the
+      rule is unwritten rather than untested (FR-EVD-14, A-433)
+- [x] Generative compression raises at construction rather than switching on, which records
+      the decision where it will be read instead of leaving an unexercised path that
+      rewrites evidence when flipped (FR-EVD-15, A-428)
+- [x] Property tests across six claims and four budgets: no number and no negation present
+      in the source is ever absent from the result
+- [x] The sentence splitter is now shared with the chunker, so the two cannot diverge into
+      cutting inside what the other treats as indivisible (A-430)
 
 ### 10.5 — Context builder
 

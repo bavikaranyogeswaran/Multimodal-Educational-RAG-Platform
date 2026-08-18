@@ -36,7 +36,6 @@ restatement, so a match on it points somewhere the passage actually exists.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
@@ -44,6 +43,7 @@ from app.domain.documents.entities import DocumentElement
 from app.domain.enums import ChunkType, ElementType
 from app.domain.errors import InvariantViolationError
 from app.domain.invariants import require_positive
+from app.domain.sentences import split_sentences
 from app.domain.values import BoundingBox, HeadingPath
 
 #: Element types that become chunks of their own rather than joining the prose around
@@ -57,11 +57,6 @@ _STANDALONE: dict[ElementType, ChunkType] = {
     ElementType.FORMULA: ChunkType.FORMULA,
 }
 
-#: A sentence ends at terminal punctuation followed by space and a capital or digit.
-#: Deliberately conservative: it declines to split "Fig. 4 shows" or "0.91 accuracy",
-#: because a missed boundary merely makes a chunk longer while a wrong one cuts a
-#: sentence in half.
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,7 +279,7 @@ class Chunker:
 
     def _split_sentences(self, text: str) -> list[str]:
         """Group sentences into pieces that fit, never breaking one in half."""
-        return self._pack(_SENTENCE_END.split(text), joiner=" ")
+        return self._pack(split_sentences(text), joiner=" ")
 
     def _split_lines(self, text: str) -> list[str]:
         return self._pack(text.splitlines(), joiner="\n")
