@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,8 @@ from app.domain.enums import JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.models.job import ProcessingJobModel
+
+_log = structlog.get_logger(__name__)
 
 
 class SqlJobRepository:
@@ -89,6 +92,59 @@ class SqlJobRepository:
         claimed = job.claim(lease_until=lease_until, now=now)
         await self._session.merge(_to_model(claimed))
         return claimed
+
+    async def reclaim_expired(
+        self,
+        *,
+        job_types: frozenset[JobType],
+        now: datetime,
+        backoff_base_seconds: int,
+        backoff_max_seconds: int,
+    ) -> Sequence[ProcessingJob]:
+        """Fail every job whose lease has lapsed, so the retry path can pick it up.
+
+        Kept separate from claiming rather than folded into it. A reclaimed job is not
+        immediately claimable — it has just failed, so it waits out a backoff like any
+        other failure — and a method called `claim_next` that wrote to the database and
+        then returned nothing would be a surprising thing to read. Backoff matters here
+        precisely because the job may be what killed the worker: retrying it instantly
+        would reproduce the crash as fast as the machine allows.
+
+        Uses SELECT ... FOR UPDATE SKIP LOCKED so two workers sweeping at once do not
+        both reclaim the same job. PostgreSQL-specific.
+        """
+        stmt = (
+            select(ProcessingJobModel)
+            .where(
+                ProcessingJobModel.status == JobStatus.RUNNING.value,
+                ProcessingJobModel.job_type.in_([jt.value for jt in job_types]),
+                ProcessingJobModel.lease_expires_at.is_not(None),
+                ProcessingJobModel.lease_expires_at < now,
+            )
+            .with_for_update(skip_locked=True)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+
+        reclaimed: list[ProcessingJob] = []
+        for row in rows:
+            job = _to_entity(row).fail(
+                reason="lease expired — the worker holding this job stopped responding",
+                now=now,
+                backoff_base_seconds=backoff_base_seconds,
+                backoff_max_seconds=backoff_max_seconds,
+            )
+            await self._session.merge(_to_model(job))
+            reclaimed.append(job)
+
+        if reclaimed:
+            _log.warning(
+                "jobs_reclaimed",
+                count=len(reclaimed),
+                dead_lettered=sum(
+                    1 for job in reclaimed if job.status is JobStatus.DEAD_LETTER
+                ),
+            )
+        return reclaimed
 
     async def list_for_scope(self, scope: ScopeContext) -> Sequence[ProcessingJob]:
         """Jobs whose payload carries this knowledge base id. PostgreSQL-specific."""

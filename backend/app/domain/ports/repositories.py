@@ -263,6 +263,29 @@ class JobRepository(Protocol):
         """
         ...
 
+    async def reclaim_expired(
+        self,
+        *,
+        job_types: frozenset[JobType],
+        now: datetime,
+        backoff_base_seconds: int,
+        backoff_max_seconds: int,
+    ) -> Sequence[ProcessingJob]:
+        """Return jobs whose worker stopped renewing their lease to the queue.
+
+        A lease is a promise to keep working, refreshed while the work continues. One
+        that lapses means the worker holding it is gone — killed, crashed, or cut off —
+        and the job it was holding will otherwise sit as RUNNING for ever, because no
+        worker claims a job that another one appears to be doing.
+
+        The lapse is recorded as a failed attempt rather than as a fresh start. It was an
+        attempt, and it consumed one: a job that reliably kills whatever picks it up
+        would otherwise be retried for ever, always looking untried.
+
+        Returns the jobs that were reclaimed, so a caller can say what happened.
+        """
+        ...
+
     async def list_for_scope(self, scope: ScopeContext) -> Sequence[ProcessingJob]:
         """All jobs associated with this user and Knowledge Base."""
         ...

@@ -149,11 +149,26 @@ async def _main() -> None:
 
     _log.info("worker_started", worker_id=worker_id)
 
+    claimable = frozenset({JobType.DOCUMENT_INGESTION})
+
     while not shutdown.is_set():
-        # Claim the highest-priority pending ingestion job
+        # Before looking for work, return anything a dead worker was holding. A lease is
+        # a promise to keep going, refreshed while the work continues; one that lapsed
+        # means whoever made it is gone, and the job would otherwise sit as RUNNING for
+        # ever because no worker takes a job another appears to be doing.
+        async with container.session_factory() as session:
+            await SqlJobRepository(session).reclaim_expired(
+                job_types=claimable,
+                now=datetime.now(UTC),
+                backoff_base_seconds=settings.job.backoff_base_seconds,
+                backoff_max_seconds=settings.job.backoff_max_seconds,
+            )
+            await session.commit()
+
+        # Claim the highest-priority claimable ingestion job
         async with container.session_factory() as session:
             job = await SqlJobRepository(session).claim_next(
-                job_types=frozenset({JobType.DOCUMENT_INGESTION}),
+                job_types=claimable,
                 worker_id=worker_id,
                 lease_until=datetime.now(UTC) + timedelta(seconds=settings.job.lease_seconds),
             )

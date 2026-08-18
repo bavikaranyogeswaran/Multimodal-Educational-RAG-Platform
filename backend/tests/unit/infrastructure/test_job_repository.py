@@ -12,6 +12,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
+from sqlalchemy.dialects import postgresql
+
 from app.domain.enums import JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
@@ -77,6 +79,29 @@ def _make_failed_model(
     model.failure_reason = "connection timeout"
     model.scheduled_at = retry_at
     return model
+
+
+def _make_running_model(
+    *,
+    attempt_count: int = 1,
+    max_attempts: int = 3,
+    lease_expires_at: datetime | None = None,
+) -> ProcessingJobModel:
+    """A job a worker is holding, with whatever lease the caller wants to test."""
+    model = _make_job_model(status=JobStatus.RUNNING)
+    model.attempt_count = attempt_count
+    model.max_attempts = max_attempts
+    model.lease_expires_at = lease_expires_at or (datetime.now(UTC) + timedelta(minutes=5))
+    model.last_heartbeat_at = datetime.now(UTC)
+    return model
+
+
+def _mock_result_scalars(rows: list[object]) -> MagicMock:
+    scalars = MagicMock()
+    scalars.all.return_value = rows
+    result = MagicMock()
+    result.scalars.return_value = scalars
+    return result
 
 
 def _mock_result_scalar_none() -> MagicMock:
@@ -347,3 +372,129 @@ class TestClaimNextQuery:
 
         sql = str(session.execute.call_args[0][0])
         assert "ORDER BY processing_jobs.priority DESC" in sql
+
+
+# ---------------------------------------------------------------------------
+# Lease-expiry reclaim
+# ---------------------------------------------------------------------------
+
+
+def _expired(**kwargs: object) -> ProcessingJobModel:
+    kwargs.setdefault("lease_expires_at", datetime.now(UTC) - timedelta(minutes=1))
+    return _make_running_model(**kwargs)  # type: ignore[arg-type]
+
+
+async def _reclaim(session: AsyncMock, **overrides: object) -> list[ProcessingJob]:
+    kwargs: dict[str, object] = {
+        "job_types": frozenset({JobType.DOCUMENT_INGESTION}),
+        "now": datetime.now(UTC),
+        "backoff_base_seconds": 10,
+        "backoff_max_seconds": 900,
+    }
+    kwargs.update(overrides)
+    return list(await _repo(session).reclaim_expired(**kwargs))  # type: ignore[arg-type]
+
+
+def _returning(rows: list[object]) -> AsyncMock:
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_mock_result_scalars(rows))
+    return session
+
+
+class TestReclaimExpired:
+    """A job whose worker died would otherwise sit as RUNNING for ever, because no
+    worker claims a job that another one appears to be doing."""
+
+    async def test_an_expired_job_is_reclaimed(self) -> None:
+        reclaimed = await _reclaim(_returning([_expired()]))
+
+        assert len(reclaimed) == 1
+        assert reclaimed[0].status is JobStatus.FAILED
+
+    async def test_the_lost_attempt_is_counted(self) -> None:
+        """It was an attempt and it consumed one. A job that reliably kills whatever
+        picks it up would otherwise retry for ever, always looking untried."""
+        reclaimed = await _reclaim(_returning([_expired(attempt_count=2)]))
+
+        assert reclaimed[0].attempt_count == 2
+
+    async def test_a_reclaimed_job_waits_out_a_backoff(self) -> None:
+        """The job may be what killed the worker, so retrying it instantly would
+        reproduce the crash as fast as the machine allows."""
+        now = datetime.now(UTC)
+        reclaimed = await _reclaim(_returning([_expired()]), now=now)
+
+        assert reclaimed[0].scheduled_at is not None
+        assert reclaimed[0].scheduled_at > now
+
+    async def test_the_reason_says_what_happened(self) -> None:
+        reclaimed = await _reclaim(_returning([_expired()]))
+
+        assert reclaimed[0].failure_reason is not None
+        assert "lease expired" in reclaimed[0].failure_reason
+
+    async def test_the_lease_is_released(self) -> None:
+        reclaimed = await _reclaim(_returning([_expired()]))
+
+        assert reclaimed[0].lease_expires_at is None
+
+    async def test_a_last_attempt_dead_letters_rather_than_looping(self) -> None:
+        """Repeated crashes have to stop somewhere, and stopping loudly beats retrying
+        quietly for ever."""
+        reclaimed = await _reclaim(
+            _returning([_expired(attempt_count=3, max_attempts=3)])
+        )
+
+        assert reclaimed[0].status is JobStatus.DEAD_LETTER
+        assert reclaimed[0].scheduled_at is None
+
+    async def test_nothing_expired_reclaims_nothing(self) -> None:
+        session = _returning([])
+
+        assert await _reclaim(session) == []
+        session.merge.assert_not_called()
+
+    async def test_every_expired_job_is_reclaimed(self) -> None:
+        reclaimed = await _reclaim(_returning([_expired() for _ in range(3)]))
+
+        assert len(reclaimed) == 3
+
+
+class TestReclaimQuery:
+    """What the sweep asks for, read from the compiled statement."""
+
+    async def test_only_running_jobs_are_swept(self) -> None:
+        session = _returning([])
+        await _reclaim(session)
+
+        params = session.execute.call_args[0][0].compile().params
+        assert JobStatus.RUNNING.value in params.values()
+
+    async def test_a_valid_lease_is_not_swept(self) -> None:
+        """A worker that is quiet but within its lease is still working. Sweeping it
+        would take the job away from a process that is about to finish it."""
+        session = _returning([])
+        await _reclaim(session)
+
+        sql = str(session.execute.call_args[0][0])
+        assert "lease_expires_at <" in sql
+        assert "lease_expires_at IS NOT NULL" in sql
+
+    async def test_the_sweep_skips_rows_another_worker_holds(self) -> None:
+        """Compiled against PostgreSQL: SKIP LOCKED is dialect-specific, and the default
+        dialect silently drops it, which would make this assertion pass on a query that
+        never had it."""
+        session = _returning([])
+        await _reclaim(session)
+
+        sql = str(
+            session.execute.call_args[0][0].compile(dialect=postgresql.dialect())
+        )
+        assert "FOR UPDATE SKIP LOCKED" in sql
+
+    async def test_only_eligible_job_types_are_swept(self) -> None:
+        session = _returning([])
+        await _reclaim(session, job_types=frozenset({JobType.DELETE_DOCUMENT}))
+
+        params = session.execute.call_args[0][0].compile().params
+        assert [JobType.DELETE_DOCUMENT.value] in params.values()

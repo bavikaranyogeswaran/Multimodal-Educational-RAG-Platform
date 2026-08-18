@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **4.10** — lease-expiry reclaim |
+| Next step | **4.11** — deletion consumer |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -979,7 +979,7 @@ something that will never happen.
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 4.9 | Retry with backoff — failed jobs return to the queue until attempts are exhausted | M | ✅ |
-| 4.10 | Lease-expiry reclaim — an orphaned job becomes a failed attempt | S | ☐ |
+| 4.10 | Lease-expiry reclaim — an orphaned job becomes a failed attempt | S | ✅ |
 | 4.11 | `DELETE_DOCUMENT` consumer — remove the stored file, the cached renders, and the row | M | ☐ |
 
 4.9 comes first because reclaim routes through the retry path: building 4.10 first would mean
@@ -1001,17 +1001,22 @@ building the same machinery twice.
       before its delay elapses and is after; the last attempt dead-letters rather than failing;
       a dead-lettered job is never claimed again
 
-### 4.10 — Lease-expiry reclaim
+### 4.10 — Lease-expiry reclaim ✅
 
-- [ ] `claim_next` also considers `RUNNING` jobs whose lease has expired, treating the lost
+- [x] `claim_next` also considers `RUNNING` jobs whose lease has expired, treating the lost
       attempt as a failure so it re-enters 4.9's path with its attempt counted
-- [ ] Routed through `FAILED` rather than straight back to `PENDING`: a crashed worker's job *is*
+- [x] Routed through `FAILED` rather than straight back to `PENDING`: a crashed worker's job *is*
       a failed attempt, and a job that reliably kills its worker would otherwise retry for ever
       without ever exhausting its attempts
-- [ ] Tests: a job whose lease has expired is reclaimed; one whose lease is still valid is not,
+- [x] Tests: a job whose lease has expired is reclaimed; one whose lease is still valid is not,
       even while its worker is silent; a reclaimed job counts the lost attempt; repeated crashes
       eventually dead-letter rather than looping
 
+- [x] Implemented as its own sweep, `reclaim_expired`, rather than folded into
+      `claim_next`. A reclaimed job is not immediately claimable — it has just failed, so
+      it waits out a backoff like any other failure — and a method called `claim_next`
+      that wrote to the database and then returned nothing would be a surprising thing to
+      read. The worker sweeps once per poll before claiming
 ### 4.11 — Deletion consumer
 
 - [ ] The worker claims `DELETE_DOCUMENT` alongside `DOCUMENT_INGESTION`
