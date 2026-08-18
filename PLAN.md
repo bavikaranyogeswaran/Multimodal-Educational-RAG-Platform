@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 5 (~70%) · Phase 7 (~75%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 6, 10–16, 18–20 |
 | Tests | 1,833 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **7.4** waits on a textbook PDF; **7.6** is blocked until the worker can reach Postgres (A-388) |
+| Next step | **7.6** — full ingestion, now unblocked; **7.4** still waits on a textbook PDF |
 | Last updated | 18 August 2026 (chunking complete through step 7.3) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1311,12 +1311,15 @@ failure that says nothing about the network (A-390).
 
 ### 7.6 — Full ingestion against the real database and object store
 
-- [ ] **First:** give the worker an event loop `psycopg` will run on. It calls plain
-      `asyncio.run`, which on Windows means the loop `psycopg` refuses outright, so every
-      database call fails before reaching the network (A-388). The same one-line fix belongs in
-      the environment verifier, whose Postgres check has never been able to pass (A-390), and
-      the API needs it too rather than relying on `--reload` to supply it (A-389)
-- [ ] Needs tethering, since home Wi-Fi blocks Postgres, and R2 credentials
+- [x] **Done ahead of the rest:** every process that starts its own loop now chooses one
+      `psycopg` will run on, through `app/runtime.py` — the worker and the environment
+      verifier. The API cannot choose, because uvicorn passes its own factory and ignores any
+      policy set around it, so startup checks the loop it was handed and refuses to serve on a
+      loop that cannot reach the database (A-396, A-397). The suite itself had been running on
+      that unusable loop throughout (A-398)
+- [x] Postgres answers: 17.6, with `vector`, `rum`, `pg_cron` and `pg_trgm` all present. What
+      looked like a network failure was this fault the whole time (A-400)
+- [ ] R2 credentials are still unset, and Ollama is not installed — 7.7 needs it
 - [ ] Upload → job enqueued → worker claims it → pages, elements, chunks and embeddings persisted
       → document reaches `COMPLETED`
 - [ ] First opportunity to run the integration suite, unrun since it was written (A-283)

@@ -4,6 +4,11 @@ The presentation layer only. Routes, middleware and error mapping are wired here
 retrieval, OCR and provider-specific logic live behind the domain ports.
 
 Run with:  uv run uvicorn app.main:app --reload
+
+On Windows the --reload matters for more than reloading. Uvicorn picks the proactor
+event loop unless it is running with a subprocess, and psycopg refuses to open an async
+connection on that loop, so a server started without it reaches startup and then fails
+every query. Startup checks for this rather than letting it surface one request later.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from app.configuration.settings import get_settings
 from app.configuration.wire import build_container
 from app.infrastructure.auth.jwks import JwksClient
 from app.infrastructure.observability.structlog_setup import configure_structlog
+from app.runtime import explain_unusable_loop, running_loop_reaches_postgres
 
 API_PREFIX = "/api/v1"
 _settings = get_settings()
@@ -44,6 +50,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     settings = get_settings()
     configure_structlog(settings)
+
+    # Checked rather than chosen: the server starts the loop and hands it over, so this
+    # is the first moment the application can see which one it got. Saying so now costs
+    # a startup rather than every query failing later with an error that describes the
+    # loop and not how it came to be selected.
+    if not running_loop_reaches_postgres():
+        raise RuntimeError(explain_unusable_loop())
+
     _app.state.container = build_container(settings)
     _app.state.jwks_client = JwksClient(
         url=settings.supabase.jwks_url,

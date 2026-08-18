@@ -1,9 +1,21 @@
-"""Shared pytest fixtures."""
+"""Shared pytest fixtures, and the event loop every test runs on.
+
+The loop is settled here, before pytest-asyncio creates one, because the application
+cannot run on the loop Windows would otherwise supply: psycopg refuses it outright for
+async connections. Tests that ran on a loop the application refuses would be exercising
+an arrangement that cannot exist, and the startup check in the API would fail against
+the suite while passing in every configuration anyone actually runs.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections.abc import Iterator
 from pathlib import Path
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import pytest
 from starlette.testclient import TestClient

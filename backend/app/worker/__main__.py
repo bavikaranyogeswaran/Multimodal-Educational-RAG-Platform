@@ -39,6 +39,7 @@ from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
+from app.runtime import loop_factory
 
 _log = structlog.get_logger(__name__)
 
@@ -301,4 +302,6 @@ async def _main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    # The loop is chosen rather than accepted: on Windows the default one refuses to
+    # carry a database connection at all. See app.runtime.
+    asyncio.run(_main(), loop_factory=loop_factory())

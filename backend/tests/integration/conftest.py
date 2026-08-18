@@ -8,16 +8,11 @@ database unchanged regardless of what the test inserts or updates.
 
 from __future__ import annotations
 
-import asyncio
 import os
-import sys
 from collections.abc import AsyncIterator
 
-# psycopg3 async requires SelectorEventLoop on Windows. Force it before any
-# event loop is created so pytest-asyncio picks up the right policy.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
+# The loop these tests need is settled in the root conftest, which runs first and
+# applies it to every test rather than only to the ones that reach a real database.
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine

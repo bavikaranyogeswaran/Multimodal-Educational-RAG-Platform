@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.configuration.settings import Settings
+from app.runtime import loop_factory
 
 REQUIRED_PYTHON = (3, 12)
 REQUIRED_EXTENSIONS = ("vector", "rum", "pg_cron", "pg_trgm")
@@ -343,4 +344,6 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    # On the loop Windows would otherwise hand this script, the Postgres check fails
+    # before it reaches the network, and reports a connectivity problem that is not one.
+    raise SystemExit(asyncio.run(main(), loop_factory=loop_factory()))
