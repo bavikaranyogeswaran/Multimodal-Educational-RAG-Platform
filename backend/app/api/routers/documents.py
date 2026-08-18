@@ -135,7 +135,15 @@ async def delete_document(
         status=JobStatus.PENDING,
         attempt_count=0,
         max_attempts=3,
-        payload={"document_id": str(document_id), "storage_key": doc.storage_key},
+        # Scope travels with the job. A worker processes jobs across all users and has
+        # no other way to know whose document this is — without it the handler could
+        # not build a scoped repository, nor address the cached renders.
+        payload={
+            "document_id": str(document_id),
+            "user_id": str(scope.user_id),
+            "knowledge_base_id": str(scope.knowledge_base_id),
+            "storage_key": doc.storage_key,
+        },
         created_at=now,
         updated_at=now,
     )

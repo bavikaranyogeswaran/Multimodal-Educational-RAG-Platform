@@ -1,12 +1,16 @@
-"""Ingestion worker — run with: python -m app.worker
+"""Background worker — run with: python -m app.worker
 
-One worker process claims document-ingestion jobs one at a time, runs the full pipeline
-(download → parse → persist pages and elements → chunk → embed), and extends the job's
-lease while work is in progress. On SIGTERM or SIGINT the worker finishes the current
-job, then exits cleanly.
+One worker process claims jobs one at a time and runs whichever kind of work each one
+describes. Ingestion downloads a document, parses it into pages and elements, chunks and
+embeds it, and holds its lease open with a heartbeat throughout because that can take
+minutes. Deletion removes a file, its cached renders and its row, which does not.
 
-The heartbeat that holds the lease runs as a task on this same event loop, which is why
-the parser hands its work to a thread rather than doing it here.
+Before looking for work the worker returns anything a dead worker was holding, so a job
+whose owner crashed does not sit as RUNNING for ever. On SIGTERM or SIGINT it finishes
+the current job, then exits cleanly.
+
+The heartbeat runs as a task on this same event loop, which is why the parser and the
+renderer both hand their work to threads rather than doing it here.
 """
 
 from __future__ import annotations
@@ -20,6 +24,10 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.application.commands.delete_document import (
+    DeleteDocumentCommand,
+    DeleteDocumentUseCase,
+)
 from app.application.commands.ingest_document import IngestDocumentCommand, IngestDocumentUseCase
 from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
@@ -68,6 +76,51 @@ async def _heartbeat_loop(
 
 
 async def _run_job(container: Container, settings: Settings, job: ProcessingJob) -> None:
+    """Run whichever kind of work this job describes."""
+    if job.job_type is JobType.DELETE_DOCUMENT:
+        await _run_deletion(container, job)
+        return
+    await _run_ingestion(container, settings, job)
+
+
+async def _run_deletion(container: Container, job: ProcessingJob) -> None:
+    """Finish a deletion the API began by marking the document DELETING.
+
+    Its own transaction, and no heartbeat: removing a file, a handful of cache keys and
+    a row is short work, unlike ingestion, which can run for minutes and needs its lease
+    held open the whole time.
+    """
+    scope = _scope_from(job)
+    document_id = uuid.UUID(job.payload["document_id"])
+    log = _log.bind(job_id=str(job.id), document_id=str(document_id))
+
+    async with container.session_factory() as session:
+        use_case = DeleteDocumentUseCase(
+            document_repo=SqlDocumentRepository(scope, session),
+            storage=container.storage,
+            page_renderer=container.page_renderer,
+        )
+        await use_case.execute(
+            DeleteDocumentCommand(
+                scope=scope,
+                document_id=document_id,
+                storage_key=str(job.payload["storage_key"]),
+            )
+        )
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
+
+    log.info("document_deletion_completed")
+
+
+def _scope_from(job: ProcessingJob) -> ScopeContext:
+    return ScopeContext(
+        user_id=uuid.UUID(job.payload["user_id"]),
+        knowledge_base_id=uuid.UUID(job.payload["knowledge_base_id"]),
+    )
+
+
+async def _run_ingestion(container: Container, settings: Settings, job: ProcessingJob) -> None:
     now = datetime.now(UTC)
     doc_id = uuid.UUID(job.payload["document_id"])
     user_id = uuid.UUID(job.payload["user_id"])
@@ -149,7 +202,7 @@ async def _main() -> None:
 
     _log.info("worker_started", worker_id=worker_id)
 
-    claimable = frozenset({JobType.DOCUMENT_INGESTION})
+    claimable = frozenset({JobType.DOCUMENT_INGESTION, JobType.DELETE_DOCUMENT})
 
     while not shutdown.is_set():
         # Before looking for work, return anything a dead worker was holding. A lease is
@@ -213,10 +266,20 @@ async def _main() -> None:
                     # The document is only failed once there will be no further attempt.
                     # While a retry is pending it is still being processed, and saying
                     # otherwise would show a student a failure that is about to be undone.
-                    if failed.status is JobStatus.DEAD_LETTER:
+                    # Only an ingestion failure is the document's failure. A deletion
+                    # that fails leaves the document DELETING, which is absorbing and
+                    # correctly so — retrieval stays blocked, and the job will be
+                    # retried. Trying to mark it FAILED would be an illegal transition
+                    # on top of an already failing job.
+                    if (
+                        failed.status is JobStatus.DEAD_LETTER
+                        and job.job_type is JobType.DOCUMENT_INGESTION
+                    ):
                         doc_repo = SqlDocumentRepository(scope, session)
                         doc = await doc_repo.get(scope, doc_id)
-                        if doc is not None and not doc.status.is_terminal:
+                        if doc is not None and doc.status.can_transition_to(
+                            DocumentStatus.FAILED
+                        ):
                             await doc_repo.save(scope, doc.mark_failed(reason, now=now))
                     await SqlJobRepository(session).save(failed)
                     await session.commit()

@@ -284,3 +284,147 @@ class TestDocumentStatusAcrossRetries:
             await _run_job(container, _make_settings(), _make_job())
 
         assert saved[0].status is DocumentStatus.PROCESSING
+
+
+# ---------------------------------------------------------------------------
+# Deletion jobs
+# ---------------------------------------------------------------------------
+
+
+def _delete_job() -> ProcessingJob:
+    return ProcessingJob(
+        id=_JOB_ID,
+        job_type=JobType.DELETE_DOCUMENT,
+        priority=JobPriority.INTERACTIVE,
+        status=JobStatus.RUNNING,
+        attempt_count=1,
+        max_attempts=3,
+        created_at=_NOW,
+        updated_at=_NOW,
+        lease_expires_at=_NOW + timedelta(seconds=300),
+        payload={
+            "document_id": str(_DOC_ID),
+            "user_id": str(_USER_ID),
+            "knowledge_base_id": str(_KB_ID),
+            "storage_key": f"{_USER_ID}/{_KB_ID}/{_DOC_ID}/original.pdf",
+        },
+    )
+
+
+class TestDeletionJobs:
+    """Before this, DELETE_DOCUMENT jobs were enqueued at the highest priority in the
+    system and nothing ever claimed them."""
+
+    async def test_a_deletion_job_removes_the_document(self) -> None:
+        doc = _make_doc(status=DocumentStatus.DELETING)
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        doc_repo = AsyncMock()
+        doc_repo.get = AsyncMock(return_value=doc)
+        doc_repo.delete = AsyncMock()
+
+        storage = AsyncMock()
+        renderer = AsyncMock()
+
+        container = MagicMock()
+        container.session_factory = MagicMock(return_value=ctx)
+        container.storage = storage
+        container.page_renderer = renderer
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo),
+            patch("app.worker.__main__.SqlJobRepository", return_value=AsyncMock()),
+        ):
+            await _run_job(container, _make_settings(), _delete_job())
+
+        doc_repo.delete.assert_awaited_once()
+        storage.delete.assert_awaited_once()
+        renderer.discard_document.assert_awaited_once()
+
+    async def test_a_deletion_job_does_not_run_the_ingestion_pipeline(self) -> None:
+        """Dispatch is by job type. Running ingestion for a deletion would download and
+        re-index the very document being removed."""
+        doc = _make_doc(status=DocumentStatus.DELETING)
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        doc_repo = AsyncMock()
+        doc_repo.get = AsyncMock(return_value=doc)
+
+        parser = AsyncMock()
+        container = MagicMock()
+        container.session_factory = MagicMock(return_value=ctx)
+        container.storage = AsyncMock()
+        container.page_renderer = AsyncMock()
+        container.pdf_parser = parser
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo),
+            patch("app.worker.__main__.SqlJobRepository", return_value=AsyncMock()),
+        ):
+            await _run_job(container, _make_settings(), _delete_job())
+
+        parser.parse.assert_not_awaited()
+
+    async def test_a_deletion_job_is_marked_complete(self) -> None:
+        doc = _make_doc(status=DocumentStatus.DELETING)
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        doc_repo = AsyncMock()
+        doc_repo.get = AsyncMock(return_value=doc)
+
+        saved_jobs: list[ProcessingJob] = []
+        job_repo = AsyncMock()
+        job_repo.save = AsyncMock(side_effect=saved_jobs.append)
+
+        container = MagicMock()
+        container.session_factory = MagicMock(return_value=ctx)
+        container.storage = AsyncMock()
+        container.page_renderer = AsyncMock()
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo),
+            patch("app.worker.__main__.SqlJobRepository", return_value=job_repo),
+        ):
+            await _run_job(container, _make_settings(), _delete_job())
+
+        assert [j.status for j in saved_jobs] == [JobStatus.COMPLETED]
+
+    async def test_deleting_an_already_deleted_document_succeeds(self) -> None:
+        """A retried deletion meets its own finished work, which is the outcome it
+        wanted rather than a failure."""
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        doc_repo = AsyncMock()
+        doc_repo.get = AsyncMock(return_value=None)
+
+        container = MagicMock()
+        container.session_factory = MagicMock(return_value=ctx)
+        container.storage = AsyncMock()
+        container.page_renderer = AsyncMock()
+
+        with (
+            patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo),
+            patch("app.worker.__main__.SqlJobRepository", return_value=AsyncMock()),
+        ):
+            await _run_job(container, _make_settings(), _delete_job())
+
+        doc_repo.delete.assert_not_awaited()

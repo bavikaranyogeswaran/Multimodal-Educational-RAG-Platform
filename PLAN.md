@@ -31,7 +31,7 @@ system design specification.
 | Partially built | Phase 4 (~85%) · Phase 7 (~35%) · Phase 8 (~25%) · Phase 17 (~15%) |
 | Not started | Phase 5, 6, 10–16, 18–20 |
 | Tests | 1,477 unit and security · 15 integration · 109 marked `security`, 75 `gate` |
-| Next step | **4.11** — deletion consumer |
+| Next step | **Phase 7** — §19 chunking, or reassess |
 | Last updated | 17 August 2026 (reconciled against the codebase; Phase 5 divided) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -960,27 +960,23 @@ directory name is what every later step follows (A-256).
 
 Covers §7 (worker), §11, §12, §60.
 
-**Status: ~85% — divided into steps, 4.9 next.** Everything on the happy path works. What is
-missing is recovery, and the shape of what is missing is consistent: the job entity models a
-careful retry lifecycle that nothing is connected to.
+**Status: ~95% — recovery gaps closed.** The job entity's retry lifecycle is now connected:
+a failed attempt schedules its own retry, a job whose worker died is reclaimed as a failed
+attempt, and a budget that runs out dead-letters. `max_attempts` means what it says.
 
-`claim()` sets `attempt_count` to 1, `fail()` sends the job to `FAILED`, and nothing ever calls
-`requeue()`. So `max_attempts` is fiction — every job gets exactly one attempt — `FAILED` is
-terminal in practice with no path out, and `DEAD_LETTER` is unreachable, because reaching it
-requires a requeue to have happened first. `JobSettings` already carries `max_attempts`,
-`backoff_base_seconds` and `backoff_max_seconds`; none of the three is read by anything.
+Deletion completes. `DELETE /documents/{id}` still returns 202 and marks the document
+`DELETING`, and now a worker finishes the job — removing the stored original, the cached
+page renders, and the row, with chunks, elements and pages following by cascade.
 
-Deletion is worse than incomplete. `DELETE /documents/{id}` returns 202, marks the document
-`DELETING` and enqueues a job at `INTERACTIVE` priority — the highest there is — and the worker
-claims only `DOCUMENT_INGESTION`. Retrieval is correctly blocked so nothing leaks, but the data a
-student asked to have removed stays where it was, and the status keeps reporting progress toward
-something that will never happen.
+What remains is small and mostly waiting on other phases: per-stage progress reporting
+needs the stages that phases 5 to 7 produce, and no endpoint issues a presigned URL yet,
+so there is nothing whose expiry a security test could check.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 4.9 | Retry with backoff — failed jobs return to the queue until attempts are exhausted | M | ✅ |
 | 4.10 | Lease-expiry reclaim — an orphaned job becomes a failed attempt | S | ✅ |
-| 4.11 | `DELETE_DOCUMENT` consumer — remove the stored file, the cached renders, and the row | M | ☐ |
+| 4.11 | `DELETE_DOCUMENT` consumer — remove the stored file, the cached renders, and the row | M | ✅ |
 
 4.9 comes first because reclaim routes through the retry path: building 4.10 first would mean
 building the same machinery twice.
@@ -1017,16 +1013,16 @@ building the same machinery twice.
       it waits out a backoff like any other failure — and a method called `claim_next`
       that wrote to the database and then returned nothing would be a surprising thing to
       read. The worker sweeps once per poll before claiming
-### 4.11 — Deletion consumer
+### 4.11 — Deletion consumer ✅
 
-- [ ] The worker claims `DELETE_DOCUMENT` alongside `DOCUMENT_INGESTION`
-- [ ] The handler removes what the database cannot reach — the stored original, and the cached
+- [x] The worker claims `DELETE_DOCUMENT` alongside `DOCUMENT_INGESTION`
+- [x] The handler removes what the database cannot reach — the stored original, and the cached
       page renders — then deletes the row. Chunks, elements and pages follow by cascade;
       `graph_entities.source_document_id` is `SET NULL` deliberately, because §58 preserves
       entities that other documents also support
-- [ ] Idempotent throughout, since a retried deletion must be safe: removing an object that is
+- [x] Idempotent throughout, since a retried deletion must be safe: removing an object that is
       already gone is a success, not a failure
-- [ ] Tests: the stored file is removed; cached renders are removed; the row is gone and its
+- [x] Tests: the stored file is removed; cached renders are removed; the row is gone and its
       chunks with it; running the handler twice succeeds; a document already deleted by another
       path does not fail the job
 

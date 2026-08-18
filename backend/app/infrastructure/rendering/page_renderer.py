@@ -97,6 +97,25 @@ class PageRenderer:
         await self._cache.delete(_cache_key(scope, document_id, page_number))
 
 
+    async def discard_document(
+        self,
+        *,
+        document_id: UUID,
+        scope: ScopeContext,
+        page_count: int,
+    ) -> None:
+        """Forget every cached render belonging to a document.
+
+        Walks the pages rather than deleting by prefix, because the cache is addressed by
+        key and has no notion of a prefix to sweep. Deleting a key that was never written
+        — a page whose render expired, or was never asked for — is not an error, so a
+        document can be forgotten without first working out what was remembered.
+        """
+        for page_number in range(1, page_count + 1):
+            await self.discard(
+                page_number=page_number, document_id=document_id, scope=scope
+            )
+
 def _cache_key(scope: ScopeContext, document_id: UUID, page_number: int) -> str:
     """Where a render lives, derived entirely from what it is a render of.
 

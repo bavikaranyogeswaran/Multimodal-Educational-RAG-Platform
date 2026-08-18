@@ -86,6 +86,41 @@ class PdfParserPort(Protocol):
         ...
 
 
+class PageRendererPort(Protocol):
+    """Draws pages to images, and forgets them again.
+
+    Renders are regenerable, so they live in a cache with a lifetime rather than in
+    permanent storage. That makes forgetting them a real operation rather than an
+    afterthought: a document being deleted has cached images that outlive it otherwise,
+    and nothing about their keys would ever say they no longer refer to anything.
+    """
+
+    async def render(
+        self,
+        data: bytes,
+        *,
+        page_number: int,
+        document_id: UUID,
+        scope: ScopeContext,
+    ) -> bytes:
+        """PNG bytes for one page, 1-indexed, from the cache when already drawn."""
+        ...
+
+    async def discard_document(
+        self,
+        *,
+        document_id: UUID,
+        scope: ScopeContext,
+        page_count: int,
+    ) -> None:
+        """Forget every cached render belonging to a document.
+
+        The page count comes from the caller because the document knows it and this does
+        not. Passing it keeps the renderer from having to query anything to do its job.
+        """
+        ...
+
+
 class OcrPort(Protocol):
     """Optical character recognition over rendered page images.
 
