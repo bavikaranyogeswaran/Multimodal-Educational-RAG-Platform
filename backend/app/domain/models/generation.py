@@ -82,7 +82,7 @@ Respond with a single JSON object only — no text before or after it.
   "claims": [
     {
       "text": "One factual statement from the answer above.",
-      "citations": ["S1"]
+      "citations": ["[S1]"]
     }
   ],
   "insufficient_evidence": false
