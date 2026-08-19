@@ -139,3 +139,12 @@ class ProviderError(DomainError):
         super().__init__(f"{provider}: {detail}")
         self.provider = provider
         self.retryable = retryable
+
+
+class GenerationParseError(DomainError):
+    """The model's response did not conform to the required output schema.
+
+    Raised by the parser when the JSON is malformed, a required field is absent or the
+    wrong type, or a claim carries no citations. The caller decides whether this is
+    repairable or a rejection — that judgement is not made here.
+    """

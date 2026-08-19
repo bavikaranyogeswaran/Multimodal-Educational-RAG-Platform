@@ -252,6 +252,14 @@ class TestAnswerUseCase:
         request = gateway.generate_stream.call_args.args[0]
         assert request.model_task is ModelTask.ANSWER_GENERATION
 
+    async def test_output_schema_is_populated(self) -> None:
+        """The model must be told what shape to respond in before any claim can be validated."""
+        gateway = _mock_gateway()
+        await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+        request = gateway.generate_stream.call_args.args[0]
+        assert request.output_schema is not None
+        assert len(request.output_schema) > 0
+
     async def test_query_in_model_request(self) -> None:
         gateway = _mock_gateway()
         await _make_use_case(gateway=gateway).execute(_BASE_CMD)

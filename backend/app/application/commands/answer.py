@@ -30,6 +30,7 @@ from app.domain.enums import (
 )
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
 from app.domain.models.entities import ConversationTurn, LabeledPassage
+from app.domain.models.generation import OUTPUT_SCHEMA
 from app.domain.models.instructions import Instruction
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import ConversationUnitOfWork
@@ -58,7 +59,7 @@ _SAFETY_RULES: tuple[str, ...] = (
 
 _TASK_INSTRUCTIONS = (
     "Answer the student's question about their course material, using the reference "
-    "passages supplied with it."
+    "passages supplied with it. Respond only with a JSON object in the required output format."
 )
 
 #: What this turn asks of the model, one requirement at a time. Splitting the old paragraph
@@ -181,6 +182,7 @@ class AnswerUseCase:
                 instructions=_INSTRUCTIONS,
                 conversation_history=history,
                 evidence=_labeled(evidence),
+                output_schema=OUTPUT_SCHEMA,
             )
         )
 
