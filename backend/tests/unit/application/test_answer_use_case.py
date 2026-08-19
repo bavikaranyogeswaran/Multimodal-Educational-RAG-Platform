@@ -12,6 +12,7 @@ from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.enums import MessageRole, MessageStatus, ModelTask
+from app.domain.models.context_builder import ContextBuilder
 from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -34,9 +35,10 @@ _BASE_CMD = AnswerCommand(
 # ---------------------------------------------------------------------------
 
 
-def _ev(text: str) -> MagicMock:
+def _ev(text: str, *, label: str = "[S1]") -> MagicMock:
     ev = MagicMock()
     ev.chunk.text = UntrustedText(text)
+    ev.label.bracketed = label
     return ev
 
 
@@ -105,16 +107,27 @@ def _mock_gateway(tokens: list[str] | None = None) -> MagicMock:
     return gateway
 
 
+def _context_builder() -> ContextBuilder:
+    """A real builder, generous enough that nothing under test ever gets shed.
+
+    What the builder does with a tight budget is its own module's concern; here the
+    interest is only in what AnswerUseCase hands it and does with what it returns.
+    """
+    return ContextBuilder(lambda text: len(text.split()), token_budget=100_000)
+
+
 def _make_use_case(
     retrieve: AsyncMock | None = None,
     repo: AsyncMock | None = None,
     gateway: MagicMock | None = None,
     opened: list[str] | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> AnswerUseCase:
     return AnswerUseCase(
         retrieve=retrieve or _mock_retrieve(),
         conversation_uow=_uow_over(repo or _mock_repo(), opened),
         model_gateway=gateway or _mock_gateway(),
+        context_builder=context_builder or _context_builder(),
     )
 
 
@@ -162,8 +175,18 @@ class TestAnswerUseCase:
         await _make_use_case(retrieve=retrieve, gateway=gateway).execute(_BASE_CMD)
         request = gateway.generate_stream.call_args.args[0]
         assert len(request.evidence) == 2
-        assert request.evidence[0].value == "Passage A"
-        assert request.evidence[1].value == "Passage B"
+        assert request.evidence[0].text.value == "Passage A"
+        assert request.evidence[1].text.value == "Passage B"
+
+    async def test_evidence_carries_the_label_the_model_must_cite_it_by(self) -> None:
+        """Without this the model has no way to say which passage supports a claim, and
+        nothing downstream has a citation to check."""
+        gateway = _mock_gateway()
+        retrieve = _mock_retrieve([_ev("Passage A", label="[S1]"), _ev("Passage B", label="[S2]")])
+        await _make_use_case(retrieve=retrieve, gateway=gateway).execute(_BASE_CMD)
+        request = gateway.generate_stream.call_args.args[0]
+        assert request.evidence[0].label == "[S1]"
+        assert request.evidence[1].label == "[S2]"
 
     async def test_empty_evidence_yields_empty_tuple(self) -> None:
         gateway = _mock_gateway()

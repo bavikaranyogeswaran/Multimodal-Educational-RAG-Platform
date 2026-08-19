@@ -19,6 +19,7 @@ from app.configuration.settings import (
     Environment,
     EvidenceSettings,
     JobSettings,
+    ModelSettings,
     ObservabilitySettings,
     RerankerSettings,
     RetrievalSettings,
@@ -183,6 +184,15 @@ class TestInvariants:
             Settings(
                 retrieval=RetrievalSettings(candidate_pool_size=20),
                 reranker=RerankerSettings(max_candidates=40),
+            )
+
+    def test_prompt_budget_must_leave_room_for_more_than_evidence(self) -> None:
+        """Otherwise the passages alone can fill the whole prompt, leaving no room
+        for the instructions and question the model needs to make sense of them."""
+        with pytest.raises(ValidationError, match="PROMPT_TOKEN_BUDGET"):
+            Settings(
+                model=ModelSettings(prompt_token_budget=5000),
+                evidence=EvidenceSettings(context_token_budget=6000),
             )
 
     def test_production_rejects_logging_private_content(self) -> None:

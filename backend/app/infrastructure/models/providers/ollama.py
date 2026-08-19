@@ -36,36 +36,57 @@ _ALL_TEXT_TASKS: frozenset[ModelTask] = frozenset(
 
 
 def _build_messages(request: ModelRequest) -> list[dict[str, str]]:
-    """Map the seven-slot ModelRequest to an Ollama chat messages array.
+    """Map the twelve-slot ModelRequest to an Ollama chat messages array, in slot order.
 
-    The system message combines the three structural slots (preamble, safety rules,
-    and task instructions) so they arrive as a single authoritative context block.
-    Memory and evidence are injected as acknowledged user turns before conversation
-    history and the final query.
+    The system message combines every purely structural slot — identity, safety rules, the
+    task, this turn's requirements, the Knowledge Base state — into one authoritative
+    block, because Ollama's chat API has no notion of a slot boundary within a single role
+    and these are framing the model reads once, not content it is being handed. Memory,
+    the conversation summary, evidence, the schema and the checklist are turn content
+    instead, and each arrives as its own acknowledged exchange — a technique carried over
+    from before this request had twelve slots, kept because a fact presented as something
+    the model has read and confirmed is attended to differently than the same fact folded
+    into an instruction it was never asked to acknowledge.
+
+    The order follows the slots exactly: recent turns before evidence, evidence before the
+    question, so a rule stated early is not contradicted by something read later with more
+    apparent freshness.
     """
-    system_parts = [request.system_preamble]
-    system_parts.extend(request.safety_rules)
-    system_parts.append(request.task_instructions)
+    system_parts = [request.system_preamble, *request.safety_rules, request.task_instructions]
+    system_parts.extend(request.mandatory_requirements)
+    if request.knowledge_base_state:
+        system_parts.append(request.knowledge_base_state)
 
     messages: list[dict[str, str]] = [
         {"role": "system", "content": "\n\n".join(system_parts)},
     ]
 
-    if request.memory_context:
-        facts = "\n".join(f"- {fact}" for fact in request.memory_context)
+    memory = [*request.pinned_memory, *request.relevant_memory]
+    if request.rolling_summary:
+        memory.append(request.rolling_summary)
+    if memory:
+        facts = "\n".join(f"- {fact}" for fact in memory)
         messages.append({"role": "user", "content": f"[Student context]\n{facts}"})
         messages.append({"role": "assistant", "content": "Understood, I have noted the context."})
-
-    if request.evidence:
-        passages = "\n\n".join(ev.value for ev in request.evidence)
-        messages.append({"role": "user", "content": f"[Reference material]\n{passages}"})
-        messages.append({"role": "assistant", "content": "I have reviewed the material."})
 
     for turn in request.conversation_history:
         role = "user" if turn.role is MessageRole.USER else "assistant"
         messages.append({"role": role, "content": turn.content.value})
 
+    if request.evidence:
+        passages = "\n\n".join(f"{p.label} {p.text.value}" for p in request.evidence)
+        messages.append({"role": "user", "content": f"[Reference material]\n{passages}"})
+        messages.append({"role": "assistant", "content": "I have reviewed the material."})
+
     messages.append({"role": "user", "content": request.query})
+
+    if request.output_schema:
+        schema_content = f"[Required output format]\n{request.output_schema}"
+        messages.append({"role": "user", "content": schema_content})
+
+    if request.critical_checklist:
+        points = "\n".join(f"- {point}" for point in request.critical_checklist)
+        messages.append({"role": "user", "content": f"[Before you answer]\n{points}"})
 
     return messages
 

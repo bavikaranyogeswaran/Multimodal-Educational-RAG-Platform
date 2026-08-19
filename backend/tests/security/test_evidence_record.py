@@ -40,6 +40,7 @@ from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import ChunkType, RetrieverKind
 from app.domain.errors import ScopeViolationError
+from app.domain.models.context_builder import ContextBuilder
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -94,7 +95,12 @@ def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> 
     async def _uow() -> AsyncIterator[AsyncMock]:
         yield repo
 
-    return AnswerUseCase(retrieve=retrieve, conversation_uow=_uow, model_gateway=gateway)
+    return AnswerUseCase(
+        retrieve=retrieve,
+        conversation_uow=_uow,
+        model_gateway=gateway,
+        context_builder=ContextBuilder(lambda text: len(text.split()), token_budget=100_000),
+    )
 
 
 def _repo() -> AsyncMock:
@@ -124,7 +130,7 @@ async def _answer(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock)
 
 def _prompt_passages(gateway: MagicMock) -> tuple[str, ...]:
     request = gateway.generate_stream.call_args.args[0]
-    return tuple(passage.value for passage in request.evidence)
+    return tuple(passage.text.value for passage in request.evidence)
 
 
 def _recorded(repo: AsyncMock) -> list[Evidence]:

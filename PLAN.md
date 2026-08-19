@@ -28,11 +28,11 @@ system design specification.
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
 | In progress | **Phase 9** — ~95%, four field-level gaps left |
-| Mostly built | Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
-| Foundations only | Phase 10 (~70%) · Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
+| Mostly built | Phase 4 (~95%) · Phase 10 (~85%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
+| Foundations only | Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 1,971 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
-| Next step | **10.5** — the context builder, which is also what unblocks Phase 11; **7.4** still waits on a textbook PDF |
+| Tests | 2,016 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
+| Next step | **10.6** — structured instruction handling, the last step in Phase 10; **7.4** still waits on a textbook PDF |
 | Last updated | 18 August 2026 (audited against the codebase; integration suite run) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
@@ -1449,11 +1449,11 @@ remaining stages — which is why the checkbox count reads lower than the percen
 
 Covers §30, §31, §32, §33, §36, §37.
 
-**Status: ~70% — 10.1 to 10.4 done, 10.5 next.** Evidence is sized by the question, freed of
-repetition, expanded where a fragment cannot stand alone, and cut to fit without losing the
-sentences that carry the claim. What remains is the prompt: twelve slots in a fixed order,
-a budget that sheds the least important first, and instructions that are structured rather
-than a wall of text.
+**Status: ~85% — 10.1 to 10.5 done, 10.6 next.** Evidence is sized, deduplicated, expanded
+and compressed, then assembled into a twelve-slot prompt that sheds low-priority context
+before it ever touches the essentials, with every passage carrying the label the model must
+cite it by. What remains is turning plain-string requirements into the structured,
+prioritised form FR-CTX-04 through FR-CTX-08 specify.
 
 Retrieval currently ends at reranking and hands the surviving chunks to the model as raw
 text. Everything between those two points is this phase: how many passages to send, which
@@ -1469,7 +1469,7 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 | 10.2 | Deduplication and diversity caps | M | ✅ |
 | 10.3 | Parent expansion, on the five conditions only | L | ✅ |
 | 10.4 | Extractive compression | L | ✅ |
-| 10.5 | Context builder — twelve slots and the token budget | L | ☐ |
+| 10.5 | Context builder — twelve slots and the token budget | L | ✅ |
 | 10.6 | Structured instruction handling | M | ☐ |
 
 ### 10.1 — Dynamic evidence selection ✅
@@ -1549,22 +1549,36 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 - [x] The sentence splitter is now shared with the chunker, so the two cannot diverge into
       cutting inside what the other treats as indivisible (A-430)
 
-### 10.5 — Context builder
+### 10.5 — Context builder ✅
 
-- [ ] Assembles the prompt in the twelve-slot order: system and security policies, task
-      objective, mandatory requirements, active Knowledge Base state, pinned durable memory,
-      relevant historical memory, rolling conversation summary, recent raw turns, source
-      evidence, current question, required output schema, final critical checklist (FR-CTX-01)
-- [ ] Owns token allocation and sheds low-priority slots when the limit is reached, rather
-      than letting the model silently truncate whichever slot happened to be last (FR-CTX-02)
-- [ ] Replaces the seven-slot `ModelRequest`, so the Ollama adapter and `AnswerUseCase`
-      change with it
-- [ ] Evidence is rendered **with its label**, which it is not today: the adapter joins
-      passage text and drops `EvidenceLabel` entirely, so the model cannot cite and Phase 11
-      has nothing to validate. Phase 11 owns the citation contract; this step is what makes
-      it reachable
-- [ ] Tests: slot order is fixed; the lowest-priority slot is dropped first at the limit;
-      security policy is never the slot that gets dropped
+- [x] `ModelRequest` grew from seven slots to the twelve FR-CTX-01 specifies: system and
+      security policies, task objective, mandatory requirements, active Knowledge Base
+      state, pinned durable memory, relevant historical memory, rolling conversation
+      summary, recent raw turns, source evidence, current question, required output
+      schema, final critical checklist. Seven callers already built the old shape, so
+      extending it in place is what let every one of them move in this step rather than
+      two structures drifting apart (FR-CTX-01, A-434)
+- [x] `ContextBuilder` owns token allocation. Five slots — identity, safety rules, the
+      task, the evidence, the question — are never shed; the rest are cleared to their
+      empty value, one at a time, in a fixed order, stopping the moment the prompt fits
+      (FR-CTX-02, A-436, A-437)
+- [x] `ModelSettings.prompt_token_budget` (8000) must exceed
+      `EvidenceSettings.context_token_budget` (6000), enforced by a cross-settings
+      validator — otherwise the passages alone could fill the whole prompt (A-441)
+- [x] Evidence is rendered **with its label**. `LabeledPassage` carries a plain string
+      label rather than the retrieval package's `EvidenceLabel`, so a provider-neutral
+      request does not import from the package that produced it. The model can now say
+      which passage it is citing, which it could not before this step (FR-CTX-01, A-435)
+- [x] The Ollama adapter's rendered order now matches the twelve slots exactly — recent
+      turns before evidence, evidence before the question — which moved evidence and
+      memory relative to where they sat before (A-440)
+- [x] Tests: 20 on the context builder covering shedding order and the five essentials
+      never being touched, plus updates across model, adapter, application and security
+      tests wherever `ModelRequest` or evidence rendering was touched
+- [~] Most of the new slots — mandatory requirements, Knowledge Base state, memory, the
+      summary, the output schema, the checklist — have no producer yet and are exercised
+      only by direct construction; `AnswerUseCase` populates only what earlier phases have
+      built (A-442)
 
 ### 10.6 — Structured instruction handling
 

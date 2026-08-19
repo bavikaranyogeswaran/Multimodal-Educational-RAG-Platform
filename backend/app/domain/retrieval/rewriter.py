@@ -82,7 +82,6 @@ class QueryRewriter:
             system_preamble=_SYSTEM_PREAMBLE,
             safety_rules=(),
             task_instructions=_TASK_INSTRUCTIONS,
-            memory_context=(),
             evidence=(),
             conversation_history=history,
             query=query,

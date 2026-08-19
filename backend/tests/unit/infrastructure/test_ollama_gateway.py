@@ -2,7 +2,7 @@
 
 All tests use a mock httpx.AsyncClient — no real Ollama server is required.
 Tests verify:
-  - Prompt assembly (7-slot ModelRequest → Ollama messages array)
+  - Prompt assembly (12-slot ModelRequest → Ollama messages array)
   - HTTP payload structure (model, stream, options)
   - Response mapping (content, tokens, finish_reason, latency)
   - Error translation (HTTP 4xx/5xx → ProviderError, network → ProviderError)
@@ -22,7 +22,7 @@ import pytest
 
 from app.domain.enums import DataBoundary, MessageRole, ModelTask
 from app.domain.errors import ProviderError, UnsupportedCapabilityError
-from app.domain.models.entities import ConversationTurn, ModelRequest
+from app.domain.models.entities import ConversationTurn, LabeledPassage, ModelRequest
 from app.domain.values import UntrustedText
 from app.infrastructure.models.providers.ollama import OllamaModelGateway, _build_messages
 
@@ -37,10 +37,16 @@ def _make_request(
     preamble: str = "You are a helpful tutor.",
     safety_rules: tuple[str, ...] = (),
     instructions: str = "Answer the student's question.",
-    memory: tuple[str, ...] = (),
-    evidence: tuple[UntrustedText, ...] = (),
+    mandatory_requirements: tuple[str, ...] = (),
+    knowledge_base_state: str | None = None,
+    pinned_memory: tuple[str, ...] = (),
+    relevant_memory: tuple[str, ...] = (),
+    rolling_summary: str | None = None,
+    evidence: tuple[LabeledPassage, ...] = (),
     history: tuple[ConversationTurn, ...] = (),
     query: str = "What is photosynthesis?",
+    output_schema: str | None = None,
+    critical_checklist: tuple[str, ...] = (),
     max_tokens: int | None = None,
     temperature: float | None = None,
 ) -> ModelRequest:
@@ -49,13 +55,23 @@ def _make_request(
         system_preamble=preamble,
         safety_rules=safety_rules,
         task_instructions=instructions,
-        memory_context=memory,
-        evidence=evidence,
-        conversation_history=history,
         query=query,
+        mandatory_requirements=mandatory_requirements,
+        knowledge_base_state=knowledge_base_state,
+        pinned_memory=pinned_memory,
+        relevant_memory=relevant_memory,
+        rolling_summary=rolling_summary,
+        conversation_history=history,
+        evidence=evidence,
+        output_schema=output_schema,
+        critical_checklist=critical_checklist,
         max_tokens=max_tokens,
         temperature=temperature,
     )
+
+
+def _passage(text: str, *, label: str = "[S1]") -> LabeledPassage:
+    return LabeledPassage(label=label, text=UntrustedText(text))
 
 
 def _make_response_json(
@@ -170,8 +186,8 @@ class TestPromptAssembly:
         msgs = _build_messages(req)
         assert msgs[-1] == {"role": "user", "content": "Explain osmosis."}
 
-    def test_memory_context_injected_as_user_turn(self) -> None:
-        req = _make_request(memory=("Student prefers examples.", "First year student."))
+    def test_pinned_memory_injected_as_user_turn(self) -> None:
+        req = _make_request(pinned_memory=("Student prefers examples.", "First year student."))
         msgs = _build_messages(req)
         roles = [m["role"] for m in msgs]
         content = " ".join(m["content"] for m in msgs)
@@ -179,20 +195,83 @@ class TestPromptAssembly:
         assert "First year student." in content
         assert "assistant" in roles  # acknowledgement turn
 
+    def test_relevant_memory_shares_the_same_context_turn(self) -> None:
+        req = _make_request(
+            pinned_memory=("Prefers examples.",), relevant_memory=("Asked about this before.",)
+        )
+        msgs = _build_messages(req)
+        content = " ".join(m["content"] for m in msgs)
+        assert "Prefers examples." in content
+        assert "Asked about this before." in content
+
+    def test_rolling_summary_appears_in_the_context_turn(self) -> None:
+        req = _make_request(rolling_summary="The student has covered chapters one through three.")
+        msgs = _build_messages(req)
+        content = " ".join(m["content"] for m in msgs)
+        assert "chapters one through three" in content
+
+    def test_knowledge_base_state_is_in_the_system_message(self) -> None:
+        req = _make_request(knowledge_base_state="Knowledge Base: Introductory Biology")
+        msgs = _build_messages(req)
+        assert "Introductory Biology" in msgs[0]["content"]
+
+    def test_mandatory_requirements_are_in_the_system_message(self) -> None:
+        req = _make_request(mandatory_requirements=("Answer in under 100 words.",))
+        msgs = _build_messages(req)
+        assert "Answer in under 100 words." in msgs[0]["content"]
+
     def test_evidence_injected_as_user_turn(self) -> None:
-        ev = UntrustedText("Photosynthesis is the process of converting light into energy.")
-        req = _make_request(evidence=(ev,))
+        req = _make_request(
+            evidence=(_passage("Photosynthesis converts light into energy."),)
+        )
         msgs = _build_messages(req)
         joined = " ".join(m["content"] for m in msgs)
-        assert ev.value in joined
+        assert "Photosynthesis converts light into energy." in joined
+
+    def test_evidence_carries_its_citation_label(self) -> None:
+        """Without the label in the rendered text, the model has nothing to cite."""
+        req = _make_request(evidence=(_passage("Some evidence.", label="[S3]"),))
+        msgs = _build_messages(req)
+        joined = " ".join(m["content"] for m in msgs)
+        assert "[S3]" in joined
 
     def test_evidence_uses_value_not_str_repr(self) -> None:
-        ev = UntrustedText("Some evidence.")
-        req = _make_request(evidence=(ev,))
+        req = _make_request(evidence=(_passage("Some evidence."),))
         msgs = _build_messages(req)
         joined = " ".join(m["content"] for m in msgs)
         assert "untrusted text" not in joined.lower()
         assert "Some evidence." in joined
+
+    def test_recent_turns_come_before_evidence(self) -> None:
+        """The twelve-slot order puts recent raw turns ahead of source evidence."""
+        history = (ConversationTurn(role=MessageRole.USER, content=UntrustedText("Earlier.")),)
+        req = _make_request(history=history, evidence=(_passage("A passage."),))
+        msgs = _build_messages(req)
+        contents = [m["content"] for m in msgs]
+        earlier_index = next(i for i, c in enumerate(contents) if "Earlier." in c)
+        evidence_index = next(i for i, c in enumerate(contents) if "A passage." in c)
+        assert earlier_index < evidence_index
+
+    def test_query_comes_after_evidence(self) -> None:
+        req = _make_request(evidence=(_passage("A passage."),), query="What follows?")
+        msgs = _build_messages(req)
+        contents = [m["content"] for m in msgs]
+        evidence_index = next(i for i, c in enumerate(contents) if "A passage." in c)
+        query_index = contents.index("What follows?")
+        assert evidence_index < query_index
+
+    def test_output_schema_comes_after_the_query(self) -> None:
+        req = _make_request(query="What follows?", output_schema="Answer as JSON.")
+        msgs = _build_messages(req)
+        contents = [m["content"] for m in msgs]
+        query_index = contents.index("What follows?")
+        schema_index = next(i for i, c in enumerate(contents) if "Answer as JSON." in c)
+        assert query_index < schema_index
+
+    def test_critical_checklist_is_last(self) -> None:
+        req = _make_request(critical_checklist=("Cite every claim.",))
+        msgs = _build_messages(req)
+        assert "Cite every claim." in msgs[-1]["content"]
 
     def test_conversation_history_preserves_order(self) -> None:
         history = (
@@ -206,8 +285,8 @@ class TestPromptAssembly:
         assert any("Hello." in m["content"] for m in user_msgs)
         assert any("Hi there." in m["content"] for m in assistant_msgs)
 
-    def test_no_memory_turn_when_empty(self) -> None:
-        req = _make_request(memory=())
+    def test_no_memory_turn_when_everything_is_empty(self) -> None:
+        req = _make_request(pinned_memory=(), relevant_memory=(), rolling_summary=None)
         msgs = _build_messages(req)
         content = " ".join(m["content"] for m in msgs)
         assert "Student context" not in content
@@ -217,6 +296,18 @@ class TestPromptAssembly:
         msgs = _build_messages(req)
         content = " ".join(m["content"] for m in msgs)
         assert "Reference material" not in content
+
+    def test_no_schema_turn_when_absent(self) -> None:
+        req = _make_request(output_schema=None)
+        msgs = _build_messages(req)
+        content = " ".join(m["content"] for m in msgs)
+        assert "Required output format" not in content
+
+    def test_no_checklist_turn_when_empty(self) -> None:
+        req = _make_request(critical_checklist=())
+        msgs = _build_messages(req)
+        content = " ".join(m["content"] for m in msgs)
+        assert "Before you answer" not in content
 
 
 # ---------------------------------------------------------------------------

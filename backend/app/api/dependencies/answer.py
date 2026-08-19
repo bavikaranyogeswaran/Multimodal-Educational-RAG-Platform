@@ -17,6 +17,8 @@ from app.api.dependencies.scope import get_kb_scope
 from app.application.commands.answer import AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator
 from app.configuration.container import Container
+from app.configuration.settings import get_settings
+from app.domain.models.context_builder import ContextBuilder
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.unit_of_work import build_conversation_unit_of_work
 
@@ -26,8 +28,13 @@ async def get_answer_use_case(
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
     container: Annotated[Container, Depends(get_container)],
 ) -> AnswerUseCase:
+    settings = get_settings()
     return AnswerUseCase(
         retrieve=retrieve,
         conversation_uow=build_conversation_unit_of_work(container.session_factory, scope),
         model_gateway=container.model_gateway,
+        context_builder=ContextBuilder(
+            container.token_counter.count,
+            token_budget=settings.model.prompt_token_budget,
+        ),
     )

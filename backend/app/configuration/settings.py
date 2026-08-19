@@ -163,6 +163,11 @@ class ModelSettings(BaseSettings):
     max_output_tokens_expansion: int = 256
     max_output_tokens_summary: int = 2048
 
+    #: What the assembled prompt may cost in total, across every slot. Strictly larger
+    #: than the evidence budget alone (EVIDENCE_CONTEXT_TOKEN_BUDGET), which sizes only
+    #: the passages — the rest of the prompt has to fit in what is left over.
+    prompt_token_budget: int = 8000
+
 
 # ---------------------------------------------------------------------------
 # Embeddings and reranking
@@ -519,6 +524,16 @@ class Settings(BaseSettings):
     job: Annotated[JobSettings, Field(default_factory=JobSettings)]
     cache: Annotated[CacheSettings, Field(default_factory=CacheSettings)]
     observability: Annotated[ObservabilitySettings, Field(default_factory=ObservabilitySettings)]
+
+    @model_validator(mode="after")
+    def _prompt_budget_leaves_room_for_more_than_evidence(self) -> Settings:
+        if self.model.prompt_token_budget <= self.evidence.context_token_budget:
+            raise ValueError(
+                "MODEL_PROMPT_TOKEN_BUDGET must exceed EVIDENCE_CONTEXT_TOKEN_BUDGET — "
+                "otherwise the passages alone can fill the whole prompt, leaving no room "
+                "for the instructions and question the model needs to make sense of them"
+            )
+        return self
 
     @model_validator(mode="after")
     def _reranker_pool_is_consistent(self) -> Settings:

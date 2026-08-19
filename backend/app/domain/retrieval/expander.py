@@ -57,7 +57,6 @@ class QueryExpander:
             system_preamble=_SYSTEM_PREAMBLE,
             safety_rules=(),
             task_instructions=_TASK_INSTRUCTIONS,
-            memory_context=(),
             evidence=(),
             conversation_history=(),
             query=query,
