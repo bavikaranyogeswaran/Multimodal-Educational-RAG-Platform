@@ -1,12 +1,20 @@
-"""Unit tests for the deterministic citation existence validator."""
+"""Unit tests for citation existence validation and semantic entailment helpers."""
 
 from __future__ import annotations
 
 import pytest
 
+from app.domain.enums import ClaimStatus
+from app.domain.errors import GenerationParseError
 from app.domain.models.entities import LabeledPassage
 from app.domain.models.generation import Claim, GeneratedAnswer
-from app.domain.models.validation import CitationCheckResult, check_citation_existence
+from app.domain.models.validation import (
+    CitationCheckResult,
+    EntailmentResult,
+    aggregate_claim_status,
+    check_citation_existence,
+    parse_entailment_status,
+)
 from app.domain.values import UntrustedText
 
 # ---------------------------------------------------------------------------
@@ -184,3 +192,118 @@ class TestCheckCitationExistenceEdgeCases:
         evidence = [_passage("[S10]")]
         results = check_citation_existence(answer, evidence)
         assert results[0].has_fabricated_citations
+
+
+# ---------------------------------------------------------------------------
+# EntailmentResult
+# ---------------------------------------------------------------------------
+
+
+class TestEntailmentResult:
+    def test_stores_claim_label_and_status(self) -> None:
+        claim = _claim()
+        result = EntailmentResult(
+            claim=claim, passage_label="[S1]", status=ClaimStatus.ENTAILED
+        )
+        assert result.claim is claim
+        assert result.passage_label == "[S1]"
+        assert result.status is ClaimStatus.ENTAILED
+
+    def test_frozen(self) -> None:
+        result = EntailmentResult(
+            claim=_claim(), passage_label="[S1]", status=ClaimStatus.ENTAILED
+        )
+        with pytest.raises(AttributeError):
+            result.status = ClaimStatus.CONTRADICTED  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# parse_entailment_status
+# ---------------------------------------------------------------------------
+
+
+class TestParseEntailmentStatus:
+    def test_entailed(self) -> None:
+        assert parse_entailment_status("ENTAILED") is ClaimStatus.ENTAILED
+
+    def test_contradicted(self) -> None:
+        assert parse_entailment_status("CONTRADICTED") is ClaimStatus.CONTRADICTED
+
+    def test_not_supported(self) -> None:
+        assert parse_entailment_status("NOT_SUPPORTED") is ClaimStatus.NOT_SUPPORTED
+
+    def test_strips_leading_trailing_whitespace(self) -> None:
+        assert parse_entailment_status("  ENTAILED\n") is ClaimStatus.ENTAILED
+
+    def test_case_insensitive(self) -> None:
+        assert parse_entailment_status("entailed") is ClaimStatus.ENTAILED
+        assert parse_entailment_status("Contradicted") is ClaimStatus.CONTRADICTED
+        assert parse_entailment_status("not_supported") is ClaimStatus.NOT_SUPPORTED
+
+    def test_unrecognised_value_raises(self) -> None:
+        with pytest.raises(GenerationParseError, match="NOT_SUPPORTED"):
+            parse_entailment_status("MAYBE")
+
+    def test_empty_string_raises(self) -> None:
+        with pytest.raises(GenerationParseError):
+            parse_entailment_status("")
+
+    def test_partial_match_raises(self) -> None:
+        with pytest.raises(GenerationParseError):
+            parse_entailment_status("ENTAIL")
+
+
+# ---------------------------------------------------------------------------
+# aggregate_claim_status
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateClaimStatus:
+    def _result(self, status: ClaimStatus, label: str = "[S1]") -> EntailmentResult:
+        return EntailmentResult(claim=_claim(), passage_label=label, status=status)
+
+    def test_empty_results_returns_not_supported(self) -> None:
+        assert aggregate_claim_status([]) is ClaimStatus.NOT_SUPPORTED
+
+    def test_single_entailed(self) -> None:
+        assert aggregate_claim_status([self._result(ClaimStatus.ENTAILED)]) is (
+            ClaimStatus.ENTAILED
+        )
+
+    def test_single_contradicted(self) -> None:
+        assert aggregate_claim_status([self._result(ClaimStatus.CONTRADICTED)]) is (
+            ClaimStatus.CONTRADICTED
+        )
+
+    def test_single_not_supported(self) -> None:
+        assert aggregate_claim_status([self._result(ClaimStatus.NOT_SUPPORTED)]) is (
+            ClaimStatus.NOT_SUPPORTED
+        )
+
+    def test_entailed_beats_not_supported(self) -> None:
+        results = [
+            self._result(ClaimStatus.ENTAILED, "[S1]"),
+            self._result(ClaimStatus.NOT_SUPPORTED, "[S2]"),
+        ]
+        assert aggregate_claim_status(results) is ClaimStatus.ENTAILED
+
+    def test_entailed_beats_contradicted(self) -> None:
+        results = [
+            self._result(ClaimStatus.ENTAILED, "[S1]"),
+            self._result(ClaimStatus.CONTRADICTED, "[S2]"),
+        ]
+        assert aggregate_claim_status(results) is ClaimStatus.ENTAILED
+
+    def test_contradicted_beats_not_supported(self) -> None:
+        results = [
+            self._result(ClaimStatus.NOT_SUPPORTED, "[S1]"),
+            self._result(ClaimStatus.CONTRADICTED, "[S2]"),
+        ]
+        assert aggregate_claim_status(results) is ClaimStatus.CONTRADICTED
+
+    def test_all_not_supported(self) -> None:
+        results = [
+            self._result(ClaimStatus.NOT_SUPPORTED, "[S1]"),
+            self._result(ClaimStatus.NOT_SUPPORTED, "[S2]"),
+        ]
+        assert aggregate_claim_status(results) is ClaimStatus.NOT_SUPPORTED

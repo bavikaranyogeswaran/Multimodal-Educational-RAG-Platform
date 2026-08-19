@@ -1,7 +1,9 @@
-"""Deterministic validators that check model responses before any semantic pass.
+"""Validators for grounded model responses.
 
-These run without a model call and without database access. They examine facts that can
-be established by inspection of the response itself and the evidence set that was sent.
+The deterministic layer runs first — no model call, no database access — checking facts
+that can be established by inspection of the response and the evidence set that was sent.
+The semantic layer follows: it calls the model once per (claim, cited passage) pair to
+judge whether the passage actually supports what the claim asserts.
 """
 
 from __future__ import annotations
@@ -9,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from app.domain.enums import ClaimStatus
+from app.domain.errors import GenerationParseError
 from app.domain.models.entities import LabeledPassage
 from app.domain.models.generation import Claim, GeneratedAnswer
 
@@ -28,6 +32,79 @@ class CitationCheckResult:
     @property
     def has_fabricated_citations(self) -> bool:
         return bool(self.fabricated_labels)
+
+
+@dataclass(frozen=True, slots=True)
+class EntailmentResult:
+    """Outcome of checking one (claim, passage) pair for semantic support.
+
+    The claim's text was checked against the single passage named by `passage_label`.
+    A claim with multiple citations produces one EntailmentResult per citation, and
+    `aggregate_claim_status` collapses them into a single ClaimStatus.
+    """
+
+    claim: Claim
+    passage_label: str
+    status: ClaimStatus
+
+
+#: System preamble for the entailment check prompt. Kept here so the port and the
+#: infrastructure adapter share the same text without either importing the other.
+ENTAILMENT_PREAMBLE = (
+    "You are a precise fact-checker. Given a factual claim and a single reference "
+    "passage, judge whether the passage supports, contradicts, or does not address "
+    "the claim."
+)
+
+#: Output schema for the entailment check — one word from a closed set.
+ENTAILMENT_SCHEMA = """\
+Respond with exactly one word: ENTAILED, CONTRADICTED, or NOT_SUPPORTED.
+
+- ENTAILED: the passage directly states or clearly implies the claim is true.
+- CONTRADICTED: the passage directly states or clearly implies the claim is false.
+- NOT_SUPPORTED: the passage does not address the claim at all.
+
+No explanation, no punctuation, no extra words — only the single word."""
+
+
+def parse_entailment_status(raw: str) -> ClaimStatus:
+    """Map the model's one-word response to a ClaimStatus.
+
+    Strips whitespace and normalises case so minor formatting variations do not
+    cause parse failures. Raises GenerationParseError for any unrecognised value.
+    """
+    normalised = raw.strip().upper()
+    _map: dict[str, ClaimStatus] = {
+        "ENTAILED": ClaimStatus.ENTAILED,
+        "CONTRADICTED": ClaimStatus.CONTRADICTED,
+        "NOT_SUPPORTED": ClaimStatus.NOT_SUPPORTED,
+    }
+    status = _map.get(normalised)
+    if status is None:
+        raise GenerationParseError(
+            f"expected ENTAILED, CONTRADICTED, or NOT_SUPPORTED; got {raw!r}"
+        )
+    return status
+
+
+def aggregate_claim_status(results: Sequence[EntailmentResult]) -> ClaimStatus:
+    """Collapse per-passage results for one claim into a single ClaimStatus.
+
+    ENTAILED when at least one cited passage directly supports the claim. Without
+    any support, CONTRADICTED when at least one cited passage directly opposes it.
+    NOT_SUPPORTED when nothing cited addresses the claim at all.
+
+    An empty sequence — which arises when the citation existence check removed
+    all passages before the semantic check ran — returns NOT_SUPPORTED.
+    """
+    if not results:
+        return ClaimStatus.NOT_SUPPORTED
+    statuses = {r.status for r in results}
+    if ClaimStatus.ENTAILED in statuses:
+        return ClaimStatus.ENTAILED
+    if ClaimStatus.CONTRADICTED in statuses:
+        return ClaimStatus.CONTRADICTED
+    return ClaimStatus.NOT_SUPPORTED
 
 
 def check_citation_existence(
