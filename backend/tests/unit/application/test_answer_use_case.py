@@ -11,7 +11,13 @@ from unittest.mock import AsyncMock, MagicMock
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
-from app.domain.enums import MessageRole, MessageStatus, ModelTask
+from app.domain.enums import (
+    InstructionCategory,
+    MessageRole,
+    MessageStatus,
+    ModelTask,
+    RequirementLevel,
+)
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.scope import ScopeContext
@@ -205,6 +211,40 @@ class TestAnswerUseCase:
         assert len(request.conversation_history) == 2
         assert request.conversation_history[0].role is MessageRole.USER
         assert request.conversation_history[1].role is MessageRole.ASSISTANT
+
+    async def test_the_turn_arrives_as_named_requirements(self) -> None:
+        """The instructions this use case declares reach the prompt as a numbered list, so
+        an answer can be checked against them one requirement at a time."""
+        gateway = _mock_gateway()
+        await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+        request = gateway.generate_stream.call_args.args[0]
+        names = [r.identifier for r in request.mandatory_requirements]
+        assert names == [f"R{n}" for n in range(1, len(names) + 1)]
+        assert len(names) > 1
+
+    async def test_the_security_requirement_is_read_before_everything_else(self) -> None:
+        """A rule stated after a style note reads as one opinion among several, because
+        whatever is read last is read freshest."""
+        gateway = _mock_gateway()
+        await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+        request = gateway.generate_stream.call_args.args[0]
+        categories = [r.instruction.category for r in request.mandatory_requirements]
+        assert categories[0] is InstructionCategory.SECURITY_AND_PRIVACY
+        assert categories == sorted(categories)
+
+    async def test_grounding_binds_critically_and_style_does_not(self) -> None:
+        """The classification is what lets the budget give up a preference without giving
+        up a rule alongside it."""
+        gateway = _mock_gateway()
+        await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+        request = gateway.generate_stream.call_args.args[0]
+        by_category = {
+            r.instruction.category: r.instruction.level for r in request.mandatory_requirements
+        }
+        assert by_category[InstructionCategory.GROUNDING_AND_SOURCE_USE] is (
+            RequirementLevel.CRITICAL
+        )
+        assert by_category[InstructionCategory.STYLE_PREFERENCE] is RequirementLevel.PREFERRED
 
     async def test_model_task_is_answer_generation(self) -> None:
         gateway = _mock_gateway()

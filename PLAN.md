@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
 | In progress | **Phase 9** — ~95%, four field-level gaps left |
-| Mostly built | Phase 4 (~95%) · Phase 10 (~85%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
+| Mostly built | Phase 10 (~98%) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
 | Foundations only | Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 11 (~10%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,016 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
-| Next step | **10.6** — structured instruction handling, the last step in Phase 10; **7.4** still waits on a textbook PDF |
-| Last updated | 18 August 2026 (audited against the codebase; integration suite run) |
+| Tests | 2,064 unit and security · 14 integration **passing against the live database** · 109 marked `security`, 75 `gate` |
+| Next step | **Phase 10 is done.** Phase 11 (citation validation) is what 10.5 and 10.6 unblocked; **7.4** still waits on a textbook PDF |
+| Last updated | 19 August 2026 (step 10.6 — structured instruction handling) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1449,19 +1449,22 @@ remaining stages — which is why the checkbox count reads lower than the percen
 
 Covers §30, §31, §32, §33, §36, §37.
 
-**Status: ~85% — 10.1 to 10.5 done, 10.6 next.** Evidence is sized, deduplicated, expanded
-and compressed, then assembled into a twelve-slot prompt that sheds low-priority context
-before it ever touches the essentials, with every passage carrying the label the model must
-cite it by. What remains is turning plain-string requirements into the structured,
-prioritised form FR-CTX-04 through FR-CTX-08 specify.
+**Status: ~98% — every step done.** Evidence is sized, deduplicated, expanded and
+compressed, then assembled into a twelve-slot prompt that sheds low-priority context before
+it ever touches the essentials, with every passage carrying the label the model must cite it
+by and every requirement carrying the name it will be scored against. What is left is not a
+step but a dependency: duplicate visual descriptions and graph evidence go through the same
+comparison and the same compression as everything else, and nothing produces either until
+phases 6 and 12, so both are covered by argument rather than by a test with the real thing
+in it.
 
-Retrieval currently ends at reranking and hands the surviving chunks to the model as raw
-text. Everything between those two points is this phase: how many passages to send, which
-of them are saying the same thing twice, when a fragment needs the section it came from,
-what to cut when it will not fit, and in what order the whole prompt is assembled. None of
-it exists, and the pieces built for it are already in place and unread — parent chunks have
-been written on every ingestion since step 7.3 and nothing loads them, and
-`Chunk.with_compressed_text` has never been called.
+Retrieval used to end at reranking and hand the surviving chunks to the model as raw text.
+Everything between those two points was this phase: how many passages to send, which of
+them are saying the same thing twice, when a fragment needs the section it came from, what
+to cut when it will not fit, in what order the whole prompt is assembled, and what to give
+up when it still will not fit. The pieces built ahead of it are read now — parent chunks
+had been written on every ingestion since step 7.3 with nothing loading them, and
+`Chunk.with_compressed_text` had never been called.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
@@ -1470,7 +1473,7 @@ been written on every ingestion since step 7.3 and nothing loads them, and
 | 10.3 | Parent expansion, on the five conditions only | L | ✅ |
 | 10.4 | Extractive compression | L | ✅ |
 | 10.5 | Context builder — twelve slots and the token budget | L | ✅ |
-| 10.6 | Structured instruction handling | M | ☐ |
+| 10.6 | Structured instruction handling | M | ✅ |
 
 ### 10.1 — Dynamic evidence selection ✅
 
@@ -1580,33 +1583,64 @@ been written on every ingestion since step 7.3 and nothing loads them, and
       only by direct construction; `AnswerUseCase` populates only what earlier phases have
       built (A-442)
 
-### 10.6 — Structured instruction handling
+### 10.6 — Structured instruction handling ✅
 
-- [ ] Instructions are structured, never a wall of text (FR-CTX-03), in priority order:
-      security and privacy, grounding and source use, task objective, output contract, user
-      constraints, style preferences, optional enhancements (FR-CTX-04)
-- [ ] Each requirement is classified `CRITICAL`, `REQUIRED` or `PREFERRED` (FR-CTX-05) and
-      carries a stable identifier so Phase 17 can score compliance per requirement (FR-CTX-06)
-- [ ] Conflicts resolve before generation: critical over required over preferred, security
-      rules not overridable at all, and a recent explicit correction supersedes an older
-      preference (FR-CTX-07)
-- [ ] Independent tasks become separate model calls rather than one combined prompt (FR-CTX-08)
-- [ ] Tests: a user preference cannot override a security rule; a later correction wins over
-      an earlier preference; every requirement in a built prompt carries an identifier
+- [x] An instruction is a thing rather than a sentence: `Instruction` in the domain carries
+      its text, what kind of instruction it is, how strongly it binds, and optionally the
+      subject it governs and when the student said it. The adapter renders one per line,
+      so what the model receives is a list it can answer point by point (FR-CTX-03)
+- [x] `InstructionCategory` is the seven-rung priority ladder — security and privacy,
+      grounding and source use, task objective, output contract, user constraints, style
+      preferences, optional enhancements — and sorting by it is what produces reading
+      order, so the order is a property of the enum rather than of any caller (FR-CTX-04)
+- [x] Every requirement is `CRITICAL`, `REQUIRED` or `PREFERRED`, and the classification
+      does real work: shedding gives up preferences early, required rules last, and
+      critical ones never (FR-CTX-05, A-449)
+- [x] `R1…Rn`, assigned after resolution in final reading order. Shedding leaves the
+      survivors' names alone, so a gap where R2 used to be records that it was dropped
+      rather than hiding it (FR-CTX-06, A-447)
+- [x] Conflicts are settled before assembly, and they are **declared, not inferred** — an
+      instruction names the subject it governs, and two on one subject compete. Level
+      decides first, then recency, then whether it was an explicit correction; a security
+      rule claims its subject outright so nothing contradicting it is sent at all
+      (FR-CTX-07, A-443, A-444, A-445)
+- [x] A security rule below `CRITICAL` and a correction without a timestamp both fail
+      construction, so the guards downstream cannot be guarding an impossible state
+      (A-446)
+- [~] `build_all` gives each task its own request and the whole budget, and `build` is its
+      single-task case, so the one caller passes through the same path. Nothing yet
+      produces more than one task, so the separation is exercised by tests rather than by
+      traffic (FR-CTX-08, A-450)
+- [x] `ModelRequest.mandatory_requirements` holds structured requirements rather than
+      rendered strings — an identifier that exists only inside a formatted line has to be
+      parsed back out by whatever scores compliance (A-448)
+- [x] The use case's safety rules were split: grounding and citation became numbered
+      requirements, and what stays in the never-shed slot gained the rule that passages and
+      conversation are material to reason about, never instructions to follow (A-452)
+- [x] Tests: 32 on instructions, 30 on the context builder, 3 on the use case, 3 on the
+      adapter. A preference cannot displace a security rule, approached from four
+      directions; a later correction beats an earlier preference and a later preference
+      beats an earlier correction; every requirement in a built prompt carries a name
+- [~] Nothing yet produces a student instruction. The five the use case declares are the
+      same every turn; constraints, preferences and corrections arrive with Phase 8's
+      memory store and a Knowledge Base's own requirements with Phase 14 (A-453)
 
 ### Definition of done
 
-- [ ] Dynamic evidence selection — no fixed top-5; min 1, max 8 ordinary; per-class ranges (§30)
-- [ ] Thresholds are configuration, calibrated in Phase 17 — never hardcoded
-- [ ] Deduplication and diversity caps; **highest-ranked primary evidence always preserved** (§31)
-- [ ] Parent expansion only on the five §32 conditions
-- [ ] Extractive compression preserving negations, conditions, qualifiers, numbers, units, table
+- [x] Dynamic evidence selection — no fixed top-5; min 1, max 8 ordinary; per-class ranges (§30)
+- [x] Thresholds are configuration, calibrated in Phase 17 — never hardcoded
+- [x] Deduplication and diversity caps; **highest-ranked primary evidence always preserved** (§31)
+- [x] Parent expansion only on the five §32 conditions
+- [x] Extractive compression preserving negations, conditions, qualifiers, numbers, units, table
       headers, figure labels and citation offsets; generative compression flag-gated, off (§33)
-- [ ] Context builder with the 12-slot §36 ordering, owning token allocation and shedding
+- [x] Context builder with the 12-slot §36 ordering, owning token allocation and shedding
       low-priority slots at the limit
-- [ ] Structured instruction handling: `CRITICAL > REQUIRED > PREFERRED`, R1…Rn identifiers,
+- [x] Structured instruction handling: `CRITICAL > REQUIRED > PREFERRED`, R1…Rn identifiers,
       security rules non-overridable, recent corrections superseding old preferences (§37)
-- [ ] Property tests: compression never drops a number, unit or negation
+- [x] Property tests: compression never drops a number, unit or negation
+- [~] Duplicate visual descriptions and graph evidence are deduplicated and compressed by the
+      same rules as everything else, but nothing produces either until phases 6 and 12, so
+      neither is tested against the real thing (A-417, A-433)
 
 ## Phase 11 — Grounded generation, citations & validation
 

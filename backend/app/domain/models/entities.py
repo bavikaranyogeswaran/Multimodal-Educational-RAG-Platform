@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from app.domain.enums import MessageRole, ModelTask
 from app.domain.errors import InvariantViolationError
+from app.domain.models.instructions import NumberedRequirement
 from app.domain.values import UntrustedText
 
 
@@ -62,8 +63,11 @@ class ModelRequest:
        1. system_preamble, safety_rules — identity and the constraints that apply before
           any task logic; safety rules are never dropped and never outranked
        2. task_instructions        — what this specific invocation requires
-       3. mandatory_requirements   — this turn's specific constraints, plain for now; given
-          priority and stable identifiers once structured instruction handling is built
+       3. mandatory_requirements   — this turn's requirements, each classified by how
+          strongly it binds and named so a reply can be checked against it one at a time.
+          Named for the slot rather than for its contents: preferences travel here too,
+          because a preference read beside the rules it yields to is a preference whose
+          rank is visible, and one kept in a list of its own is not
        4. knowledge_base_state     — what Knowledge Base this conversation is scoped to
        5. pinned_memory            — durable facts the student has fixed in place
        6. relevant_memory          — facts the memory store judged relevant to this turn
@@ -81,7 +85,7 @@ class ModelRequest:
     safety_rules: tuple[str, ...]
     task_instructions: str
     query: str
-    mandatory_requirements: tuple[str, ...] = ()
+    mandatory_requirements: tuple[NumberedRequirement, ...] = ()
     knowledge_base_state: str | None = None
     pinned_memory: tuple[str, ...] = ()
     relevant_memory: tuple[str, ...] = ()
@@ -102,6 +106,7 @@ class ModelRequest:
             raise InvariantViolationError("ModelRequest.query must not be blank")
         self._require_no_blank_entries()
         self._require_no_blank_optional_slots()
+        self._require_distinct_requirement_names()
         if self.max_tokens is not None and self.max_tokens < 1:
             raise InvariantViolationError(
                 f"ModelRequest.max_tokens must be >= 1, got {self.max_tokens}"
@@ -115,7 +120,6 @@ class ModelRequest:
         """A blank entry in a list slot is a bug upstream, not an empty item to render."""
         for field_name, entries in (
             ("safety_rules", self.safety_rules),
-            ("mandatory_requirements", self.mandatory_requirements),
             ("pinned_memory", self.pinned_memory),
             ("relevant_memory", self.relevant_memory),
             ("critical_checklist", self.critical_checklist),
@@ -133,6 +137,18 @@ class ModelRequest:
                 raise InvariantViolationError(
                     f"ModelRequest.{field_name} must not be blank when present"
                 )
+
+    def _require_distinct_requirement_names(self) -> None:
+        """Two requirements answering to one name make every note about it ambiguous.
+
+        A reply that says it followed R3, checked against a prompt with two of them, is
+        neither right nor wrong — and a check that cannot fail is not a check.
+        """
+        names = [requirement.identifier for requirement in self.mandatory_requirements]
+        if len(set(names)) != len(names):
+            raise InvariantViolationError(
+                f"every requirement identifier must be distinct, got {names}"
+            )
 
     @property
     def has_evidence(self) -> bool:

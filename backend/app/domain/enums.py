@@ -394,15 +394,44 @@ class CoverageStatus(StrEnum):
 
 
 class RequirementLevel(IntEnum):
-    """Priority of an instruction given to the model.
+    """How strongly one instruction binds, relative to another that contradicts it.
 
-    Ordered, because conflicts are resolved by comparing levels. Security rules are
-    critical and cannot be overridden by anything below them.
+    Ordered, because conflicts are resolved by comparing levels: higher wins. Security
+    rules are always critical, so nothing below them can ever displace one.
     """
 
     PREFERRED = 10
     REQUIRED = 20
     CRITICAL = 30
+
+
+class InstructionCategory(IntEnum):
+    """What kind of instruction it is, numbered by the order it is read in.
+
+    Ascending is reading order, not strength — strength is `RequirementLevel`, and the two
+    run in opposite directions on purpose. Sorting a set of instructions by category gives
+    the sequence they belong in: what the model must never do, then how it must treat its
+    sources, then what it is being asked for, then the shape of the reply, then the
+    student's own constraints, then how it should read, then what would merely be nice.
+
+    The order carries meaning of its own. A rule stated after a style preference reads as
+    one opinion among several rather than as the rule it is, because whatever is read last
+    is read freshest.
+    """
+
+    SECURITY_AND_PRIVACY = 10
+    GROUNDING_AND_SOURCE_USE = 20
+    TASK_OBJECTIVE = 30
+    OUTPUT_CONTRACT = 40
+    USER_CONSTRAINT = 50
+    STYLE_PREFERENCE = 60
+    OPTIONAL_ENHANCEMENT = 70
+
+    @property
+    def is_security(self) -> bool:
+        """Security rules are settled differently from everything else: they are never
+        weighed against a competing instruction, only ever added to."""
+        return self is InstructionCategory.SECURITY_AND_PRIVACY
 
 
 # ---------------------------------------------------------------------------

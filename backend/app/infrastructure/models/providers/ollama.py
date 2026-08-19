@@ -41,7 +41,10 @@ def _build_messages(request: ModelRequest) -> list[dict[str, str]]:
     The system message combines every purely structural slot — identity, safety rules, the
     task, this turn's requirements, the Knowledge Base state — into one authoritative
     block, because Ollama's chat API has no notion of a slot boundary within a single role
-    and these are framing the model reads once, not content it is being handed. Memory,
+    and these are framing the model reads once, not content it is being handed. Each
+    requirement occupies its own line, carrying the name a reply can refer to it by and how
+    strongly it binds, so what the model receives is a list it can answer point by point
+    rather than a paragraph it has to take as a whole. Memory,
     the conversation summary, evidence, the schema and the checklist are turn content
     instead, and each arrives as its own acknowledged exchange — a technique carried over
     from before this request had twelve slots, kept because a fact presented as something
@@ -53,7 +56,7 @@ def _build_messages(request: ModelRequest) -> list[dict[str, str]]:
     apparent freshness.
     """
     system_parts = [request.system_preamble, *request.safety_rules, request.task_instructions]
-    system_parts.extend(request.mandatory_requirements)
+    system_parts.extend(requirement.rendered for requirement in request.mandatory_requirements)
     if request.knowledge_base_state:
         system_parts.append(request.knowledge_base_state)
 
@@ -147,9 +150,7 @@ class OllamaModelGateway:
 
         t0 = time.monotonic()
         try:
-            resp = await self._client.post(
-                "/api/chat", json=payload, timeout=self._timeout
-            )
+            resp = await self._client.post("/api/chat", json=payload, timeout=self._timeout)
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             retryable = exc.response.status_code >= 500
@@ -170,9 +171,7 @@ class OllamaModelGateway:
             latency_ms=latency_ms,
         )
 
-    async def generate_stream(
-        self, request: ModelRequest
-    ) -> AsyncGenerator[str, None]:
+    async def generate_stream(self, request: ModelRequest) -> AsyncGenerator[str, None]:
         """Yield individual token strings as they arrive from the Ollama server.
 
         Uses /api/chat with stream:true, which returns one NDJSON line per token.
@@ -216,6 +215,8 @@ class OllamaModelGateway:
             raise ProviderError("ollama", str(exc), retryable=True) from exc
 
     async def generate_with_image(
-        self, request: ModelRequest, image: bytes  # noqa: ARG002
+        self,
+        request: ModelRequest,  # noqa: ARG002
+        image: bytes,  # noqa: ARG002
     ) -> ModelResponse:
         raise UnsupportedCapabilityError(self._model_id, "image input")

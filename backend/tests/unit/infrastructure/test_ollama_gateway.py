@@ -20,9 +20,16 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from app.domain.enums import DataBoundary, MessageRole, ModelTask
+from app.domain.enums import (
+    DataBoundary,
+    InstructionCategory,
+    MessageRole,
+    ModelTask,
+    RequirementLevel,
+)
 from app.domain.errors import ProviderError, UnsupportedCapabilityError
 from app.domain.models.entities import ConversationTurn, LabeledPassage, ModelRequest
+from app.domain.models.instructions import Instruction, NumberedRequirement
 from app.domain.values import UntrustedText
 from app.infrastructure.models.providers.ollama import OllamaModelGateway, _build_messages
 
@@ -37,7 +44,7 @@ def _make_request(
     preamble: str = "You are a helpful tutor.",
     safety_rules: tuple[str, ...] = (),
     instructions: str = "Answer the student's question.",
-    mandatory_requirements: tuple[str, ...] = (),
+    mandatory_requirements: tuple[NumberedRequirement, ...] = (),
     knowledge_base_state: str | None = None,
     pinned_memory: tuple[str, ...] = (),
     relevant_memory: tuple[str, ...] = (),
@@ -67,6 +74,17 @@ def _make_request(
         critical_checklist=critical_checklist,
         max_tokens=max_tokens,
         temperature=temperature,
+    )
+
+
+def _requirement(identifier: str, text: str) -> NumberedRequirement:
+    return NumberedRequirement(
+        identifier=identifier,
+        instruction=Instruction(
+            text=text,
+            category=InstructionCategory.OUTPUT_CONTRACT,
+            level=RequirementLevel.REQUIRED,
+        ),
     )
 
 
@@ -216,14 +234,32 @@ class TestPromptAssembly:
         assert "Introductory Biology" in msgs[0]["content"]
 
     def test_mandatory_requirements_are_in_the_system_message(self) -> None:
-        req = _make_request(mandatory_requirements=("Answer in under 100 words.",))
+        req = _make_request(mandatory_requirements=(_requirement("R1", "Answer in 100 words."),))
         msgs = _build_messages(req)
-        assert "Answer in under 100 words." in msgs[0]["content"]
+        assert "Answer in 100 words." in msgs[0]["content"]
+
+    def test_each_requirement_carries_its_name_and_how_strongly_it_binds(self) -> None:
+        """Without the name a reply cannot say which requirement it followed, and without
+        the level the model cannot tell a rule from a suggestion."""
+        req = _make_request(mandatory_requirements=(_requirement("R2", "Cite every passage."),))
+        msgs = _build_messages(req)
+        assert "R2 [REQUIRED] Cite every passage." in msgs[0]["content"]
+
+    def test_requirements_occupy_one_line_each(self) -> None:
+        """A list the model can answer point by point, rather than a paragraph it has to
+        take as a whole."""
+        req = _make_request(
+            mandatory_requirements=(
+                _requirement("R1", "Cite every passage."),
+                _requirement("R2", "Answer in 100 words."),
+            )
+        )
+        lines = _build_messages(req)[0]["content"].splitlines()
+        assert any(line.startswith("R1 ") for line in lines)
+        assert any(line.startswith("R2 ") for line in lines)
 
     def test_evidence_injected_as_user_turn(self) -> None:
-        req = _make_request(
-            evidence=(_passage("Photosynthesis converts light into energy."),)
-        )
+        req = _make_request(evidence=(_passage("Photosynthesis converts light into energy."),))
         msgs = _build_messages(req)
         joined = " ".join(m["content"] for m in msgs)
         assert "Photosynthesis converts light into energy." in joined
@@ -457,9 +493,7 @@ def _ndjson_chunks(texts: list[str]) -> list[str]:
     return lines
 
 
-def _mock_stream_client(
-    texts: list[str], captured: dict | None = None
-) -> MagicMock:
+def _mock_stream_client(texts: list[str], captured: dict | None = None) -> MagicMock:
     """Return a client whose .stream() context manager yields the given texts."""
     chunk_lines = _ndjson_chunks(texts)
 
@@ -508,9 +542,7 @@ class TestStreaming:
     async def test_max_tokens_in_stream_options(self) -> None:
         captured: dict = {}
         client = _mock_stream_client(["hi"], captured=captured)
-        _ = [
-            t async for t in _gateway(client).generate_stream(_make_request(max_tokens=256))
-        ]
+        _ = [t async for t in _gateway(client).generate_stream(_make_request(max_tokens=256))]
         assert captured["kwargs"]["json"]["options"]["num_predict"] == 256
 
     async def test_stops_after_done_chunk(self) -> None:

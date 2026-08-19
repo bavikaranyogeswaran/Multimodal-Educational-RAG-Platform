@@ -9,12 +9,24 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.enums import MessageRole, ModelTask
+from app.domain.enums import InstructionCategory, MessageRole, ModelTask, RequirementLevel
 from app.domain.errors import InvariantViolationError
 from app.domain.models.entities import ConversationTurn, LabeledPassage, ModelRequest, ModelResponse
+from app.domain.models.instructions import Instruction, NumberedRequirement
 from app.domain.values import UntrustedText
 
 from .conftest import Builder
+
+
+def _requirement(identifier: str, text: str) -> NumberedRequirement:
+    return NumberedRequirement(
+        identifier=identifier,
+        instruction=Instruction(
+            text=text,
+            category=InstructionCategory.OUTPUT_CONTRACT,
+            level=RequirementLevel.REQUIRED,
+        ),
+    )
 
 
 class TestConversationTurnConstruction:
@@ -39,9 +51,7 @@ class TestConversationTurnConstruction:
 
 
 class TestModelRequestConstruction:
-    def test_rejects_blank_system_preamble(
-        self, make_model_request: Builder[ModelRequest]
-    ) -> None:
+    def test_rejects_blank_system_preamble(self, make_model_request: Builder[ModelRequest]) -> None:
         with pytest.raises(InvariantViolationError, match="system_preamble"):
             make_model_request(system_preamble="  ")
 
@@ -73,11 +83,29 @@ class TestModelRequestConstruction:
         with pytest.raises(InvariantViolationError, match="relevant_memory"):
             make_model_request(relevant_memory=("Valid fact.", "  "))
 
-    def test_rejects_a_blank_entry_in_mandatory_requirements(
+    def test_rejects_two_requirements_answering_to_one_name(
         self, make_model_request: Builder[ModelRequest]
     ) -> None:
-        with pytest.raises(InvariantViolationError, match="mandatory_requirements"):
-            make_model_request(mandatory_requirements=("Valid requirement.", "  "))
+        """A reply claiming it followed R1, checked against a prompt holding two of them,
+        is neither right nor wrong — and a check that cannot fail is not a check."""
+        with pytest.raises(InvariantViolationError, match="distinct"):
+            make_model_request(
+                mandatory_requirements=(
+                    _requirement("R1", "Cite every passage."),
+                    _requirement("R1", "Answer in under 100 words."),
+                )
+            )
+
+    def test_accepts_requirements_with_distinct_names(
+        self, make_model_request: Builder[ModelRequest]
+    ) -> None:
+        request = make_model_request(
+            mandatory_requirements=(
+                _requirement("R1", "Cite every passage."),
+                _requirement("R2", "Answer in under 100 words."),
+            )
+        )
+        assert len(request.mandatory_requirements) == 2
 
     def test_rejects_a_blank_entry_in_critical_checklist(
         self, make_model_request: Builder[ModelRequest]
@@ -113,15 +141,11 @@ class TestModelRequestConstruction:
         assert req.rolling_summary is None
         assert req.output_schema is None
 
-    def test_rejects_max_tokens_below_one(
-        self, make_model_request: Builder[ModelRequest]
-    ) -> None:
+    def test_rejects_max_tokens_below_one(self, make_model_request: Builder[ModelRequest]) -> None:
         with pytest.raises(InvariantViolationError, match="max_tokens"):
             make_model_request(max_tokens=0)
 
-    def test_rejects_temperature_above_two(
-        self, make_model_request: Builder[ModelRequest]
-    ) -> None:
+    def test_rejects_temperature_above_two(self, make_model_request: Builder[ModelRequest]) -> None:
         with pytest.raises(InvariantViolationError, match="temperature"):
             make_model_request(temperature=2.01)
 
@@ -137,9 +161,7 @@ class TestModelRequestConstruction:
         assert make_model_request(temperature=0.0).temperature == 0.0
         assert make_model_request(temperature=2.0).temperature == 2.0
 
-    def test_accepts_empty_optional_slots(
-        self, make_model_request: Builder[ModelRequest]
-    ) -> None:
+    def test_accepts_empty_optional_slots(self, make_model_request: Builder[ModelRequest]) -> None:
         req = make_model_request(
             safety_rules=(),
             pinned_memory=(),
@@ -263,15 +285,11 @@ class TestModelRequestInjectionSafety:
 
 
 class TestModelResponseConstruction:
-    def test_rejects_blank_model_id(
-        self, make_model_response: Builder[ModelResponse]
-    ) -> None:
+    def test_rejects_blank_model_id(self, make_model_response: Builder[ModelResponse]) -> None:
         with pytest.raises(InvariantViolationError, match="model_id"):
             make_model_response(model_id="  ")
 
-    def test_rejects_blank_content(
-        self, make_model_response: Builder[ModelResponse]
-    ) -> None:
+    def test_rejects_blank_content(self, make_model_response: Builder[ModelResponse]) -> None:
         with pytest.raises(InvariantViolationError, match="content"):
             make_model_response(content=UntrustedText("  "))
 
@@ -287,9 +305,7 @@ class TestModelResponseConstruction:
         with pytest.raises(InvariantViolationError, match="completion_tokens"):
             make_model_response(completion_tokens=-1)
 
-    def test_rejects_negative_latency(
-        self, make_model_response: Builder[ModelResponse]
-    ) -> None:
+    def test_rejects_negative_latency(self, make_model_response: Builder[ModelResponse]) -> None:
         with pytest.raises(InvariantViolationError, match="latency_ms"):
             make_model_response(latency_ms=-1)
 
@@ -306,14 +322,10 @@ class TestModelResponseConstruction:
         assert resp.finish_reason is None
         assert resp.latency_ms is None
 
-    def test_content_is_untrusted(
-        self, make_model_response: Builder[ModelResponse]
-    ) -> None:
+    def test_content_is_untrusted(self, make_model_response: Builder[ModelResponse]) -> None:
         resp = make_model_response()
         assert isinstance(resp.content, UntrustedText)
 
-    def test_model_task_is_stored(
-        self, make_model_response: Builder[ModelResponse]
-    ) -> None:
+    def test_model_task_is_stored(self, make_model_response: Builder[ModelResponse]) -> None:
         resp = make_model_response(model_task=ModelTask.QUERY_REWRITE)
         assert resp.model_task is ModelTask.QUERY_REWRITE
