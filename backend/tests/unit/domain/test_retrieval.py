@@ -12,8 +12,9 @@ from uuid import uuid4
 import pytest
 
 from app.domain.documents.chunks import Chunk
-from app.domain.enums import EarlyExitPath, QueryClass, RetrieverKind
+from app.domain.enums import ChunkType, EarlyExitPath, ElementType, QueryClass, RetrieverKind
 from app.domain.errors import InvariantViolationError, NotFoundError
+from app.domain.models.generation import Claim, GeneratedAnswer
 from app.domain.retrieval.entities import (
     Citation,
     Evidence,
@@ -21,6 +22,7 @@ from app.domain.retrieval.entities import (
     EvidenceSet,
     RetrievalFilters,
     RetrievalPlan,
+    resolve_citations,
 )
 from app.domain.values import BoundingBox
 
@@ -342,6 +344,167 @@ def test_a_citation_needs_a_real_page(make_evidence: Builder[Evidence]) -> None:
             label=EvidenceLabel(1),
             chunk_id=uuid4(),
             document_id=uuid4(),
+            chunk_type=ChunkType.TEXT,
             page_number=0,
             citation_order=0,
         )
+
+
+class TestCitationProvenance:
+    """What a citation must carry to still mean something once the prompt is gone."""
+
+    def test_carries_the_kind_of_passage_it_points_at(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        """Following a citation into a table is not the same act as following one into
+        prose, and the interface cannot tell which it is doing without being told."""
+        evidence = make_evidence(chunk_overrides={"chunk_type": ChunkType.TABLE})
+
+        citation = evidence.to_citation(order=0)
+
+        assert citation.chunk_type is ChunkType.TABLE
+
+    def test_carries_the_finer_structural_type_when_the_parser_found_one(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        evidence = make_evidence(chunk_overrides={"element_type": ElementType.CAPTION})
+
+        assert evidence.to_citation(order=0).element_type is ElementType.CAPTION
+
+    def test_a_chunk_the_parser_never_typed_cites_without_an_element_type(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        assert make_evidence().to_citation(order=0).element_type is None
+
+    def test_records_what_the_passage_said_when_it_was_cited(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        """Reprocessing rewrites chunks. A citation whose hash no longer matches its chunk
+        points at text that has since changed, and nothing else would reveal that."""
+        evidence = make_evidence(chunk_overrides={"content_hash": "sha256:abc123"})
+
+        assert evidence.to_citation(order=0).evidence_hash == "sha256:abc123"
+
+    def test_cites_the_first_page_of_a_passage_that_spans_several(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        evidence = make_evidence(chunk_overrides={"page_start": 67, "page_end": 69})
+
+        assert evidence.to_citation(order=0).page_number == 67
+
+
+class TestResolveCitations:
+    """Turning a validated answer into the records that outlive the turn."""
+
+    @staticmethod
+    def _answer(*claims: Claim) -> GeneratedAnswer:
+        return GeneratedAnswer(answer="An answer.", claims=tuple(claims))
+
+    def test_one_record_per_cited_label_not_per_claim(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        """A claim resting on two passages is traceable to two places; collapsing them
+        to one record would silently drop a source."""
+        evidence = [
+            make_evidence(label=EvidenceLabel(1)),
+            make_evidence(label=EvidenceLabel(2)),
+        ]
+        answer = self._answer(Claim(text="Both support this.", citations=("[S1]", "[S2]")))
+
+        citations = resolve_citations(answer, evidence)
+
+        assert len(citations) == 2
+        assert [c.label for c in citations] == [EvidenceLabel(1), EvidenceLabel(2)]
+
+    def test_the_same_passage_cited_by_two_claims_is_recorded_twice(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        """The question a reader asks is which passage supports *this* claim, so one
+        record per claim is what answers it."""
+        evidence = [make_evidence(label=EvidenceLabel(1))]
+        answer = self._answer(
+            Claim(text="First.", citations=("[S1]",)),
+            Claim(text="Second.", citations=("[S1]",)),
+        )
+
+        assert len(resolve_citations(answer, evidence)) == 2
+
+    def test_order_runs_across_the_whole_answer(self, make_evidence: Builder[Evidence]) -> None:
+        """Restarting per claim would make the order meaningless for sorting the set back
+        into the sequence the answer argues in."""
+        evidence = [
+            make_evidence(label=EvidenceLabel(1)),
+            make_evidence(label=EvidenceLabel(2)),
+        ]
+        answer = self._answer(
+            Claim(text="First.", citations=("[S1]", "[S2]")),
+            Claim(text="Second.", citations=("[S2]",)),
+        )
+
+        citations = resolve_citations(answer, evidence)
+
+        assert [c.citation_order for c in citations] == [0, 1, 2]
+
+    def test_keeps_the_order_the_model_made_its_case_in(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        evidence = [
+            make_evidence(label=EvidenceLabel(1)),
+            make_evidence(label=EvidenceLabel(2)),
+        ]
+        answer = self._answer(
+            Claim(text="First.", citations=("[S2]",)),
+            Claim(text="Second.", citations=("[S1]",)),
+        )
+
+        citations = resolve_citations(answer, evidence)
+
+        assert [c.label for c in citations] == [EvidenceLabel(2), EvidenceLabel(1)]
+
+    def test_a_label_naming_nothing_is_left_out_of_the_record(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        """Validation rejects fabricated labels long before this runs, but this is what
+        writes the permanent record, and an unresolvable row is worse than a shorter set."""
+        evidence = [make_evidence(label=EvidenceLabel(1))]
+        answer = self._answer(Claim(text="Partly invented.", citations=("[S1]", "[S99]")))
+
+        citations = resolve_citations(answer, evidence)
+
+        assert [c.label for c in citations] == [EvidenceLabel(1)]
+
+    def test_a_malformed_label_is_left_out_rather_than_raising(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        evidence = [make_evidence(label=EvidenceLabel(1))]
+        answer = self._answer(Claim(text="Badly cited.", citations=("not a label", "[S1]")))
+
+        assert len(resolve_citations(answer, evidence)) == 1
+
+    def test_order_stays_contiguous_when_a_label_is_skipped(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        """Numbering the records that survive, not the labels that were attempted — a gap
+        would imply a record exists that nobody wrote."""
+        evidence = [make_evidence(label=EvidenceLabel(1))]
+        answer = self._answer(Claim(text="Partly invented.", citations=("[S99]", "[S1]")))
+
+        assert [c.citation_order for c in resolve_citations(answer, evidence)] == [0]
+
+    def test_an_answer_that_abstained_produces_no_citations(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        answer = GeneratedAnswer(answer="Not covered.", claims=(), insufficient_evidence=True)
+
+        assert resolve_citations(answer, [make_evidence()]) == ()
+
+    def test_resolves_through_the_evidence_that_was_sent(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        """The label is positional, so the record must be built from the set that issued
+        it — not from a lookup that might find a different chunk carrying the same text."""
+        chunk_id = uuid4()
+        evidence = [make_evidence(label=EvidenceLabel(1), chunk_overrides={"id": chunk_id})]
+        answer = self._answer(Claim(text="Grounded.", citations=("[S1]",)))
+
+        assert resolve_citations(answer, evidence)[0].chunk_id == chunk_id

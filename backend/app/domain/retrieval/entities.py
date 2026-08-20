@@ -10,14 +10,16 @@ becomes detectable rather than plausible.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Self
 from uuid import UUID
 
 from app.domain.documents.chunks import Chunk
-from app.domain.enums import EarlyExitPath, ElementType, QueryClass, RetrieverKind
+from app.domain.enums import ChunkType, EarlyExitPath, ElementType, QueryClass, RetrieverKind
 from app.domain.errors import InvariantViolationError, NotFoundError
 from app.domain.invariants import require_non_negative, require_positive
+from app.domain.models.generation import GeneratedAnswer
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox
 
@@ -106,14 +108,23 @@ class Evidence:
         return len(self.retrievers) > 1
 
     def to_citation(self, order: int) -> Citation:
-        """The record persisted alongside an answer, so a claim stays traceable."""
+        """The record persisted alongside an answer, so a claim stays traceable.
+
+        `page_start` is the page cited even when the chunk spans several. A citation names
+        where to begin reading, and the first page is the only one that answers that for
+        every chunk; a range would have to be collapsed to a single page by whatever
+        followed the link anyway.
+        """
         return Citation(
             label=self.label,
             chunk_id=self.chunk.id,
             document_id=self.chunk.document_id,
+            chunk_type=self.chunk.chunk_type,
             page_number=self.chunk.page_start,
             citation_order=order,
+            element_type=self.chunk.element_type,
             bounding_box=self.chunk.bounding_box,
+            evidence_hash=self.chunk.content_hash,
         )
 
 
@@ -211,14 +222,32 @@ class EvidenceSet:
 
 @dataclass(frozen=True, slots=True)
 class Citation:
-    """A persisted link from a claim back to the passage that carries it."""
+    """A persisted link from a claim back to the passage that carries it.
+
+    Everything needed to take a reader to the source is here, because the evidence set that
+    produced it does not outlive the turn. A label alone is positional and means nothing
+    once the prompt is gone; these fields are what let a citation still be resolved a week
+    later.
+
+    `chunk_type` is carried alongside the location because where to look is not the same
+    question as what to expect there. A citation into a table is followed differently from
+    one into a paragraph — the reader is sent to a grid of numbers rather than to prose,
+    and an interface that cannot tell them apart has to guess.
+
+    `evidence_hash` records what the passage said at the moment it was cited. Chunks are
+    rewritten when a document is reprocessed, and a citation whose hash no longer matches
+    its chunk is pointing at text that has since changed — which is worth knowing, and
+    undetectable without storing the hash at citation time.
+    """
 
     label: EvidenceLabel
     chunk_id: UUID
     document_id: UUID
+    chunk_type: ChunkType
     page_number: int
     citation_order: int
 
+    element_type: ElementType | None = None
     bounding_box: BoundingBox | None = None
     evidence_hash: str | None = None
 
@@ -230,6 +259,43 @@ class Citation:
     def is_navigable(self) -> bool:
         """Whether the interface can highlight the exact region, not merely open the page."""
         return self.bounding_box is not None
+
+
+def resolve_citations(
+    answer: GeneratedAnswer,
+    evidence: Sequence[Evidence],
+) -> tuple[Citation, ...]:
+    """Turn a validated answer into the citation records that outlive the turn.
+
+    One record per (claim, cited label) pair rather than per claim, because a claim resting
+    on two passages is traceable to two places and collapsing them would lose one. The same
+    passage cited by two different claims likewise produces two records — the question a
+    reader asks is which passage supports *this* claim, not which passages the answer used
+    somewhere.
+
+    `citation_order` runs across the whole answer rather than restarting per claim, so the
+    records sort back into the order the answer makes its case in. Claims keep the order the
+    model emitted them; labels within a claim keep the order it cited them.
+
+    Labels that resolve to nothing are skipped. A validated answer has none — the citation
+    existence check rejects or repairs those long before this runs — but this function is
+    what writes the permanent record, and a permanent record built on a label nobody could
+    resolve would be worse than a shorter one.
+    """
+    by_label = {item.label: item for item in evidence}
+    citations: list[Citation] = []
+
+    for claim in answer.claims:
+        for raw in claim.citations:
+            label = EvidenceLabel.try_parse(raw)
+            if label is None:
+                continue
+            found = by_label.get(label)
+            if found is None:
+                continue
+            citations.append(found.to_citation(order=len(citations)))
+
+    return tuple(citations)
 
 
 @dataclass(frozen=True, slots=True)

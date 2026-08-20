@@ -13,9 +13,10 @@ from fastapi.testclient import TestClient
 from app.api.dependencies.answer import get_answer_use_case
 from app.api.dependencies.scope import get_kb_scope
 from app.api.routers.conversations import router as conversations_router
-from app.application.commands.answer import AnswerCommand
+from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import get_session
+from app.infrastructure.models.entailment import OllamaClaimEntailment
 
 _NOW = datetime(2025, 6, 1, tzinfo=UTC)
 _USER_ID = uuid.uuid4()
@@ -201,3 +202,31 @@ class TestStreamResponse:
         ) as client:
             resp = client.post(_STREAM_URL, json={"query": "q"})
         assert resp.status_code == 404
+
+
+class TestAnswerUseCaseWiring:
+    """The dependency itself, which every test above replaces with a mock.
+
+    Overriding it is what the route tests need and also what let the constructor and its
+    caller drift apart unnoticed: adding a required parameter to AnswerUseCase broke this
+    function without failing a single test, because nothing here ever called it.
+    """
+
+    async def test_builds_a_use_case_with_every_required_collaborator(self) -> None:
+        use_case = await get_answer_use_case(
+            retrieve=MagicMock(),
+            scope=_SCOPE,
+            container=MagicMock(),
+        )
+
+        assert isinstance(use_case, AnswerUseCase)
+
+    async def test_supplies_the_entailment_checker(self) -> None:
+        """Validation cannot run without it, and the use case would raise on construction."""
+        use_case = await get_answer_use_case(
+            retrieve=MagicMock(),
+            scope=_SCOPE,
+            container=MagicMock(),
+        )
+
+        assert isinstance(use_case._entailment, OllamaClaimEntailment)

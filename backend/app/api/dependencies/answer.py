@@ -21,6 +21,7 @@ from app.configuration.settings import get_settings
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.unit_of_work import build_conversation_unit_of_work
+from app.infrastructure.models.entailment import OllamaClaimEntailment
 
 
 async def get_answer_use_case(
@@ -37,4 +38,7 @@ async def get_answer_use_case(
             container.token_counter.count,
             token_budget=settings.model.prompt_token_budget,
         ),
+        # Built here rather than held as a container slot because it owns no resource of
+        # its own — it is the gateway plus a prompt, and the gateway is already wired.
+        entailment=OllamaClaimEntailment(container.model_gateway),
     )
