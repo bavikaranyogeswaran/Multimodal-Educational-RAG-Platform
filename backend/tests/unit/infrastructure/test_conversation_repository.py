@@ -29,8 +29,11 @@ from app.domain.enums import ChunkType, MessageRole, MessageStatus, RetrieverKin
 from app.domain.errors import ScopeViolationError
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
-from app.domain.values import UntrustedText
-from app.infrastructure.database.models.conversation import ConversationRetrievalChunkModel
+from app.domain.values import BoundingBox, UntrustedText
+from app.infrastructure.database.models.conversation import (
+    ConversationRetrievalChunkModel,
+    MessageCitationModel,
+)
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
 
@@ -116,6 +119,17 @@ def _make_evidence(
         rerank_score=rerank_score,
         fusion_score=fusion_score,
     )
+
+
+async def _citation_rows(
+    session: AsyncSession, message_id: uuid.UUID
+) -> list[MessageCitationModel]:
+    stmt = (
+        select(MessageCitationModel)
+        .where(MessageCitationModel.message_id == message_id)
+        .order_by(MessageCitationModel.citation_order)
+    )
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def _retrieval_rows(
@@ -682,3 +696,158 @@ class TestConversationScopeGuard:
                 _make_scope(), uuid.uuid4(), [_make_evidence(scope)]
             )
         session.merge.assert_not_called()
+
+    async def test_save_citations_rejects_foreign_scope(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        repo = _repo(scope, session)
+        with pytest.raises(ScopeViolationError):
+            await repo.save_citations(
+                _make_scope(), uuid.uuid4(), [_make_evidence(scope).to_citation(order=0)]
+            )
+        session.merge.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# save_citations
+# ---------------------------------------------------------------------------
+
+
+class TestSaveCitations:
+    """What the answer actually used, as opposed to what it was shown."""
+
+    @staticmethod
+    async def _assistant_message(
+        scope: ScopeContext, session: AsyncSession
+    ) -> tuple[SqlConversationRepository, Message]:
+        await _save_kb(scope, session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, session)
+        await repo.save(scope, conv)
+        await session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.ASSISTANT)
+        await repo.save_message(scope, msg)
+        await session.flush()
+        return repo, msg
+
+    async def test_writes_one_row_per_citation(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        repo, msg = await self._assistant_message(scope, sqlite_session)
+        citations = [
+            _make_evidence(scope, rank=i).to_citation(order=i) for i in range(3)
+        ]
+
+        await repo.save_citations(scope, msg.id, citations)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert len(await _citation_rows(sqlite_session, msg.id)) == 3
+
+    async def test_stores_the_label_unbracketed(self, sqlite_session: AsyncSession) -> None:
+        """The brackets are how the label is printed, not what it is."""
+        scope = _make_scope()
+        repo, msg = await self._assistant_message(scope, sqlite_session)
+
+        await repo.save_citations(
+            scope, msg.id, [_make_evidence(scope, rank=0).to_citation(order=0)]
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert (await _citation_rows(sqlite_session, msg.id))[0].label == "S1"
+
+    async def test_keeps_the_order_the_answer_argues_in(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        repo, msg = await self._assistant_message(scope, sqlite_session)
+        citations = [
+            _make_evidence(scope, rank=i).to_citation(order=i) for i in range(4)
+        ]
+
+        await repo.save_citations(scope, msg.id, citations)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _citation_rows(sqlite_session, msg.id)
+        assert [r.citation_order for r in rows] == [0, 1, 2, 3]
+        assert [r.chunk_id for r in rows] == [c.chunk_id for c in citations]
+
+    async def test_copies_the_location_rather_than_pointing_at_the_chunk(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """Reprocessing rewrites chunks. The row has to say where the passage was when it
+        was cited, or a rewritten chunk silently changes what a past answer claimed."""
+        scope = _make_scope()
+        repo, msg = await self._assistant_message(scope, sqlite_session)
+        evidence = _make_evidence(scope)
+        evidence = replace(
+            evidence,
+            chunk=replace(
+                evidence.chunk,
+                page_start=67,
+                page_end=67,
+                bounding_box=BoundingBox(10, 20, 110, 60),
+                content_hash="sha256:abc123",
+            ),
+        )
+
+        await repo.save_citations(scope, msg.id, [evidence.to_citation(order=0)])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        row = (await _citation_rows(sqlite_session, msg.id))[0]
+        assert row.page_number == 67
+        assert row.chunk_type == ChunkType.TEXT.value
+        assert row.evidence_hash == "sha256:abc123"
+        assert (row.bounding_box_x0, row.bounding_box_y1) == (10, 60)
+
+    async def test_a_passage_without_a_box_still_records_its_page(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        repo, msg = await self._assistant_message(scope, sqlite_session)
+
+        await repo.save_citations(
+            scope, msg.id, [_make_evidence(scope).to_citation(order=0)]
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        row = (await _citation_rows(sqlite_session, msg.id))[0]
+        assert row.bounding_box_x0 is None
+        assert row.page_number > 0
+
+    async def test_an_answer_citing_nothing_writes_nothing(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """An abstaining or rejected answer cited no passage, and an empty set of rows is
+        the honest record of that — not a missing one."""
+        scope = _make_scope()
+        repo, msg = await self._assistant_message(scope, sqlite_session)
+
+        await repo.save_citations(scope, msg.id, [])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert await _citation_rows(sqlite_session, msg.id) == []
+
+    async def test_regenerating_overwrites_rather_than_colliding(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """The composite key would reject a second write for the same message; merge is
+        what lets an answer be regenerated without first deleting its old citations."""
+        scope = _make_scope()
+        repo, msg = await self._assistant_message(scope, sqlite_session)
+        first = _make_evidence(scope, rank=0).to_citation(order=0)
+
+        await repo.save_citations(scope, msg.id, [first])
+        await sqlite_session.flush()
+        second = _make_evidence(scope, rank=0).to_citation(order=0)
+        await repo.save_citations(scope, msg.id, [second])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        rows = await _citation_rows(sqlite_session, msg.id)
+        assert len(rows) == 1
+        assert rows[0].chunk_id == second.chunk_id

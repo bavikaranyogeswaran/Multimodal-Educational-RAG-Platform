@@ -14,18 +14,22 @@ import pytest
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
+from app.domain.documents.chunks import Chunk
 from app.domain.enums import (
+    ChunkType,
     ClaimStatus,
     InstructionCategory,
     MessageRole,
     MessageStatus,
     ModelTask,
     RequirementLevel,
+    RetrieverKind,
 )
 from app.domain.errors import GenerationRejectedError
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.models.validation import EntailmentResult
 from app.domain.ports.repositories import ConversationUnitOfWork
+from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
 
@@ -56,11 +60,32 @@ _VALID_ANSWER_JSON = json.dumps({
 # ---------------------------------------------------------------------------
 
 
-def _ev(text: str, *, label: str = "[S1]") -> MagicMock:
-    ev = MagicMock()
-    ev.chunk.text = UntrustedText(text)
-    ev.label.bracketed = label
-    return ev
+def _ev(text: str, *, label: str = "[S1]") -> Evidence:
+    """A real Evidence rather than a mock.
+
+    It was a MagicMock until citations were resolved from the evidence set: resolution
+    looks the cited label up in a dict keyed by EvidenceLabel, and a mock attribute never
+    matches a real one, so every citation silently resolved to nothing. The label has to
+    behave like a label for the test to mean anything.
+    """
+    return Evidence(
+        label=EvidenceLabel.parse(label),
+        chunk=Chunk(
+            id=uuid.uuid4(),
+            user_id=_USER_ID,
+            knowledge_base_id=_KB_ID,
+            document_id=uuid.uuid4(),
+            chunk_type=ChunkType.TEXT,
+            text=UntrustedText(text),
+            token_count=max(1, len(text) // 4),
+            ordinal=0,
+            page_start=1,
+            page_end=1,
+            index_version=1,
+            created_at=_NOW,
+        ),
+        retrievers=frozenset({RetrieverKind.DENSE}),
+    )
 
 
 def _msg(role: MessageRole, text: str) -> Message:
@@ -77,7 +102,7 @@ def _msg(role: MessageRole, text: str) -> Message:
     )
 
 
-def _mock_retrieve(evidence: list[MagicMock] | None = None) -> AsyncMock:
+def _mock_retrieve(evidence: list[Evidence] | None = None) -> AsyncMock:
     retrieve = AsyncMock()
     retrieve.execute = AsyncMock(return_value=evidence or [])
     return retrieve
@@ -108,10 +133,10 @@ def _uow_over(repo: AsyncMock, opened: list[str] | None = None) -> ConversationU
     return _uow
 
 
-def _recording_retrieve(call_order: list[str]) -> Callable[..., list[MagicMock]]:
+def _recording_retrieve(call_order: list[str]) -> Callable[..., list[Evidence]]:
     """Note that retrieval ran, then return no evidence."""
 
-    def _record(*_args: object, **_kwargs: object) -> list[MagicMock]:
+    def _record(*_args: object, **_kwargs: object) -> list[Evidence]:
         call_order.append("retrieve")
         return []
 
@@ -163,6 +188,7 @@ def _context_builder() -> ContextBuilder:
 
 
 def _make_use_case(
+    *,
     retrieve: AsyncMock | None = None,
     repo: AsyncMock | None = None,
     gateway: MagicMock | None = None,
@@ -745,3 +771,81 @@ class TestValidationPipeline:
         assert repo.save_message.await_count == 2
         assistant: Message = repo.save_message.call_args_list[1].args[1]
         assert assistant.status is MessageStatus.FAILED
+
+
+class TestCitationPersistence:
+    """The record of which passage carried which claim, written once the answer is given."""
+
+    @staticmethod
+    def _cited_answer(label: str = "[S1]") -> str:
+        return json.dumps({
+            "answer": "Gradients flow backwards.",
+            "claims": [{"text": "Gradients flow backwards.", "citations": [label]}],
+            "insufficient_evidence": False,
+        })
+
+    async def test_citations_are_saved_against_the_assistant_message(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve([_ev("Gradients flow backwards.", label="[S1]")]),
+            repo=repo,
+            gateway=_mock_gateway(response=self._cited_answer()),
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert repo.save_citations.await_count == 1
+        assert repo.save_citations.call_args.args[1] == assistant.id
+
+    async def test_one_citation_per_cited_label(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve([_ev("Gradients flow backwards.", label="[S1]")]),
+            repo=repo,
+            gateway=_mock_gateway(response=self._cited_answer()),
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        saved = list(repo.save_citations.call_args.args[2])
+        assert len(saved) == 1
+        assert saved[0].label.bracketed == "[S1]"
+
+    async def test_an_abstaining_answer_records_no_citations(self) -> None:
+        """`insufficient_evidence` returns an answer with no claims, so nothing was cited
+        and the citation record is empty rather than absent."""
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assert list(repo.save_citations.call_args.args[2]) == []
+
+    async def test_a_rejected_answer_records_no_citations(self) -> None:
+        """Nothing survived validation, so nothing may be recorded as a source — the
+        record must not imply an answer was grounded when it was refused."""
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            repo=repo, gateway=_mock_gateway(response="not json")
+        ).execute(_BASE_CMD)
+        try:
+            async for _ in stream:
+                pass
+        except GenerationRejectedError:
+            pass
+
+        assert repo.save_citations.await_count == 1
+        assert list(repo.save_citations.call_args.args[2]) == []
+
+    async def test_citations_are_written_under_the_calling_scope(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve([_ev("Gradients flow backwards.", label="[S1]")]),
+            repo=repo,
+            gateway=_mock_gateway(response=self._cited_answer()),
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assert repo.save_citations.call_args.args[0] == _SCOPE

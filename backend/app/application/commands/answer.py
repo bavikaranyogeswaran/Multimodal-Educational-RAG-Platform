@@ -44,7 +44,12 @@ from app.domain.models.validation import (
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import ConversationUnitOfWork
-from app.domain.retrieval.entities import Evidence, RetrievalFilters
+from app.domain.retrieval.entities import (
+    Citation,
+    Evidence,
+    RetrievalFilters,
+    resolve_citations,
+)
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
 
@@ -215,6 +220,7 @@ class AnswerUseCase:
         async def _tracked() -> AsyncGenerator[str, None]:
             failed = False
             answer_text = "(generation failed)"
+            citations: tuple[Citation, ...] = ()
             try:
                 raw = await _collect_stream(initial_stream)
                 decision, answer, citation_results, ent_by_claim = await _validate(
@@ -251,6 +257,10 @@ class AnswerUseCase:
 
                 assert answer is not None
                 answer_text = answer.answer
+                # Resolved before the first token leaves, while the evidence set that
+                # issued the labels is still in hand. Afterwards the labels are just
+                # numbers in a string nobody can resolve.
+                citations = resolve_citations(answer, evidence)
                 yield answer_text
             except Exception:
                 failed = True
@@ -282,6 +292,11 @@ class AnswerUseCase:
                     # failure too — the evidence reached the model either way, and a
                     # half-finished answer can still carry a citation worth checking.
                     await repo.save_retrieval_chunks(scope, assistant_message.id, evidence)
+
+                    # What the answer was shown and what it actually used are two
+                    # different records. This is the second: empty on a rejected or
+                    # abstaining answer, which is the honest state — nothing was cited.
+                    await repo.save_citations(scope, assistant_message.id, citations)
 
         return _tracked()
 

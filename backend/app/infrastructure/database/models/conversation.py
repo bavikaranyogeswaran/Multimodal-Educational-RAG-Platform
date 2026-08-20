@@ -92,6 +92,56 @@ class ConversationRetrievalChunkModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class MessageCitationModel(Base):
+    """Which passage each claim in an answer rested on, recorded when the answer was given.
+
+    Location and type are copied here rather than read through `chunk_id` at display time,
+    for the same reason the hash is stored: reprocessing rewrites chunks, and a citation
+    that resolved against the current text would quietly start describing a passage the
+    answer never saw. The columns hold what was true when the claim was made.
+
+    The composite primary key (message_id, citation_order) both prevents duplicates and
+    fixes the order the answer argues in, so the set reads back in the sequence it was
+    written without a sort column beside it.
+    """
+
+    __tablename__ = "message_citations"
+    __table_args__ = (
+        Index("ix_message_citations_message_id", "message_id"),
+        Index("ix_message_citations_chunk_id", "chunk_id"),
+    )
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    citation_order: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # The positional label the model actually cited, stored unbracketed. Meaningless
+    # outside the answer that issued it, and kept for exactly that reason: it is how the
+    # stored record lines up with the text of the answer.
+    label: Mapped[str] = mapped_column(String(16))
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("chunks.id", ondelete="CASCADE"),
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+    )
+    chunk_type: Mapped[str] = mapped_column(String(20))
+    element_type: Mapped[str | None] = mapped_column(String(20))
+    page_number: Mapped[int] = mapped_column(Integer)
+    bounding_box_x0: Mapped[float | None] = mapped_column(Float)
+    bounding_box_y0: Mapped[float | None] = mapped_column(Float)
+    bounding_box_x1: Mapped[float | None] = mapped_column(Float)
+    bounding_box_y1: Mapped[float | None] = mapped_column(Float)
+    # What the passage said when it was cited. A row whose hash no longer matches its
+    # chunk is pointing at text that has since been rewritten.
+    evidence_hash: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class MemoryFactModel(Base):
     __tablename__ = "memory_facts"
     __table_args__ = (

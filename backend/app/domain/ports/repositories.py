@@ -31,7 +31,7 @@ from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.knowledge_base.entities import KnowledgeBase
 from app.domain.memory.entities import MemoryFact
-from app.domain.retrieval.entities import Evidence
+from app.domain.retrieval.entities import Citation, Evidence
 from app.domain.scope import ScopeContext
 
 
@@ -174,6 +174,19 @@ class ConversationRepository(Protocol):
         actually reach the model, or did the model invent a citation to something it
         never saw? Nothing else can settle that — the prompt is gone by the time
         anyone asks, so the evidence behind it has to be durable.
+        """
+        ...
+
+    async def save_citations(
+        self, scope: ScopeContext, message_id: UUID, citations: Sequence[Citation]
+    ) -> None:
+        """Record which passage each claim in the answer rested on.
+
+        Distinct from `save_retrieval_chunks`, which records everything the model was
+        shown. This records what it actually used, and the two differ by design: a
+        passage can reach the prompt and support nothing, and that gap is itself worth
+        being able to see. Only one of these can answer "where does this sentence come
+        from?", and only the other can answer "could the model have known this?".
         """
         ...
 

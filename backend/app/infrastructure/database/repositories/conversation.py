@@ -11,12 +11,13 @@ from sqlalchemy import select
 
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.enums import MessageRole, MessageStatus
-from app.domain.retrieval.entities import Evidence
+from app.domain.retrieval.entities import Citation, Evidence
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
 from app.infrastructure.database.models.conversation import (
     ConversationModel,
     ConversationRetrievalChunkModel,
+    MessageCitationModel,
     MessageModel,
 )
 from app.infrastructure.database.repository import ScopedRepository
@@ -107,6 +108,39 @@ class SqlConversationRepository(ScopedRepository):
                     chunk_id=item.chunk.id,
                     rank=item.rank,
                     score=_persisted_score(item),
+                    created_at=now,
+                )
+            )
+
+
+    async def save_citations(
+        self, scope: ScopeContext, message_id: UUID, citations: Sequence[Citation]
+    ) -> None:
+        self._require_scope(scope)
+        if not citations:
+            return
+        now = datetime.now(UTC)
+        for citation in citations:
+            box = citation.bounding_box
+            # merge rather than add, so a regenerated answer for the same message
+            # overwrites its previous citations instead of colliding on the composite key.
+            await self._session.merge(
+                MessageCitationModel(
+                    message_id=message_id,
+                    citation_order=citation.citation_order,
+                    label=str(citation.label),
+                    chunk_id=citation.chunk_id,
+                    document_id=citation.document_id,
+                    chunk_type=citation.chunk_type.value,
+                    element_type=(
+                        citation.element_type.value if citation.element_type else None
+                    ),
+                    page_number=citation.page_number,
+                    bounding_box_x0=box.x0 if box else None,
+                    bounding_box_y0=box.y0 if box else None,
+                    bounding_box_x1=box.x1 if box else None,
+                    bounding_box_y1=box.y1 if box else None,
+                    evidence_hash=citation.evidence_hash,
                     created_at=now,
                 )
             )
