@@ -192,3 +192,35 @@ class ModelResponse:
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationUsage:
+    """What one streamed generation cost, reported once the stream has finished.
+
+    A streamed call cannot say this up front — the counts are not known until the last
+    token has been produced, which is exactly when `ModelResponse` would be constructed
+    on the non-streaming path. This carries the same facts for the streaming one, minus
+    the content, because the caller already has the content: it consumed it.
+    """
+
+    model_id: str
+    prompt_tokens: int
+    completion_tokens: int
+    finish_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.model_id.strip():
+            raise InvariantViolationError("GenerationUsage.model_id must not be blank")
+        if self.prompt_tokens < 0:
+            raise InvariantViolationError(
+                f"GenerationUsage.prompt_tokens must be >= 0, got {self.prompt_tokens}"
+            )
+        if self.completion_tokens < 0:
+            raise InvariantViolationError(
+                f"GenerationUsage.completion_tokens must be >= 0, got {self.completion_tokens}"
+            )
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens

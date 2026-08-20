@@ -27,6 +27,7 @@ from app.domain.enums import (
 )
 from app.domain.errors import GenerationRejectedError
 from app.domain.models.context_builder import ContextBuilder
+from app.domain.models.entities import GenerationUsage
 from app.domain.models.validation import EntailmentResult
 from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
@@ -143,20 +144,42 @@ def _recording_retrieve(call_order: list[str]) -> Callable[..., list[Evidence]]:
     return _record
 
 
-def _mock_gateway(response: str | None = None) -> MagicMock:
+class _FakeTokenStream:
+    """A stream that reports usage the way a real provider adapter does.
+
+    Usage appears only once the stream is drained, because that is when a provider knows
+    it. A test that set it up front could not tell a correct implementation from one that
+    reads the value too early.
+    """
+
+    def __init__(self, chunk: str, usage: GenerationUsage | None) -> None:
+        self._chunk = chunk
+        self._reported = usage
+        self.usage: GenerationUsage | None = None
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        yield self._chunk
+        self.usage = self._reported
+
+
+def _mock_gateway(
+    response: str | None = None, usage: GenerationUsage | None = None
+) -> MagicMock:
     """Return a gateway whose generate_stream yields a single JSON chunk.
 
     The default is a valid insufficient_evidence answer so tests that do not care
     about validation pass without needing real evidence or an entailment mock.
     Passing a custom string lets tests exercise specific validation paths.
+
+    With no `usage`, the stream reports none — which is what a bare async generator does
+    and therefore what most of these tests exercise.
     """
     chunk = response if response is not None else _VALID_ANSWER_JSON
 
-    async def _gen() -> AsyncIterator[str]:
-        yield chunk
-
     gateway = MagicMock()
-    gateway.generate_stream = MagicMock(return_value=_gen())
+    gateway.generate_stream = MagicMock(
+        side_effect=lambda _req: _FakeTokenStream(chunk, usage)
+    )
     return gateway
 
 
@@ -849,3 +872,130 @@ class TestCitationPersistence:
             pass
 
         assert repo.save_citations.call_args.args[0] == _SCOPE
+
+
+class TestModelMetadata:
+    """What the turn cost, taken from the stream once the provider has finished."""
+
+    @staticmethod
+    def _usage() -> GenerationUsage:
+        return GenerationUsage(
+            model_id="gemma3:4b",
+            prompt_tokens=812,
+            completion_tokens=95,
+            finish_reason="stop",
+        )
+
+    @staticmethod
+    async def _assistant_after(repo: AsyncMock, use_case: AnswerUseCase) -> Message:
+        stream = await use_case.execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+        result: Message = repo.save_message.call_args_list[1].args[1]
+        return result
+
+    async def test_records_the_model_that_answered(self) -> None:
+        repo = _mock_repo()
+        assistant = await self._assistant_after(
+            repo,
+            _make_use_case(repo=repo, gateway=_mock_gateway(usage=self._usage())),
+        )
+
+        assert assistant.model_id == "gemma3:4b"
+
+    async def test_records_the_token_counts(self) -> None:
+        repo = _mock_repo()
+        assistant = await self._assistant_after(
+            repo,
+            _make_use_case(repo=repo, gateway=_mock_gateway(usage=self._usage())),
+        )
+
+        assert assistant.prompt_tokens == 812
+        assert assistant.completion_tokens == 95
+
+    async def test_records_the_finish_reason(self) -> None:
+        repo = _mock_repo()
+        assistant = await self._assistant_after(
+            repo,
+            _make_use_case(repo=repo, gateway=_mock_gateway(usage=self._usage())),
+        )
+
+        assert assistant.finish_reason == "stop"
+
+    async def test_a_provider_that_reports_nothing_leaves_metadata_null(self) -> None:
+        """Null, not zero. A call whose cost went unreported is not a call that cost
+        nothing, and a stored zero would be indistinguishable from one that did."""
+        repo = _mock_repo()
+        assistant = await self._assistant_after(
+            repo, _make_use_case(repo=repo, gateway=_mock_gateway())
+        )
+
+        assert assistant.model_id is None
+        assert assistant.prompt_tokens is None
+        assert assistant.completion_tokens is None
+        assert assistant.finish_reason is None
+
+    async def test_a_rejected_answer_still_records_what_it_cost(self) -> None:
+        """The stream was drained before validation refused the result, so the tokens
+        were spent. A turn that produced nothing usable is exactly the one worth being
+        able to see the cost of."""
+        repo = _mock_repo()
+        use_case = _make_use_case(
+            repo=repo, gateway=_mock_gateway(response="not json", usage=self._usage())
+        )
+
+        stream = await use_case.execute(_BASE_CMD)
+        try:
+            async for _ in stream:
+                pass
+        except GenerationRejectedError:
+            pass
+
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert assistant.status is MessageStatus.FAILED
+        assert assistant.model_id == "gemma3:4b"
+        assert assistant.prompt_tokens == 812
+
+    async def test_a_repaired_answer_records_the_repair_call_not_the_first(self) -> None:
+        """The discarded attempt is not what produced the answer that was returned."""
+        repairable = json.dumps({
+            "answer": "A not-supported claim.",
+            "claims": [{"text": "A not-supported claim.", "citations": ["[S1]"]}],
+            "insufficient_evidence": False,
+        })
+        repaired = json.dumps({
+            "answer": "Repaired answer.",
+            "claims": [],
+            "insufficient_evidence": True,
+        })
+        calls = 0
+
+        def _stream(_req: object) -> _FakeTokenStream:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return _FakeTokenStream(
+                    repairable,
+                    GenerationUsage(model_id="first", prompt_tokens=1, completion_tokens=1),
+                )
+            return _FakeTokenStream(
+                repaired,
+                GenerationUsage(model_id="second", prompt_tokens=2, completion_tokens=2),
+            )
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=_stream)
+        repo = _mock_repo()
+
+        assistant = await self._assistant_after(
+            repo,
+            _make_use_case(
+                retrieve=_mock_retrieve([_ev("Evidence.", label="[S1]")]),
+                repo=repo,
+                gateway=gateway,
+                entailment=_mock_entailment(ClaimStatus.NOT_SUPPORTED),
+            ),
+        )
+
+        assert assistant.model_id == "second"
+        assert assistant.prompt_tokens == 2

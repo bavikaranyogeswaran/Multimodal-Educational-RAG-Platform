@@ -667,3 +667,89 @@ class TestStreaming:
                 pass
 
         assert exc_info.value.retryable is True
+
+
+class TestStreamUsage:
+    """What the call cost, which Ollama reports only on the final line."""
+
+    async def test_reports_token_counts_once_the_stream_ends(self) -> None:
+        client = _mock_stream_client(["Photo", "syn", "thesis"])
+        stream = _gateway(client).generate_stream(_make_request())
+
+        _ = [t async for t in stream]
+
+        assert stream.usage is not None
+        assert stream.usage.prompt_tokens == 10
+        assert stream.usage.completion_tokens == 3
+
+    async def test_reports_the_model_that_answered(self) -> None:
+        client = _mock_stream_client(["hi"])
+        stream = _gateway(client, "llama3:8b").generate_stream(_make_request())
+
+        _ = [t async for t in stream]
+
+        assert stream.usage is not None
+        assert stream.usage.model_id == "llama3:8b"
+
+    async def test_usage_is_absent_before_the_stream_is_drained(self) -> None:
+        """The counts do not exist until the provider has finished producing."""
+        client = _mock_stream_client(["hi"])
+        stream = _gateway(client).generate_stream(_make_request())
+
+        assert stream.usage is None
+
+    async def test_carries_the_finish_reason(self) -> None:
+        chunks = [
+            _json.dumps({"message": {"content": "A"}, "done": False}),
+            _json.dumps({
+                "message": {"content": ""},
+                "done": True,
+                "done_reason": "length",
+                "prompt_eval_count": 7,
+                "eval_count": 1,
+            }),
+        ]
+
+        async def _aiter_lines():
+            for line in chunks:
+                yield line
+
+        @asynccontextmanager
+        async def _stream(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.aiter_lines = _aiter_lines
+            yield mock_resp
+
+        client = MagicMock()
+        client.stream = _stream
+        stream = _gateway(client).generate_stream(_make_request())
+
+        _ = [t async for t in stream]
+
+        assert stream.usage is not None
+        assert stream.usage.finish_reason == "length"
+
+    async def test_a_stream_that_never_reports_done_has_no_usage(self) -> None:
+        """Absent rather than zero — the provider did not say, which is not the same as
+        a call that cost nothing."""
+        chunks = [_json.dumps({"message": {"content": "A"}, "done": False})]
+
+        async def _aiter_lines():
+            for line in chunks:
+                yield line
+
+        @asynccontextmanager
+        async def _stream(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.aiter_lines = _aiter_lines
+            yield mock_resp
+
+        client = MagicMock()
+        client.stream = _stream
+        stream = _gateway(client).generate_stream(_make_request())
+
+        _ = [t async for t in stream]
+
+        assert stream.usage is None

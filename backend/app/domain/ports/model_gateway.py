@@ -17,7 +17,7 @@ from typing import Protocol
 
 from app.domain.enums import DataBoundary, ModelTask
 from app.domain.errors import InvariantViolationError
-from app.domain.models.entities import ModelRequest, ModelResponse
+from app.domain.models.entities import GenerationUsage, ModelRequest, ModelResponse
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +104,22 @@ class MultimodalCapability(Protocol):
     ) -> ModelResponse: ...
 
 
+class TokenStream(Protocol):
+    """Response tokens as they arrive, and what the call cost once they have stopped.
+
+    Iterating is the point; `usage` is what the non-streaming path gets for free in its
+    `ModelResponse` and the streaming path would otherwise throw away. It is `None` until
+    the stream is exhausted, because the counts do not exist until the provider has
+    finished producing — and stays `None` for a provider that never reports them, which
+    is why the caller must treat it as absent rather than as zero.
+    """
+
+    def __aiter__(self) -> AsyncIterator[str]: ...
+
+    @property
+    def usage(self) -> GenerationUsage | None: ...
+
+
 # ---------------------------------------------------------------------------
 # Application-level gateway port
 # ---------------------------------------------------------------------------
@@ -145,12 +161,16 @@ class ModelGatewayPort(Protocol):
         """
         ...
 
-    def generate_stream(self, request: ModelRequest) -> AsyncIterator[str]:
+    def generate_stream(self, request: ModelRequest) -> TokenStream:
         """Yield response tokens as they arrive, one delta string at a time.
 
         The iterator must be consumed within a single request context.
         Errors (provider failures, timeouts) propagate as ProviderError at the
         point the caller advances the iterator.
+
+        Once exhausted, the stream reports its `usage`. Callers that only need the text
+        may iterate and ignore it; callers recording what the turn cost read it after
+        the loop, never during, because it is not known until the provider is done.
         """
         ...
 

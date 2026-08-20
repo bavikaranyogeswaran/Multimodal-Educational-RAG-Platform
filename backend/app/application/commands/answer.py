@@ -15,7 +15,7 @@ therefore takes its own unit of work.
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -31,7 +31,7 @@ from app.domain.enums import (
 )
 from app.domain.errors import GenerationParseError, GenerationRejectedError
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
-from app.domain.models.entities import ConversationTurn, LabeledPassage
+from app.domain.models.entities import ConversationTurn, GenerationUsage, LabeledPassage
 from app.domain.models.generation import OUTPUT_SCHEMA, GeneratedAnswer, parse_generated_answer
 from app.domain.models.instructions import Instruction
 from app.domain.models.validation import (
@@ -221,8 +221,9 @@ class AnswerUseCase:
             failed = False
             answer_text = "(generation failed)"
             citations: tuple[Citation, ...] = ()
+            usage: GenerationUsage | None = None
             try:
-                raw = await _collect_stream(initial_stream)
+                raw, usage = await _collect_stream(initial_stream)
                 decision, answer, citation_results, ent_by_claim = await _validate(
                     raw, labeled, entailment
                 )
@@ -243,7 +244,10 @@ class AnswerUseCase:
                             critical_checklist=(repair,) if repair else (),
                         )
                     )
-                    repair_raw = await _collect_stream(
+                    # The repair call replaces the first one's usage rather than adding
+                    # to it. What is recorded is the generation that produced the answer
+                    # actually returned; the discarded attempt is not part of it.
+                    repair_raw, usage = await _collect_stream(
                         gateway.generate_stream(repair_request)
                     )
                     decision, answer, _, _ = await _validate(
@@ -278,6 +282,13 @@ class AnswerUseCase:
                     content=UntrustedText(answer_text),
                     created_at=answer_now,
                     updated_at=answer_now,
+                    # Absent when the provider reported nothing, or when the turn failed
+                    # before a stream was drained. Left null in that case rather than
+                    # written as zero, which would read as a call that cost nothing.
+                    model_id=usage.model_id if usage else None,
+                    prompt_tokens=usage.prompt_tokens if usage else None,
+                    completion_tokens=usage.completion_tokens if usage else None,
+                    finish_reason=usage.finish_reason if usage else None,
                 )
                 # A fresh unit of work: by now the response has been streamed and the
                 # request that started it is over, so there is no caller's transaction
@@ -306,11 +317,19 @@ class AnswerUseCase:
 # ---------------------------------------------------------------------------
 
 
-async def _collect_stream(stream: AsyncIterator[str]) -> str:
+async def _collect_stream(
+    stream: AsyncIterable[str],
+) -> tuple[str, GenerationUsage | None]:
+    """Drain the stream, and take the usage the provider reports once it is done.
+
+    Read after the loop, never during: the counts do not exist until the provider has
+    finished producing. A stream that reports nothing yields `None` rather than zeros,
+    so "the provider did not say" stays distinct from "it cost nothing".
+    """
     parts: list[str] = []
     async for token in stream:
         parts.append(token)
-    return "".join(parts)
+    return "".join(parts), getattr(stream, "usage", None)
 
 
 async def _validate(

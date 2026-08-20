@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import json as _json
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import Any
 
 import httpx
 
 from app.domain.enums import DataBoundary, MessageRole, ModelTask
 from app.domain.errors import ProviderError, UnsupportedCapabilityError
-from app.domain.models.entities import ModelRequest, ModelResponse
+from app.domain.models.entities import GenerationUsage, ModelRequest, ModelResponse
 from app.domain.ports.model_gateway import ModelProfile
 from app.domain.values import UntrustedText
 
@@ -33,6 +34,41 @@ _ALL_TEXT_TASKS: frozenset[ModelTask] = frozenset(
         ModelTask.FAITHFULNESS_CHECK,
     }
 )
+
+
+class OllamaTokenStream:
+    """Yields the content of each NDJSON line, keeping the counts on the last one.
+
+    Ollama reports `prompt_eval_count`, `eval_count` and `done_reason` only on the final
+    line of the stream — the one carrying `done: true` and no content. Iterating token by
+    token and discarding everything else drops them, which is why the raw lines are what
+    this consumes and plain strings are what it yields.
+
+    `usage` stays `None` until the stream is exhausted. A caller that reads it early gets
+    the honest answer: the provider has not said yet.
+    """
+
+    def __init__(self, lines: AsyncGenerator[dict[str, Any], None], model_id: str) -> None:
+        self._lines = lines
+        self._model_id = model_id
+        self._usage: GenerationUsage | None = None
+
+    @property
+    def usage(self) -> GenerationUsage | None:
+        return self._usage
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        async for data in self._lines:
+            token: str = data.get("message", {}).get("content", "")
+            if token:
+                yield token
+            if data.get("done"):
+                self._usage = GenerationUsage(
+                    model_id=self._model_id,
+                    prompt_tokens=data.get("prompt_eval_count", 0),
+                    completion_tokens=data.get("eval_count", 0),
+                    finish_reason=data.get("done_reason"),
+                )
 
 
 def _build_messages(request: ModelRequest) -> list[dict[str, str]]:
@@ -171,13 +207,17 @@ class OllamaModelGateway:
             latency_ms=latency_ms,
         )
 
-    async def generate_stream(self, request: ModelRequest) -> AsyncGenerator[str, None]:
-        """Yield individual token strings as they arrive from the Ollama server.
+    def generate_stream(self, request: ModelRequest) -> OllamaTokenStream:
+        """Stream response tokens, and report what the call cost once they stop.
 
         Uses /api/chat with stream:true, which returns one NDJSON line per token.
         Errors that occur before or during streaming propagate as ProviderError
         when the caller first advances the iterator.
         """
+        return OllamaTokenStream(self._token_lines(request), self._model_id)
+
+    async def _token_lines(self, request: ModelRequest) -> AsyncGenerator[dict[str, Any], None]:
+        """The decoded NDJSON lines, including the final one carrying the counts."""
         messages = _build_messages(request)
 
         options: dict[str, object] = {}
@@ -203,9 +243,7 @@ class OllamaModelGateway:
                     if not line.strip():
                         continue
                     data = _json.loads(line)
-                    token: str = data.get("message", {}).get("content", "")
-                    if token:
-                        yield token
+                    yield data
                     if data.get("done"):
                         break
         except httpx.HTTPStatusError as exc:
