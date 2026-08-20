@@ -27,11 +27,21 @@ from app.domain.enums import (
     MessageStatus,
     ModelTask,
     RequirementLevel,
+    ValidationDecision,
 )
+from app.domain.errors import GenerationParseError, GenerationRejectedError
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
 from app.domain.models.entities import ConversationTurn, LabeledPassage
-from app.domain.models.generation import OUTPUT_SCHEMA
+from app.domain.models.generation import OUTPUT_SCHEMA, GeneratedAnswer, parse_generated_answer
 from app.domain.models.instructions import Instruction
+from app.domain.models.validation import (
+    CitationCheckResult,
+    EntailmentResult,
+    build_repair_instructions,
+    check_citation_existence,
+    decide,
+)
+from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.retrieval.entities import Evidence, RetrievalFilters
@@ -120,7 +130,7 @@ class AnswerCommand:
 
 
 class AnswerUseCase:
-    """Coordinate retrieval, prompt assembly, and streaming generation for one student turn."""
+    """Coordinate retrieval, prompt assembly, generation, validation, and streaming."""
 
     def __init__(
         self,
@@ -128,11 +138,13 @@ class AnswerUseCase:
         conversation_uow: ConversationUnitOfWork,
         model_gateway: ModelGatewayPort,
         context_builder: ContextBuilder,
+        entailment: ClaimEntailmentPort,
     ) -> None:
         self._retrieve = retrieve
         self._uow = conversation_uow
         self._model_gateway = model_gateway
         self._context_builder = context_builder
+        self._entailment = entailment
 
     async def execute(self, command: AnswerCommand) -> AsyncIterator[str]:
         now = datetime.now(UTC)
@@ -172,6 +184,8 @@ class AnswerUseCase:
             )
         )
 
+        labeled = _labeled(evidence)
+
         request = self._context_builder.build(
             ContextInputs(
                 model_task=ModelTask.ANSWER_GENERATION,
@@ -181,29 +195,68 @@ class AnswerUseCase:
                 query=command.query,
                 instructions=_INSTRUCTIONS,
                 conversation_history=history,
-                evidence=_labeled(evidence),
+                evidence=labeled,
                 output_schema=OUTPUT_SCHEMA,
             )
         )
 
-        inner_stream = self._model_gateway.generate_stream(request)
+        # generate_stream is called here so the request is observable by callers that
+        # inspect call_args before consuming the returned iterator.
+        initial_stream = self._model_gateway.generate_stream(request)
+
         scope = command.scope
         conv_id = command.conversation_id
         uow = self._uow
+        gateway = self._model_gateway
+        context_builder = self._context_builder
+        entailment = self._entailment
+        query = command.query
 
         async def _tracked() -> AsyncGenerator[str, None]:
-            tokens: list[str] = []
             failed = False
+            answer_text = "(generation failed)"
             try:
-                async for token in inner_stream:
-                    tokens.append(token)
-                    yield token
+                raw = await _collect_stream(initial_stream)
+                decision, answer, citation_results, ent_by_claim = await _validate(
+                    raw, labeled, entailment
+                )
+
+                if decision is ValidationDecision.REPAIRABLE:
+                    repair = build_repair_instructions(citation_results, ent_by_claim)
+                    repair_request = context_builder.build(
+                        ContextInputs(
+                            model_task=ModelTask.ANSWER_GENERATION,
+                            system_preamble=_SYSTEM_PREAMBLE,
+                            safety_rules=_SAFETY_RULES,
+                            task_instructions=_TASK_INSTRUCTIONS,
+                            query=query,
+                            instructions=_INSTRUCTIONS,
+                            conversation_history=history,
+                            evidence=labeled,
+                            output_schema=OUTPUT_SCHEMA,
+                            critical_checklist=(repair,) if repair else (),
+                        )
+                    )
+                    repair_raw = await _collect_stream(
+                        gateway.generate_stream(repair_request)
+                    )
+                    decision, answer, _, _ = await _validate(
+                        repair_raw, labeled, entailment
+                    )
+
+                if not decision.is_returnable:
+                    raise GenerationRejectedError(  # noqa: TRY301
+                        f"answer rejected after validation: {decision}"
+                    )
+
+                assert answer is not None
+                answer_text = answer.answer
+                yield answer_text
             except Exception:
                 failed = True
                 raise
             finally:
                 status = MessageStatus.FAILED if failed else MessageStatus.COMPLETED
-                content_text = "".join(tokens) if tokens else "(generation failed)"
                 answer_now = datetime.now(UTC)
                 assistant_message = Message(
                     id=uuid.uuid4(),
@@ -212,7 +265,7 @@ class AnswerUseCase:
                     knowledge_base_id=scope.knowledge_base_id,
                     role=MessageRole.ASSISTANT,
                     status=status,
-                    content=UntrustedText(content_text),
+                    content=UntrustedText(answer_text),
                     created_at=answer_now,
                     updated_at=answer_now,
                 )
@@ -231,6 +284,58 @@ class AnswerUseCase:
                     await repo.save_retrieval_chunks(scope, assistant_message.id, evidence)
 
         return _tracked()
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+async def _collect_stream(stream: AsyncIterator[str]) -> str:
+    parts: list[str] = []
+    async for token in stream:
+        parts.append(token)
+    return "".join(parts)
+
+
+async def _validate(
+    raw: str,
+    labeled: tuple[LabeledPassage, ...],
+    entailment: ClaimEntailmentPort,
+) -> tuple[
+    ValidationDecision,
+    GeneratedAnswer | None,
+    tuple[CitationCheckResult, ...],
+    list[list[EntailmentResult]],
+]:
+    try:
+        answer = parse_generated_answer(raw)
+    except GenerationParseError:
+        empty: list[list[EntailmentResult]] = []
+        return ValidationDecision.REJECTED, None, (), empty
+
+    citation_results = check_citation_existence(answer, labeled)
+    ent_by_claim = await _check_entailment(citation_results, labeled, entailment)
+    decision = decide(answer, citation_results, ent_by_claim)
+    return decision, answer, citation_results, ent_by_claim
+
+
+async def _check_entailment(
+    citation_results: tuple[CitationCheckResult, ...],
+    labeled: tuple[LabeledPassage, ...],
+    entailment: ClaimEntailmentPort,
+) -> list[list[EntailmentResult]]:
+    label_map = {p.label: p for p in labeled}
+    per_claim: list[list[EntailmentResult]] = []
+    for check in citation_results:
+        real_passages = [
+            label_map[lbl]
+            for lbl in check.claim.citations
+            if lbl not in check.fabricated_labels and lbl in label_map
+        ]
+        results = await entailment.check_claim(check.claim, real_passages)
+        per_claim.append(list(results))
+    return per_claim
 
 
 # ---------------------------------------------------------------------------

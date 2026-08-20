@@ -148,3 +148,13 @@ class GenerationParseError(DomainError):
     wrong type, or a claim carries no citations. The caller decides whether this is
     repairable or a rejection — that judgement is not made here.
     """
+
+
+class GenerationRejectedError(DomainError):
+    """A generated answer could not be grounded in the retrieved evidence.
+
+    Raised when decide() returns REJECTED on the first attempt, or when a REPAIRABLE
+    answer still fails validation after a single repair attempt. The presentation layer
+    should treat this as a recoverable failure and return an appropriate message to the
+    student rather than a 5xx.
+    """

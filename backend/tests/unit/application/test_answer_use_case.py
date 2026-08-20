@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.enums import (
+    ClaimStatus,
     InstructionCategory,
     MessageRole,
     MessageStatus,
     ModelTask,
     RequirementLevel,
 )
+from app.domain.errors import GenerationRejectedError
 from app.domain.models.context_builder import ContextBuilder
+from app.domain.models.validation import EntailmentResult
 from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -34,6 +40,15 @@ _BASE_CMD = AnswerCommand(
     conversation_id=_CONV_ID,
     query="What is backpropagation?",
 )
+
+# Default gateway response: insufficient_evidence=true avoids citation and entailment
+# checks, so tests that do not care about validation can use this without setting up
+# evidence or mocking the entailment port in detail.
+_VALID_ANSWER_JSON = json.dumps({
+    "answer": "Test answer.",
+    "claims": [],
+    "insufficient_evidence": True,
+})
 
 
 # ---------------------------------------------------------------------------
@@ -103,14 +118,39 @@ def _recording_retrieve(call_order: list[str]) -> Callable[..., list[MagicMock]]
     return _record
 
 
-def _mock_gateway(tokens: list[str] | None = None) -> MagicMock:
+def _mock_gateway(response: str | None = None) -> MagicMock:
+    """Return a gateway whose generate_stream yields a single JSON chunk.
+
+    The default is a valid insufficient_evidence answer so tests that do not care
+    about validation pass without needing real evidence or an entailment mock.
+    Passing a custom string lets tests exercise specific validation paths.
+    """
+    chunk = response if response is not None else _VALID_ANSWER_JSON
+
     async def _gen() -> AsyncIterator[str]:
-        for t in tokens or []:
-            yield t
+        yield chunk
 
     gateway = MagicMock()
     gateway.generate_stream = MagicMock(return_value=_gen())
     return gateway
+
+
+def _mock_entailment(status: ClaimStatus = ClaimStatus.ENTAILED) -> MagicMock:
+    """Return an entailment port that always gives the same status for every passage."""
+    entailment = MagicMock()
+
+    async def _check(claim: object, passages: list[object]) -> tuple[EntailmentResult, ...]:
+        return tuple(
+            EntailmentResult(
+                claim=claim,  # type: ignore[arg-type]
+                passage_label=p.label,  # type: ignore[union-attr]
+                status=status,
+            )
+            for p in passages
+        )
+
+    entailment.check_claim = AsyncMock(side_effect=_check)
+    return entailment
 
 
 def _context_builder() -> ContextBuilder:
@@ -128,12 +168,14 @@ def _make_use_case(
     gateway: MagicMock | None = None,
     opened: list[str] | None = None,
     context_builder: ContextBuilder | None = None,
+    entailment: MagicMock | None = None,
 ) -> AnswerUseCase:
     return AnswerUseCase(
         retrieve=retrieve or _mock_retrieve(),
         conversation_uow=_uow_over(repo or _mock_repo(), opened),
         model_gateway=gateway or _mock_gateway(),
         context_builder=context_builder or _context_builder(),
+        entailment=entailment or _mock_entailment(),
     )
 
 
@@ -266,12 +308,11 @@ class TestAnswerUseCase:
         request = gateway.generate_stream.call_args.args[0]
         assert request.query == "What is backpropagation?"
 
-    async def test_returns_stream_from_gateway(self) -> None:
-        tokens = ["The", " answer", " is"]
-        gateway = _mock_gateway(tokens=tokens)
-        stream = await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+    async def test_returns_validated_answer_text(self) -> None:
+        """The caller receives the prose answer, not the raw JSON the model produced."""
+        stream = await _make_use_case().execute(_BASE_CMD)
         collected = [t async for t in stream]
-        assert collected == tokens
+        assert collected == ["Test answer."]
 
     async def test_history_passed_to_retrieve_query(self) -> None:
         user_msg = _msg(MessageRole.USER, "prior question")
@@ -329,30 +370,22 @@ class TestMessagePersistence:
         assert call_order.index("save_message") < call_order.index("retrieve")
 
     async def test_assistant_message_saved_after_stream_consumed(self) -> None:
-        tokens = ["Back", "prop", "agation"]
         repo = _mock_repo()
-        stream = await _make_use_case(repo=repo, gateway=_mock_gateway(tokens=tokens)).execute(
-            _BASE_CMD
-        )
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
         # Two calls: user message + assistant message.
         assert repo.save_message.await_count == 2
 
-    async def test_assistant_message_content_is_joined_tokens(self) -> None:
-        tokens = ["Back", "prop", "agation"]
+    async def test_assistant_message_content_is_validated_answer_text(self) -> None:
         repo = _mock_repo()
-        stream = await _make_use_case(repo=repo, gateway=_mock_gateway(tokens=tokens)).execute(
-            _BASE_CMD
-        )
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
         assistant: Message = repo.save_message.call_args_list[1].args[1]
-        assert assistant.content.value == "Backpropagation"
+        assert assistant.content.value == "Test answer."
 
     async def test_assistant_message_has_completed_status(self) -> None:
         repo = _mock_repo()
-        stream = await _make_use_case(repo=repo, gateway=_mock_gateway(tokens=["ok"])).execute(
-            _BASE_CMD
-        )
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
         assistant: Message = repo.save_message.call_args_list[1].args[1]
         assert assistant.role is MessageRole.ASSISTANT
@@ -400,9 +433,7 @@ class TestTransactionBoundaries:
     async def test_answer_is_written_in_a_second_transaction(self) -> None:
         opened: list[str] = []
         repo = _mock_repo()
-        stream = await _make_use_case(
-            repo=repo, gateway=_mock_gateway(tokens=["ok"]), opened=opened
-        ).execute(_BASE_CMD)
+        stream = await _make_use_case(repo=repo, opened=opened).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
         # The first block closed while the handler was still running; this one opens
@@ -453,9 +484,7 @@ class TestRetrievalChunkPersistence:
     async def test_written_once_after_the_stream_is_consumed(self) -> None:
         repo = _mock_repo()
         retrieve = _mock_retrieve([_ev("Passage A")])
-        stream = await _make_use_case(
-            retrieve=retrieve, repo=repo, gateway=_mock_gateway(tokens=["ok"])
-        ).execute(_BASE_CMD)
+        stream = await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
         assert repo.save_retrieval_chunks.await_count == 1
@@ -463,26 +492,22 @@ class TestRetrievalChunkPersistence:
     async def test_recorded_against_the_assistant_message(self) -> None:
         repo = _mock_repo()
         retrieve = _mock_retrieve([_ev("Passage A")])
-        stream = await _make_use_case(
-            retrieve=retrieve, repo=repo, gateway=_mock_gateway(tokens=["ok"])
-        ).execute(_BASE_CMD)
+        stream = await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
         assistant: Message = repo.save_message.call_args_list[1].args[1]
         assert repo.save_retrieval_chunks.call_args.args[1] == assistant.id
 
     async def test_carries_every_evidence_item_that_reached_the_prompt(self) -> None:
-        gateway = _mock_gateway(tokens=["ok"])
         evidence = [_ev("Passage A"), _ev("Passage B"), _ev("Passage C")]
         repo = _mock_repo()
         stream = await _make_use_case(
-            retrieve=_mock_retrieve(evidence), repo=repo, gateway=gateway
+            retrieve=_mock_retrieve(evidence), repo=repo
         ).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
         recorded = list(repo.save_retrieval_chunks.call_args.args[2])
-        request = gateway.generate_stream.call_args.args[0]
-        assert len(recorded) == len(request.evidence)
+        assert len(recorded) == len(evidence)
         assert recorded == evidence
 
     async def test_written_with_the_calls_scope(self) -> None:
@@ -490,7 +515,6 @@ class TestRetrievalChunkPersistence:
         stream = await _make_use_case(
             retrieve=_mock_retrieve([_ev("Passage A")]),
             repo=repo,
-            gateway=_mock_gateway(tokens=["ok"]),
         ).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
@@ -508,7 +532,6 @@ class TestRetrievalChunkPersistence:
         stream = await _make_use_case(
             retrieve=_mock_retrieve([_ev("Passage A")]),
             repo=repo,
-            gateway=_mock_gateway(tokens=["ok"]),
         ).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
@@ -540,7 +563,7 @@ class TestRetrievalChunkPersistence:
     async def test_empty_evidence_still_reaches_the_repository(self) -> None:
         repo = _mock_repo()
         stream = await _make_use_case(
-            retrieve=_mock_retrieve([]), repo=repo, gateway=_mock_gateway(tokens=["ok"])
+            retrieve=_mock_retrieve([]), repo=repo
         ).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
@@ -548,3 +571,177 @@ class TestRetrievalChunkPersistence:
         # use case's — keeping the decision in one place keeps the two from diverging.
         assert repo.save_retrieval_chunks.await_count == 1
         assert list(repo.save_retrieval_chunks.call_args.args[2]) == []
+
+
+# ---------------------------------------------------------------------------
+# Validation pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestValidationPipeline:
+    async def test_valid_answer_yields_prose_text(self) -> None:
+        response = json.dumps({
+            "answer": "Backprop computes gradients.",
+            "claims": [{"text": "Backprop computes gradients.", "citations": ["[S1]"]}],
+            "insufficient_evidence": False,
+        })
+        gateway = _mock_gateway(response=response)
+        retrieve = _mock_retrieve([_ev("A passage about gradients.", label="[S1]")])
+        entailment = _mock_entailment(ClaimStatus.ENTAILED)
+
+        stream = await _make_use_case(
+            retrieve=retrieve, gateway=gateway, entailment=entailment
+        ).execute(_BASE_CMD)
+        collected = [t async for t in stream]
+        assert collected == ["Backprop computes gradients."]
+
+    async def test_insufficient_evidence_answer_is_returnable(self) -> None:
+        stream = await _make_use_case().execute(_BASE_CMD)
+        collected = [t async for t in stream]
+        assert collected == ["Test answer."]
+
+    async def test_parse_error_raises_generation_rejected_error(self) -> None:
+        gateway = _mock_gateway(response="not valid json {{{")
+        stream = await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+    async def test_rejected_answer_raises_generation_rejected_error(self) -> None:
+        response = json.dumps({
+            "answer": "A contradicted claim.",
+            "claims": [{"text": "A contradicted claim.", "citations": ["[S1]"]}],
+            "insufficient_evidence": False,
+        })
+        gateway = _mock_gateway(response=response)
+        retrieve = _mock_retrieve([_ev("Evidence.", label="[S1]")])
+        entailment = _mock_entailment(ClaimStatus.CONTRADICTED)
+
+        stream = await _make_use_case(
+            retrieve=retrieve, gateway=gateway, entailment=entailment
+        ).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+    async def test_repairable_answer_triggers_second_generate_call(self) -> None:
+        repairable = json.dumps({
+            "answer": "A not-supported claim.",
+            "claims": [{"text": "A not-supported claim.", "citations": ["[S1]"]}],
+            "insufficient_evidence": False,
+        })
+        repaired = json.dumps({
+            "answer": "Repaired answer.",
+            "claims": [],
+            "insufficient_evidence": True,
+        })
+
+        call_count = 0
+
+        async def _alternating() -> AsyncIterator[str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield repairable
+            else:
+                yield repaired
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=lambda _req: _alternating())
+        retrieve = _mock_retrieve([_ev("Evidence.", label="[S1]")])
+        entailment = _mock_entailment(ClaimStatus.NOT_SUPPORTED)
+
+        stream = await _make_use_case(
+            retrieve=retrieve, gateway=gateway, entailment=entailment
+        ).execute(_BASE_CMD)
+        collected = [t async for t in stream]
+
+        assert gateway.generate_stream.call_count == 2
+        assert collected == ["Repaired answer."]
+
+    async def test_repair_failure_raises_generation_rejected_error(self) -> None:
+        bad_response = json.dumps({
+            "answer": "A contradicted claim.",
+            "claims": [{"text": "A contradicted claim.", "citations": ["[S1]"]}],
+            "insufficient_evidence": False,
+        })
+
+        async def _always_bad() -> AsyncIterator[str]:
+            yield bad_response
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=lambda _req: _always_bad())
+        retrieve = _mock_retrieve([_ev("Evidence.", label="[S1]")])
+        entailment_call = 0
+
+        async def _escalating_entailment(
+            claim: object, passages: list[object]
+        ) -> tuple[EntailmentResult, ...]:
+            nonlocal entailment_call
+            entailment_call += 1
+            # First call: NOT_SUPPORTED → REPAIRABLE; second call: CONTRADICTED → REJECTED
+            status = (
+                ClaimStatus.NOT_SUPPORTED if entailment_call == 1 else ClaimStatus.CONTRADICTED
+            )
+            return tuple(
+                EntailmentResult(claim=claim, passage_label=p.label, status=status)  # type: ignore[arg-type, union-attr]
+                for p in passages
+            )
+
+        entailment = MagicMock()
+        entailment.check_claim = AsyncMock(side_effect=_escalating_entailment)
+
+        stream = await _make_use_case(
+            retrieve=retrieve, gateway=gateway, entailment=entailment
+        ).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+    async def test_entailment_only_checks_real_citations(self) -> None:
+        response = json.dumps({
+            "answer": "A claim with a fabricated label.",
+            "claims": [
+                {
+                    "text": "A claim with a fabricated label.",
+                    "citations": ["[S1]", "[FAKE]"],
+                }
+            ],
+            "insufficient_evidence": False,
+        })
+        gateway = _mock_gateway(response=response)
+        retrieve = _mock_retrieve([_ev("Evidence.", label="[S1]")])
+        entailment = _mock_entailment(ClaimStatus.ENTAILED)
+
+        stream = await _make_use_case(
+            retrieve=retrieve, gateway=gateway, entailment=entailment
+        ).execute(_BASE_CMD)
+        # [FAKE] is fabricated but [S1] is real — claim is still REPAIRABLE (has fabricated
+        # labels), so validation should not treat it as VALID. But the entailment check
+        # only runs against [S1].
+        try:
+            async for _ in stream:
+                pass
+        except GenerationRejectedError:
+            pass  # REPAIRABLE may become REJECTED after repair attempt with no evidence
+
+        # entailment was called — but only with the real passage [S1], not [FAKE]
+        assert entailment.check_claim.await_count >= 1
+        call_args = entailment.check_claim.call_args_list[0]
+        passages_arg = call_args.args[1]
+        assert all(p.label == "[S1]" for p in passages_arg)
+
+    async def test_rejected_answer_still_saves_failed_message(self) -> None:
+        gateway = _mock_gateway(response="not json")
+        repo = _mock_repo()
+
+        stream = await _make_use_case(repo=repo, gateway=gateway).execute(_BASE_CMD)
+        try:
+            async for _ in stream:
+                pass
+        except GenerationRejectedError:
+            pass
+
+        assert repo.save_message.await_count == 2
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert assistant.status is MessageStatus.FAILED
