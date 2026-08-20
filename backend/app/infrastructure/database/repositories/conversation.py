@@ -112,7 +112,6 @@ class SqlConversationRepository(ScopedRepository):
                 )
             )
 
-
     async def save_citations(
         self, scope: ScopeContext, message_id: UUID, citations: Sequence[Citation]
     ) -> None:
@@ -212,6 +211,7 @@ def _msg_to_entity(row: MessageModel) -> Message:
         prompt_tokens=row.prompt_tokens,
         completion_tokens=row.completion_tokens,
         finish_reason=row.finish_reason,
+        prompt_version=row.prompt_version,
     )
 
 
@@ -231,4 +231,5 @@ def _msg_to_model(msg: Message) -> MessageModel:
         prompt_tokens=msg.prompt_tokens,
         completion_tokens=msg.completion_tokens,
         finish_reason=msg.finish_reason,
+        prompt_version=msg.prompt_version,
     )

@@ -14,6 +14,7 @@ therefore takes its own unit of work.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
@@ -124,6 +125,40 @@ _INSTRUCTIONS: tuple[Instruction, ...] = (
         subject="explanation style",
     ),
 )
+
+
+def _derive_prompt_version() -> str:
+    """Fingerprint the prompt template, so an answer records what produced it.
+
+    Derived rather than hand-maintained. A version someone has to remember to bump is one
+    that eventually lies, and a stored version that lies is worse than none at all: it
+    makes two different prompts look like the same one, which is exactly the comparison
+    the field exists to support.
+
+    Covers what this module decides — identity, the safety rules, the task, the numbered
+    requirements and the output schema. It does not cover slot ordering, which belongs to
+    the context builder, nor anything per-turn, which is content rather than template.
+
+    Computed once at import. Every part is separated by a byte that cannot occur in the
+    text, so two different splits cannot hash to the same string.
+    """
+    parts = [
+        _SYSTEM_PREAMBLE,
+        *_SAFETY_RULES,
+        _TASK_INSTRUCTIONS,
+        *(
+            f"{i.level.value}|{i.category.value}|{i.subject or ''}|{i.text}"
+            for i in _INSTRUCTIONS
+        ),
+        OUTPUT_SCHEMA,
+    ]
+    digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+    return f"answer-{digest[:12]}"
+
+
+#: Names the prompt that produced an answer. Changes automatically whenever any part of
+#: the template above changes, which is the only way it stays true.
+PROMPT_VERSION = _derive_prompt_version()
 
 
 @dataclass(frozen=True)
@@ -289,6 +324,10 @@ class AnswerUseCase:
                     prompt_tokens=usage.prompt_tokens if usage else None,
                     completion_tokens=usage.completion_tokens if usage else None,
                     finish_reason=usage.finish_reason if usage else None,
+                    # Recorded even when the turn failed. The prompt was still the one
+                    # sent, and an answer that had to be refused is worth being able to
+                    # attribute to the template that produced it.
+                    prompt_version=PROMPT_VERSION,
                 )
                 # A fresh unit of work: by now the response has been streamed and the
                 # request that started it is over, so there is no caller's transaction

@@ -6,12 +6,21 @@ import json
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.application.commands.answer import AnswerCommand, AnswerUseCase
+from app.application.commands import answer as answer_module
+from app.application.commands.answer import (
+    _INSTRUCTIONS,
+    _SAFETY_RULES,
+    PROMPT_VERSION,
+    AnswerCommand,
+    AnswerUseCase,
+    _derive_prompt_version,
+)
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.documents.chunks import Chunk
@@ -999,3 +1008,80 @@ class TestModelMetadata:
 
         assert assistant.model_id == "second"
         assert assistant.prompt_tokens == 2
+
+
+class TestPromptVersion:
+    """Naming the template that produced an answer, so two prompts stay distinguishable."""
+
+    async def test_is_recorded_on_the_assistant_message(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert assistant.prompt_version == PROMPT_VERSION
+
+    async def test_is_not_recorded_on_the_question(self) -> None:
+        """A question is not produced by a prompt."""
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        user: Message = repo.save_message.call_args_list[0].args[1]
+        assert user.prompt_version is None
+
+    async def test_is_recorded_even_when_the_answer_was_refused(self) -> None:
+        """The prompt was still the one sent, and a refused answer is worth attributing
+        to the template that produced it."""
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            repo=repo, gateway=_mock_gateway(response="not json")
+        ).execute(_BASE_CMD)
+        try:
+            async for _ in stream:
+                pass
+        except GenerationRejectedError:
+            pass
+
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert assistant.status is MessageStatus.FAILED
+        assert assistant.prompt_version == PROMPT_VERSION
+
+    def test_is_derived_from_the_prompt_rather_than_hand_written(self) -> None:
+        """A version someone has to remember to bump is one that eventually lies. Changing
+        any part of the template must change the version without anyone editing it."""
+        original = _derive_prompt_version()
+
+        with patch.object(answer_module, "_TASK_INSTRUCTIONS", "Something else entirely."):
+            changed = _derive_prompt_version()
+
+        assert changed != original
+
+    def test_an_instruction_change_changes_the_version(self) -> None:
+        original = _derive_prompt_version()
+        edited = (
+            *_INSTRUCTIONS[:-1],
+            replace(_INSTRUCTIONS[-1], text="Answer in a completely different register."),
+        )
+
+        with patch.object(answer_module, "_INSTRUCTIONS", edited):
+            changed = _derive_prompt_version()
+
+        assert changed != original
+
+    def test_reordering_the_parts_changes_the_version(self) -> None:
+        """The separator cannot occur in the text, so two different splits cannot collide."""
+        original = _derive_prompt_version()
+
+        with patch.object(answer_module, "_SAFETY_RULES", tuple(reversed(_SAFETY_RULES))):
+            changed = _derive_prompt_version()
+
+        assert changed != original
+
+    def test_is_stable_across_calls(self) -> None:
+        assert _derive_prompt_version() == _derive_prompt_version()
+
+    def test_names_the_prompt_it_versions(self) -> None:
+        assert PROMPT_VERSION.startswith("answer-")

@@ -181,6 +181,27 @@ class TestMessageConstruction:
         with pytest.raises(InvariantViolationError, match="blank"):
             make_message(role=MessageRole.USER, rewritten_query="  ")
 
+    def test_rejects_a_prompt_version_on_user_messages(
+        self, make_message: Builder[Message]
+    ) -> None:
+        """A question is not produced by a prompt."""
+        with pytest.raises(InvariantViolationError, match="assistant"):
+            make_message(role=MessageRole.USER, prompt_version="answer-abc123")
+
+    def test_rejects_a_blank_prompt_version(self, make_message: Builder[Message]) -> None:
+        with pytest.raises(InvariantViolationError, match="blank"):
+            make_message(role=MessageRole.ASSISTANT, prompt_version="   ")
+
+    def test_a_prompt_version_does_not_require_model_metadata(
+        self, make_message: Builder[Message]
+    ) -> None:
+        """A turn refused before the provider reported anything still went out under a
+        prompt, and naming that prompt is what makes the refusal attributable."""
+        msg = make_message(role=MessageRole.ASSISTANT, prompt_version="answer-abc123")
+
+        assert msg.prompt_version == "answer-abc123"
+        assert msg.model_id is None
+
 
 class TestMessageStatusTransitions:
     def test_received_advances_to_processing(self, make_message: Builder[Message]) -> None:

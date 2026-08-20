@@ -158,6 +158,9 @@ class Message:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     finish_reason: str | None = None
+    #: Names the prompt template that produced this answer. Absent on user messages,
+    #: which are not produced by a prompt, and on answers written before it was recorded.
+    prompt_version: str | None = None
 
     def __post_init__(self) -> None:
         if self.content.is_blank():
@@ -241,3 +244,12 @@ def _validate_model_metadata(msg: Message) -> None:
         raise InvariantViolationError(
             "model metadata applies only to assistant messages"
         )
+    if msg.prompt_version is not None:
+        if not msg.prompt_version.strip():
+            raise InvariantViolationError("prompt_version must not be blank")
+        # Deliberately not tied to model_id: a turn can be refused before the provider
+        # reports anything, and the prompt that was sent is still worth naming.
+        if msg.role is not MessageRole.ASSISTANT:
+            raise InvariantViolationError(
+                "prompt_version applies only to assistant messages"
+            )

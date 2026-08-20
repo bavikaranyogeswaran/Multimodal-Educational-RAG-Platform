@@ -61,6 +61,9 @@ class MessageModel(Base):
     prompt_tokens: Mapped[int | None] = mapped_column(Integer)
     completion_tokens: Mapped[int | None] = mapped_column(Integer)
     finish_reason: Mapped[str | None] = mapped_column(String(50))
+    # Which prompt template produced this answer, so answers written under different
+    # prompts stay distinguishable when their quality is compared.
+    prompt_version: Mapped[str | None] = mapped_column(String(64))
 
 
 class ConversationRetrievalChunkModel(Base):

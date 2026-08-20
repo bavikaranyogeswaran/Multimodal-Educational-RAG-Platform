@@ -65,6 +65,9 @@ def _msg_row(
     row.prompt_tokens = None
     row.completion_tokens = None
     row.finish_reason = None
+    # Set explicitly like every other optional column: an unset attribute on a MagicMock
+    # row is a truthy mock, not None, which reads as a prompt_version on a user message.
+    row.prompt_version = None
     return row
 
 

@@ -713,6 +713,51 @@ class TestConversationScopeGuard:
 # ---------------------------------------------------------------------------
 
 
+class TestPromptVersionRoundTrip:
+    """The stored prompt name has to survive the trip back out, or it records nothing."""
+
+    async def test_prompt_version_survives_a_save_and_reload(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = replace(
+            _make_msg(scope, conv.id, role=MessageRole.ASSISTANT),
+            prompt_version="answer-8b882012f9be",
+        )
+
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        reloaded = await repo.get_message(scope, msg.id)
+        assert reloaded is not None
+        assert reloaded.prompt_version == "answer-8b882012f9be"
+
+    async def test_a_question_reloads_without_a_prompt_version(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, sqlite_session)
+        await repo.save(scope, conv)
+        await sqlite_session.flush()
+        msg = _make_msg(scope, conv.id, role=MessageRole.USER)
+
+        await repo.save_message(scope, msg)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        reloaded = await repo.get_message(scope, msg.id)
+        assert reloaded is not None
+        assert reloaded.prompt_version is None
+
+
 class TestSaveCitations:
     """What the answer actually used, as opposed to what it was shown."""
 
