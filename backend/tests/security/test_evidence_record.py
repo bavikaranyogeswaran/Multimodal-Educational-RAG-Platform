@@ -28,6 +28,7 @@ Run with: uv run pytest -m security
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -47,6 +48,14 @@ from app.domain.values import UntrustedText
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
 
 _SCOPE = ScopeContext(user_id=uuid.uuid4(), knowledge_base_id=uuid.uuid4())
+
+# Valid answer with no claims — the pipeline returns INSUFFICIENT_EVIDENCE immediately,
+# so these tests exercise the evidence-record path without needing a real entailment mock.
+_VALID_JSON = json.dumps({
+    "answer": "The retrieved passages do not cover this topic.",
+    "claims": [],
+    "insufficient_evidence": True,
+})
 _CONV_ID = uuid.uuid4()
 _COMMAND = AnswerCommand(
     scope=_SCOPE,
@@ -91,6 +100,9 @@ def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> 
     retrieve = AsyncMock()
     retrieve.execute = AsyncMock(return_value=evidence)
 
+    entailment = AsyncMock()
+    entailment.check_claim = AsyncMock(return_value=())
+
     @asynccontextmanager
     async def _uow() -> AsyncIterator[AsyncMock]:
         yield repo
@@ -100,6 +112,7 @@ def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> 
         conversation_uow=_uow,
         model_gateway=gateway,
         context_builder=ContextBuilder(lambda text: len(text.split()), token_budget=100_000),
+        entailment=entailment,
     )
 
 
@@ -113,7 +126,7 @@ def _repo() -> AsyncMock:
 
 def _gateway(tokens: list[str] | None = None) -> MagicMock:
     async def _gen() -> AsyncIterator[str]:
-        for token in tokens or ["An", " answer."]:
+        for token in tokens or [_VALID_JSON]:
             yield token
 
     gateway = MagicMock()
