@@ -200,7 +200,10 @@ class AnswerUseCase:
         async with self._uow() as repo:
             # History loaded before the question is stored — the rewriter needs prior
             # turns only, and would otherwise be handed the question it is rewriting.
-            messages = await repo.list_messages(
+            # `list_history` rather than `list_messages`: a turn that failed or was
+            # abandoned left a placeholder where its answer would be, and replaying that
+            # would present it to the model as something it had previously said.
+            messages = await repo.list_history(
                 command.scope, command.conversation_id, limit=command.max_history
             )
             history = tuple(

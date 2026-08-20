@@ -121,6 +121,9 @@ def _mock_retrieve(evidence: list[Evidence] | None = None) -> AsyncMock:
 
 def _mock_repo(messages: list[Message] | None = None) -> AsyncMock:
     repo = AsyncMock()
+    # The answer path reads list_history, not list_messages: an AsyncMock would
+    # auto-create the former and hand back an empty history without saying so.
+    repo.list_history = AsyncMock(return_value=messages or [])
     repo.list_messages = AsyncMock(return_value=messages or [])
     repo.save_message = AsyncMock()
     repo.save_retrieval_chunks = AsyncMock()
@@ -268,13 +271,22 @@ class TestAnswerUseCase:
     async def test_history_loaded_with_conversation_id(self) -> None:
         repo = _mock_repo()
         await _make_use_case(repo=repo).execute(_BASE_CMD)
-        assert repo.list_messages.call_args.args[1] == _CONV_ID
+        assert repo.list_history.call_args.args[1] == _CONV_ID
 
     async def test_history_loaded_with_max_history_limit(self) -> None:
         repo = _mock_repo()
         cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q", max_history=5)
         await _make_use_case(repo=repo).execute(cmd)
-        assert repo.list_messages.call_args.kwargs["limit"] == 5
+        assert repo.list_history.call_args.kwargs["limit"] == 5
+
+    async def test_history_comes_from_list_history_not_list_messages(self) -> None:
+        """The two differ on turns that failed or were abandoned. Reading the wrong one
+        replays a placeholder to the model as something the assistant previously said."""
+        repo = _mock_repo()
+        await _make_use_case(repo=repo).execute(_BASE_CMD)
+
+        assert repo.list_history.await_count == 1
+        assert repo.list_messages.await_count == 0
 
     async def test_evidence_chunk_texts_in_request(self) -> None:
         gateway = _mock_gateway()

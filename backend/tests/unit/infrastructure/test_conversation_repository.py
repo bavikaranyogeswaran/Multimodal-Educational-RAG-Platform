@@ -713,6 +713,147 @@ class TestConversationScopeGuard:
 # ---------------------------------------------------------------------------
 
 
+class TestListHistory:
+    """What the model is told was said, as opposed to what the student is shown."""
+
+    @staticmethod
+    async def _conversation(
+        scope: ScopeContext, session: AsyncSession
+    ) -> tuple[SqlConversationRepository, Conversation]:
+        await _save_kb(scope, session)
+        conv = _make_conv(scope)
+        repo = _repo(scope, session)
+        await repo.save(scope, conv)
+        await session.flush()
+        return repo, conv
+
+    @staticmethod
+    def _assistant(
+        scope: ScopeContext,
+        conv_id: uuid.UUID,
+        status: MessageStatus,
+        text: str,
+        *,
+        age_seconds: int = 0,
+    ) -> Message:
+        return replace(
+            _make_msg(scope, conv_id, role=MessageRole.ASSISTANT, age_seconds=age_seconds),
+            status=status,
+            content=UntrustedText(text),
+        )
+
+    async def test_keeps_answers_the_student_received(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        repo, conv = await self._conversation(scope, sqlite_session)
+        await repo.save_message(
+            scope, self._assistant(scope, conv.id, MessageStatus.COMPLETED, "A real answer.")
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await repo.list_history(scope, conv.id)
+        assert [m.content.value for m in results] == ["A real answer."]
+
+    async def test_drops_an_answer_that_failed(self, sqlite_session: AsyncSession) -> None:
+        """Its content is a placeholder. Replaying it presents it to the model as
+        something the assistant previously said, which it never did."""
+        scope = _make_scope()
+        repo, conv = await self._conversation(scope, sqlite_session)
+        await repo.save_message(
+            scope,
+            self._assistant(scope, conv.id, MessageStatus.FAILED, "(generation failed)"),
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert await repo.list_history(scope, conv.id) == []
+
+    async def test_drops_an_answer_the_student_abandoned(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        repo, conv = await self._conversation(scope, sqlite_session)
+        await repo.save_message(
+            scope,
+            self._assistant(scope, conv.id, MessageStatus.CANCELLED, "(cancelled)"),
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert await repo.list_history(scope, conv.id) == []
+
+    async def test_keeps_the_question_even_when_its_answer_failed(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """The student did ask, and a follow-up is only intelligible next to it."""
+        scope = _make_scope()
+        repo, conv = await self._conversation(scope, sqlite_session)
+        await repo.save_message(scope, _make_msg(scope, conv.id, age_seconds=10))
+        await repo.save_message(
+            scope,
+            self._assistant(scope, conv.id, MessageStatus.FAILED, "(generation failed)"),
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await repo.list_history(scope, conv.id)
+        assert [m.role for m in results] == [MessageRole.USER]
+
+    async def test_the_limit_counts_usable_turns(self, sqlite_session: AsyncSession) -> None:
+        """Filtering after the limit would give fewest turns of context exactly when the
+        conversation has been going badly."""
+        scope = _make_scope()
+        repo, conv = await self._conversation(scope, sqlite_session)
+        for i in range(5):
+            await repo.save_message(
+                scope,
+                self._assistant(
+                    scope, conv.id, MessageStatus.FAILED, f"(failed {i})", age_seconds=i
+                ),
+            )
+        for i in range(3):
+            await repo.save_message(
+                scope,
+                self._assistant(
+                    scope,
+                    conv.id,
+                    MessageStatus.COMPLETED,
+                    f"Good answer {i}.",
+                    age_seconds=10 + i,
+                ),
+            )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await repo.list_history(scope, conv.id, limit=3)
+        assert len(results) == 3
+        assert all("Good answer" in m.content.value for m in results)
+
+    async def test_list_messages_still_shows_the_student_everything(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """A turn that went wrong is part of their transcript."""
+        scope = _make_scope()
+        repo, conv = await self._conversation(scope, sqlite_session)
+        await repo.save_message(
+            scope,
+            self._assistant(scope, conv.id, MessageStatus.FAILED, "(generation failed)"),
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        assert len(await repo.list_messages(scope, conv.id)) == 1
+
+    async def test_rejects_a_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _repo(_make_scope(), session)
+        with pytest.raises(ScopeViolationError):
+            await repo.list_history(_make_scope(), uuid.uuid4())
+        session.execute.assert_not_called()
+
+
 class TestPromptVersionRoundTrip:
     """The stored prompt name has to survive the trip back out, or it records nothing."""
 

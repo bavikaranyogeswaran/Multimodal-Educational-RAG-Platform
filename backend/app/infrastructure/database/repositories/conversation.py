@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.enums import MessageRole, MessageStatus
@@ -85,6 +85,28 @@ class SqlConversationRepository(ScopedRepository):
             .where(
                 MessageModel.conversation_id == conversation_id,
                 self._scope_filter(MessageModel),
+            )
+            .order_by(MessageModel.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_msg_to_entity(row) for row in rows]
+
+    async def list_history(
+        self, scope: ScopeContext, conversation_id: UUID, *, limit: int = 50
+    ) -> Sequence[Message]:
+        self._require_scope(scope)
+        stmt = (
+            select(MessageModel)
+            .where(
+                MessageModel.conversation_id == conversation_id,
+                self._scope_filter(MessageModel),
+                # Keep every question, and only those answers the student actually
+                # received. Applied in SQL so the limit counts usable turns.
+                or_(
+                    MessageModel.role != MessageRole.ASSISTANT.value,
+                    MessageModel.status == MessageStatus.COMPLETED.value,
+                ),
             )
             .order_by(MessageModel.created_at.desc())
             .limit(limit)

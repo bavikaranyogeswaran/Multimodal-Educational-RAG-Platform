@@ -161,7 +161,32 @@ class ConversationRepository(Protocol):
     async def list_messages(
         self, scope: ScopeContext, conversation_id: UUID, *, limit: int = 50
     ) -> Sequence[Message]:
-        """Most recent messages first, up to limit."""
+        """Most recent messages first, up to limit.
+
+        Everything that happened, including turns that failed or were abandoned. This is
+        what the student is shown: a turn that went wrong is part of their transcript.
+        """
+        ...
+
+    async def list_history(
+        self, scope: ScopeContext, conversation_id: UUID, *, limit: int = 50
+    ) -> Sequence[Message]:
+        """Most recent messages first, up to limit, as context for a new prompt.
+
+        Separate from `list_messages` because showing the student what happened and
+        telling the model what was said are different questions. An answer that failed
+        validation or was abandoned mid-stream still leaves a message, and its content is
+        a placeholder — replaying that to the model presents it as something the assistant
+        previously said, which it never did.
+
+        Questions are always kept, whatever became of the answer. The student did ask, and
+        a follow-up is only intelligible next to what preceded it.
+
+        The filter belongs here rather than in the caller because it has to run before the
+        limit. Taking the last ten messages and then discarding the failures would leave
+        fewer than ten turns of context, and fewest exactly when the conversation has been
+        going badly.
+        """
         ...
 
     async def save_retrieval_chunks(

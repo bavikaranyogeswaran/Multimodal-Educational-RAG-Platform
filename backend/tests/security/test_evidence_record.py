@@ -118,6 +118,7 @@ def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> 
 
 def _repo() -> AsyncMock:
     repo = AsyncMock()
+    repo.list_history = AsyncMock(return_value=[])
     repo.list_messages = AsyncMock(return_value=[])
     repo.save_message = AsyncMock()
     repo.save_retrieval_chunks = AsyncMock()
