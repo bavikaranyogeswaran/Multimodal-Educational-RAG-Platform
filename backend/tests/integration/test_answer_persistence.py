@@ -25,17 +25,19 @@ import pytest_asyncio
 from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
-from app.application.commands.answer import AnswerCommand, AnswerUseCase
+from app.application.commands.answer import PROMPT_VERSION, AnswerCommand, AnswerUseCase
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import AnswerFidelity as _AnswerFidelity
 from app.domain.enums import (
     ChunkType,
+    ClaimStatus,
     DocumentStatus,
     MessageRole,
     MessageStatus,
     RetrieverKind,
 )
 from app.domain.models.context_builder import ContextBuilder
+from app.domain.models.validation import EntailmentResult
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -56,11 +58,13 @@ class _Seed:
         scope: ScopeContext,
         conversation_id: uuid.UUID,
         chunk_id: uuid.UUID,
+        document_id: uuid.UUID,
     ) -> None:
         self.engine = engine
         self.scope = scope
         self.conversation_id = conversation_id
         self.chunk_id = chunk_id
+        self.document_id = document_id
         self.session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -142,7 +146,7 @@ async def seed(test_db_url: str) -> AsyncIterator[_Seed]:
 
     scope = ScopeContext(user_id=user_id, knowledge_base_id=kb_id)
     try:
-        yield _Seed(engine, scope, conversation_id, chunk_id)
+        yield _Seed(engine, scope, conversation_id, chunk_id, document_id)
     finally:
         async with engine.begin() as conn:
             await conn.execute(
@@ -163,7 +167,9 @@ def _evidence(seed: _Seed) -> Evidence:
             id=seed.chunk_id,
             user_id=seed.scope.user_id,
             knowledge_base_id=seed.scope.knowledge_base_id,
-            document_id=uuid.uuid4(),
+            # The seeded document, not a fresh id: message_citations carries a foreign
+            # key on document_id, so a fabricated one is rejected by the database.
+            document_id=seed.document_id,
             chunk_type=ChunkType.TEXT,
             text=UntrustedText("Backpropagation computes gradients layer by layer."),
             token_count=9,
@@ -340,3 +346,113 @@ class TestAnswerReachesTheDatabase:
             (MessageRole.USER.value, MessageStatus.RECEIVED.value),
             (MessageRole.ASSISTANT.value, MessageStatus.FAILED.value),
         ]
+
+
+async def _run_cited_turn(seed: _Seed) -> None:
+    """A turn whose answer actually cites a passage, so citation rows get written.
+
+    The abstaining response the other tests use never reaches `save_citations` with
+    anything in it, which left the new table's write path — and its foreign keys —
+    unexercised against a real database.
+    """
+    retrieve = AsyncMock()
+    retrieve.execute = AsyncMock(return_value=[_evidence(seed)])
+
+    payload = json.dumps({
+        "answer": "Backpropagation computes gradients layer by layer.",
+        "claims": [
+            {
+                "text": "Backpropagation computes gradients layer by layer.",
+                "citations": ["[S1]"],
+            }
+        ],
+        "insufficient_evidence": False,
+    })
+
+    async def _gen() -> AsyncIterator[str]:
+        yield payload
+
+    gateway = MagicMock()
+    gateway.generate_stream = MagicMock(return_value=_gen())
+
+    collaborators = _collaborators()
+    entailment = collaborators["entailment"]
+    entailment.check_claim = AsyncMock(  # type: ignore[union-attr]
+        side_effect=lambda claim, passages: tuple(
+            EntailmentResult(claim=claim, passage_label=p.label, status=ClaimStatus.ENTAILED)
+            for p in passages
+        )
+    )
+
+    use_case = AnswerUseCase(
+        retrieve=retrieve,
+        conversation_uow=build_conversation_unit_of_work(seed.session_factory, seed.scope),
+        model_gateway=gateway,
+        **collaborators,  # type: ignore[arg-type]
+    )
+    stream = await use_case.execute(
+        AnswerCommand(
+            scope=seed.scope,
+            conversation_id=seed.conversation_id,
+            query="What is backpropagation?",
+        )
+    )
+    async for _ in stream:
+        pass
+
+
+class TestCitationsReachTheDatabase:
+    """The message_citations table, against real foreign keys and a real composite key."""
+
+    async def test_a_cited_answer_writes_a_citation_row(self, seed: _Seed) -> None:
+        await _run_cited_turn(seed)
+
+        rows = await _rows(
+            seed,
+            "SELECT mc.label, mc.chunk_id, mc.document_id, mc.page_number, mc.chunk_type "
+            "FROM message_citations mc JOIN messages m ON m.id = mc.message_id "
+            "WHERE m.conversation_id = :cid",
+            {"cid": seed.conversation_id},
+        )
+
+        assert len(rows) == 1
+        assert rows[0]["label"] == "S1"
+        assert rows[0]["chunk_id"] == seed.chunk_id
+        assert rows[0]["document_id"] == seed.document_id
+        assert rows[0]["page_number"] == 1
+
+    async def test_the_citation_hangs_off_the_assistant_message(self, seed: _Seed) -> None:
+        await _run_cited_turn(seed)
+
+        rows = await _rows(
+            seed,
+            "SELECT m.role FROM message_citations mc "
+            "JOIN messages m ON m.id = mc.message_id WHERE m.conversation_id = :cid",
+            {"cid": seed.conversation_id},
+        )
+
+        assert [r["role"] for r in rows] == [MessageRole.ASSISTANT.value]
+
+    async def test_an_abstaining_answer_writes_no_citations(self, seed: _Seed) -> None:
+        await _run_turn(seed, answer="The passages do not cover this.")
+
+        rows = await _rows(
+            seed,
+            "SELECT mc.citation_order FROM message_citations mc "
+            "JOIN messages m ON m.id = mc.message_id WHERE m.conversation_id = :cid",
+            {"cid": seed.conversation_id},
+        )
+
+        assert rows == []
+
+    async def test_the_prompt_version_is_stored_on_the_answer(self, seed: _Seed) -> None:
+        await _run_cited_turn(seed)
+
+        rows = await _rows(
+            seed,
+            "SELECT prompt_version FROM messages "
+            "WHERE conversation_id = :cid AND role = :role",
+            {"cid": seed.conversation_id, "role": MessageRole.ASSISTANT.value},
+        )
+
+        assert rows[0]["prompt_version"] == PROMPT_VERSION

@@ -27,13 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 11** — ~65%, validation pipeline closed end to end; citation provenance and persistence still open |
+| In progress | **Phase 11** — ~80%, 7 of 11 items done. Generation, validation, citation and persistence all closed and verified against the live database; the §38 rule gaps and UC-07–09 remain |
 | Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
 | Foundations only | Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,210 collected · 2,194 passing · 15 integration skipped unless `TEST_DATABASE_URL` is set (**passing against the live database** when it is) · 115 marked `security`, 81 `gate` |
-| Next step | **Phase 11 continues.** Steps 11.1–11.7 are done; what remains is `[S1]` provenance, `message_citations`, `prompt_version` and model metadata, SSE cancellation, and UC-07 through UC-09. **7.4** still waits on a textbook PDF |
-| Last updated | 20 August 2026 (step 11.7 — generation security tests) |
+| Tests | 2,295 unit and security **all passing** · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
+| Next step | **Phase 11 continues.** Steps 11.1–11.15 are done. What remains: the three §38 rules with neither rule nor validator (FR-GEN-03, 06, 07), the deterministic validators for limits, table numbers and units, and UC-07 through UC-09. **7.4** still waits on a textbook PDF |
+| Last updated | 20 August 2026 (step 11.15 — verification against the live database) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -44,26 +44,45 @@ text layer cannot be trusted are recorded and left unread, since Phase 5 deferre
 pending a real textbook to calibrate against, and Phase 6 has not been started at all, so nothing
 visual is described or answerable.
 
-Phase 11 now closes the loop the milestone names. A generated answer is parsed against the output
+Phase 11 now closes the loop the milestone names, and the answer it produces is traceable after
+the fact rather than only correct at the time. A generated answer is parsed against the output
 schema, every cited label is checked against the evidence set that was actually sent, each claim
-that survives is checked for entailment against the passages it rests on, and the results
-aggregate into one decision. A repairable answer gets exactly one corrective attempt and no more;
-anything still ungrounded is refused rather than shown. What the phase does not yet have is
-memory of any of it. Labels are bare ordinals carrying no document, page or bounding box, so a
-citation cannot be resolved back to a place in a PDF, and no `message_citations` table exists at
-all — citations are validated and then discarded when the turn ends. Until both land, the answer
-is grounded but not yet traceable, and §40 is unmet.
+that survives is checked for entailment against the passages it rests on, and the prose the
+student actually reads is checked against those claims — because an answer whose claims are each
+impeccable can still assert something none of them established. A repairable answer gets exactly
+one corrective attempt and no more; anything still ungrounded is refused rather than shown.
 
-Migration `0008` applied at `0008 (head)` against Supabase; fourteen SQLAlchemy models registered
-with `Base.metadata`. ruff and mypy clean across `app/`.
+What the turn leaves behind is now the point. Two records are written, and they are deliberately
+different: the evidence set records what the model *could* have known, the citations record what
+it *actually used*, and the gap between them is the thing worth being able to see. Each citation
+carries the document, page, type, bounding box and content hash the passage had at the moment it
+was cited, copied onto the row rather than joined from the chunk — reprocessing rewrites chunks,
+and a citation resolved against current text would quietly begin describing a passage the answer
+never saw. Alongside them sit what the call cost and a fingerprint of the prompt that produced
+it, so two answers written under different prompts stay distinguishable when their quality is
+compared.
 
-**Two known test failures**, neither caused by the code under test:
+§40 is met except for its *object* field, which waits on Phase 6 to create the tables and figures
+it would name.
 
-- `test_container.py::test_every_slot_raises_not_implemented_on_access` — asserts `model_gateway`
-  is still an unimplemented slot; it has held a real `OllamaModelGateway` since `897a88d`.
-- `test_stage_timer.py::test_measures_real_elapsed_time` — flaky, failing roughly one run in
-  three. Asserts at least 20 ms elapsed after a 20 ms sleep, which Windows timer granularity does
-  not reliably satisfy.
+Migrations applied through `0010 (head)` against Supabase; fifteen SQLAlchemy models registered
+with `Base.metadata`, matching fifteen tables in the live schema. ruff and mypy clean across
+`app/`.
+
+The `message_citations` row-level security policy is verified against PostgreSQL rather than
+argued for: SQLite cannot express row-level security, so until the migration was applied the
+policy had only ever been read. The destructive migration round-trip remains gated behind
+`ALLOW_DESTRUCTIVE_MIGRATION_TEST=1` and has not been run — the chain is verified forward from
+`0008` to `0010`, not as a full rebuild.
+
+**One known flaky test**, not caused by the code under test:
+
+- `test_stage_timer.py::test_measures_real_elapsed_time` — fails roughly one run in three.
+  Asserts at least 20 ms elapsed after a 20 ms sleep, which Windows timer granularity does not
+  reliably satisfy.
+
+`test_container.py::test_every_slot_raises_not_implemented_on_access` was listed here and no
+longer fails; the whole file passes.
 
 **Documentation debt carried into Phase 20.** `REQUIREMENTS.md` has no status column against its
 334 functional requirements; `USE_CASES.md` tracks no implementation status; `EXECUTION_LOG.md`
@@ -1665,9 +1684,12 @@ Covers §23 complete, §38, §39, §40. **Milestone: first cited, validated, str
       model inference (FR-GEN-03, FR-GEN-06, FR-GEN-07)
 - [x] Structured output `{answer, claims[{claim, citations[]}], insufficient_evidence}`, parsed
       and schema-checked on the way back. The claim field is named `text` rather than `claim`
-- [ ] Stable `[S1]` identifiers carrying document, page, type, object and bbox (§40). Labels are
-      bare ordinals, so a citation cannot be resolved back to a place in a PDF — which is what
-      the viewer in Phase 19 will need
+- [~] Stable `[S1]` identifiers carrying document, page, type, object and bbox (§40). A citation
+      now carries document, page, chunk and element type, bounding box, and the content hash the
+      passage had when it was cited — enough to resolve it back to a place in a PDF for the
+      viewer in Phase 19. Only *object* is missing: a chunk carries no table or figure id until
+      Phase 6 creates them, and a column nothing can fill reads as a bug rather than as
+      scaffolding (FR-CIT-02)
 - [x] Backend validates each citation exists, belongs to this user and KB, **was actually in model
       context**, and supports its claim. Authorization holds structurally rather than as a
       separate lookup: only a label present in the evidence set that was actually sent can
@@ -1678,21 +1700,24 @@ Covers §23 complete, §38, §39, §40. **Milestone: first cited, validated, str
       authorization, required fields and Knowledge Base scope are done. Word and token limits,
       table-number matching and unit matching are not; quiz answer schema belongs to Phase 15
       and cannot be built here
-- [~] Semantic validators: claim entailment `ENTAILED`/`CONTRADICTED`/`NOT_SUPPORTED`, unsupported
+- [x] Semantic validators: claim entailment `ENTAILED`/`CONTRADICTED`/`NOT_SUPPORTED`, unsupported
       claims, contradictions, citation entailment and completeness, faithfulness (§39).
       Entailment runs per cited passage, and unsupported claims, contradictions and citation
-      completeness all fall out of it. Faithfulness does not: the free-text `answer` field is
-      never checked against the claims that were validated, so prose asserting more than the
-      claims carry would pass
+      completeness all fall out of it. Faithfulness closes the last gap: the prose the student
+      reads is checked against the claims already verified, because an answer whose claims are
+      each impeccable can still assert something none of them established
 - [x] Decisions `VALID`/`REPAIRABLE`/`INSUFFICIENT_EVIDENCE`/`REJECTED`; **exactly one** repair
       attempt, no loops
-- [~] SSE streaming with cancellation on disconnect. The endpoint streams `text/event-stream` and
-      terminates with `[DONE]`, but nothing checks for client disconnect. Starlette cancels the
-      generator task, raising `CancelledError` — a `BaseException`, so the `except Exception`
-      guard misses it and the turn records as COMPLETED. Untested either way
-- [~] Persist answer, `message_citations`, model metadata, `prompt_version`. The answer is
-      persisted. `message_citations` has no table, no ORM model and no migration; model metadata
-      and `prompt_version` are still null on every assistant message, the same gap Phase 9 left
+- [x] SSE streaming with cancellation on disconnect. A turn the student walks away from is
+      recorded as `CANCELLED` rather than as a completed answer nobody received — `CancelledError`
+      and `GeneratorExit` are both `BaseException`, so both once slipped past the failure handler.
+      The endpoint closes the answer stream deterministically, since the turn is only recorded in
+      that stream's cleanup
+- [x] Persist answer, `message_citations`, model metadata, `prompt_version`. All four land, and
+      all four are verified against the live database rather than against SQLite — including the
+      `message_citations` row-level security policy, which SQLite cannot express at all. Model
+      metadata comes from the streaming path, which reports what the call cost once it ends;
+      `prompt_version` is a fingerprint of the prompt template, so it cannot go stale
 - [x] Security tests: prompt injection inside a PDF, fabricated citation, unauthorized citation
 - [ ] UC-07, UC-08, UC-09
 

@@ -21,12 +21,28 @@ import sys
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-_EXPECTED_HEAD = "0008"
-
 _BACKEND_DIR = Path(__file__).parent.parent.parent  # backend/
+
+
+def _expected_head() -> str:
+    """The head revision according to the migration files themselves.
+
+    Read from the script directory rather than written down here. A constant someone has
+    to remember to bump after every migration is a constant that goes stale silently —
+    this one sat at 0008 through two migrations, and only surfaced when these tests were
+    first run again. What the test means is "the database is at whatever the migrations
+    say is current", so that is what it now asks.
+    """
+    cfg = Config(str(_BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_DIR / "alembic"))
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    assert head is not None, "no alembic head revision found"
+    return head
 
 
 # ---------------------------------------------------------------------------
@@ -45,8 +61,9 @@ async def test_migrations_at_head(test_db_url: str) -> None:
         version = result.scalar_one()
     await engine.dispose()
 
-    assert version == _EXPECTED_HEAD, (
-        f"Expected head revision {_EXPECTED_HEAD!r}, got {version!r}. "
+    expected = _expected_head()
+    assert version == expected, (
+        f"Expected head revision {expected!r}, got {version!r}. "
         "Run: uv run alembic upgrade head"
     )
 
