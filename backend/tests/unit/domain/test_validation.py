@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.enums import ClaimStatus
+from app.domain.enums import ClaimStatus, ValidationDecision
 from app.domain.errors import GenerationParseError
 from app.domain.models.entities import LabeledPassage
 from app.domain.models.generation import Claim, GeneratedAnswer
@@ -13,6 +13,7 @@ from app.domain.models.validation import (
     EntailmentResult,
     aggregate_claim_status,
     check_citation_existence,
+    decide,
     parse_entailment_status,
 )
 from app.domain.values import UntrustedText
@@ -307,3 +308,119 @@ class TestAggregateClaimStatus:
             self._result(ClaimStatus.NOT_SUPPORTED, "[S2]"),
         ]
         assert aggregate_claim_status(results) is ClaimStatus.NOT_SUPPORTED
+
+
+# ---------------------------------------------------------------------------
+# decide
+# ---------------------------------------------------------------------------
+
+
+class TestDecide:
+    def _check(
+        self, claim: Claim, fabricated: frozenset[str] = frozenset()
+    ) -> CitationCheckResult:
+        return CitationCheckResult(claim=claim, fabricated_labels=fabricated)
+
+    def _ent(self, claim: Claim, label: str, status: ClaimStatus) -> EntailmentResult:
+        return EntailmentResult(claim=claim, passage_label=label, status=status)
+
+    def test_insufficient_evidence_returns_insufficient_evidence(self) -> None:
+        answer = _answer(insufficient_evidence=True, answer_text="No relevant material.")
+        result = decide(answer, (), [])
+        assert result is ValidationDecision.INSUFFICIENT_EVIDENCE
+
+    def test_all_claims_entailed_no_fabricated_returns_valid(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        answer = _answer(claim)
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+        assert decide(answer, checks, ents) is ValidationDecision.VALID
+
+    def test_all_fabricated_citations_returns_rejected(self) -> None:
+        claim = _claim(citations=("[FAKE]",))
+        answer = _answer(claim)
+        checks = (self._check(claim, fabricated=frozenset({"[FAKE]"})),)
+        ents: list[list[EntailmentResult]] = [[]]
+        assert decide(answer, checks, ents) is ValidationDecision.REJECTED
+
+    def test_contradicted_returns_rejected(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        answer = _answer(claim)
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.CONTRADICTED)]]
+        assert decide(answer, checks, ents) is ValidationDecision.REJECTED
+
+    def test_not_supported_returns_repairable(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        answer = _answer(claim)
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.NOT_SUPPORTED)]]
+        assert decide(answer, checks, ents) is ValidationDecision.REPAIRABLE
+
+    def test_some_fabricated_citations_returns_repairable(self) -> None:
+        claim = _claim(citations=("[S1]", "[FAKE]"))
+        answer = _answer(claim)
+        checks = (self._check(claim, fabricated=frozenset({"[FAKE]"})),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+        assert decide(answer, checks, ents) is ValidationDecision.REPAIRABLE
+
+    def test_rejected_beats_repairable(self) -> None:
+        good = _claim(text="Good fact.", citations=("[S1]",))
+        bad = _claim(text="Bad fact.", citations=("[FAKE]",))
+        answer = _answer(good, bad)
+        checks = (
+            self._check(good),
+            self._check(bad, fabricated=frozenset({"[FAKE]"})),
+        )
+        ents: list[list[EntailmentResult]] = [
+            [self._ent(good, "[S1]", ClaimStatus.NOT_SUPPORTED)],
+            [],
+        ]
+        assert decide(answer, checks, ents) is ValidationDecision.REJECTED
+
+    def test_multiple_claims_all_valid(self) -> None:
+        c1 = _claim(text="Fact one.", citations=("[S1]",))
+        c2 = _claim(text="Fact two.", citations=("[S2]",))
+        answer = _answer(c1, c2)
+        checks = (self._check(c1), self._check(c2))
+        ents = [
+            [self._ent(c1, "[S1]", ClaimStatus.ENTAILED)],
+            [self._ent(c2, "[S2]", ClaimStatus.ENTAILED)],
+        ]
+        assert decide(answer, checks, ents) is ValidationDecision.VALID
+
+    def test_one_repairable_claim_makes_overall_repairable(self) -> None:
+        c1 = _claim(text="Fact one.", citations=("[S1]",))
+        c2 = _claim(text="Fact two.", citations=("[S2]",))
+        answer = _answer(c1, c2)
+        checks = (self._check(c1), self._check(c2))
+        ents = [
+            [self._ent(c1, "[S1]", ClaimStatus.ENTAILED)],
+            [self._ent(c2, "[S2]", ClaimStatus.NOT_SUPPORTED)],
+        ]
+        assert decide(answer, checks, ents) is ValidationDecision.REPAIRABLE
+
+    def test_contradicted_and_not_supported_returns_rejected(self) -> None:
+        c1 = _claim(text="Contradicted.", citations=("[S1]",))
+        c2 = _claim(text="Not supported.", citations=("[S2]",))
+        answer = _answer(c1, c2)
+        checks = (self._check(c1), self._check(c2))
+        ents = [
+            [self._ent(c1, "[S1]", ClaimStatus.CONTRADICTED)],
+            [self._ent(c2, "[S2]", ClaimStatus.NOT_SUPPORTED)],
+        ]
+        assert decide(answer, checks, ents) is ValidationDecision.REJECTED
+
+    def test_some_fabricated_with_contradiction_returns_rejected(self) -> None:
+        claim = _claim(citations=("[S1]", "[FAKE]"))
+        answer = _answer(claim)
+        checks = (self._check(claim, fabricated=frozenset({"[FAKE]"})),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.CONTRADICTED)]]
+        assert decide(answer, checks, ents) is ValidationDecision.REJECTED
+
+    def test_all_fabricated_with_entailed_still_rejected(self) -> None:
+        claim = _claim(citations=("[FAKE1]", "[FAKE2]"))
+        answer = _answer(claim)
+        checks = (self._check(claim, fabricated=frozenset({"[FAKE1]", "[FAKE2]"})),)
+        ents: list[list[EntailmentResult]] = [[]]
+        assert decide(answer, checks, ents) is ValidationDecision.REJECTED

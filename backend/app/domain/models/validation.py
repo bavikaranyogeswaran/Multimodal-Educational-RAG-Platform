@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from app.domain.enums import ClaimStatus
+from app.domain.enums import ClaimStatus, ValidationDecision
 from app.domain.errors import GenerationParseError
 from app.domain.models.entities import LabeledPassage
 from app.domain.models.generation import Claim, GeneratedAnswer
@@ -105,6 +105,47 @@ def aggregate_claim_status(results: Sequence[EntailmentResult]) -> ClaimStatus:
     if ClaimStatus.CONTRADICTED in statuses:
         return ClaimStatus.CONTRADICTED
     return ClaimStatus.NOT_SUPPORTED
+
+
+def decide(
+    answer: GeneratedAnswer,
+    citation_results: tuple[CitationCheckResult, ...],
+    entailment_by_claim: Sequence[Sequence[EntailmentResult]],
+) -> ValidationDecision:
+    """Collapse citation and entailment results into a single action for the answer.
+
+    Pairs each CitationCheckResult with the entailment results for the same claim
+    (by position). A claim is rejected when all its citations are fabricated — there
+    is no real evidence to point to — or when the evidence actively contradicts it.
+    A claim is repairable when some citations are fabricated but real ones remain, or
+    when the evidence does not address it but does not refute it either.
+    """
+    if answer.insufficient_evidence:
+        return ValidationDecision.INSUFFICIENT_EVIDENCE
+
+    rejected = False
+    repairable = False
+
+    for check, ent_results in zip(citation_results, entailment_by_claim, strict=True):
+        real_citations = frozenset(check.claim.citations) - check.fabricated_labels
+        if not real_citations:
+            rejected = True
+            continue
+
+        if check.has_fabricated_citations:
+            repairable = True
+
+        status = aggregate_claim_status(ent_results)
+        if status is ClaimStatus.CONTRADICTED:
+            rejected = True
+        elif status is ClaimStatus.NOT_SUPPORTED:
+            repairable = True
+
+    if rejected:
+        return ValidationDecision.REJECTED
+    if repairable:
+        return ValidationDecision.REPAIRABLE
+    return ValidationDecision.VALID
 
 
 def check_citation_existence(
