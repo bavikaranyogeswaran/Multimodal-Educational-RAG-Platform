@@ -8,6 +8,7 @@ judge whether the passage actually supports what the claim asserts.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -32,6 +33,28 @@ class CitationCheckResult:
     @property
     def has_fabricated_citations(self) -> bool:
         return bool(self.fabricated_labels)
+
+
+@dataclass(frozen=True, slots=True)
+class NumericCheckResult:
+    """Outcome of checking one claim's figures against the passages it cites.
+
+    A number in `unsupported_numbers` appears in the claim but in none of the passages the
+    claim rests on. It was invented, rounded, converted or computed — all four are the same
+    failure from here, because the requirement is that a figure survives into the answer as
+    the source wrote it.
+
+    Entailment does not catch this. A model that reads "rose from 100 to 150" and writes
+    "rose by 50%" is saying something the passage supports, so the claim is entailed; the
+    figure is still one the student cannot find when they follow the citation.
+    """
+
+    claim: Claim
+    unsupported_numbers: tuple[str, ...]
+
+    @property
+    def has_unsupported_numbers(self) -> bool:
+        return bool(self.unsupported_numbers)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,8 +184,9 @@ def decide(
     citation_results: tuple[CitationCheckResult, ...],
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
     fidelity: AnswerFidelity | None = None,
+    numeric_results: Sequence[NumericCheckResult] = (),
 ) -> ValidationDecision:
-    """Collapse citation, entailment and faithfulness results into a single action.
+    """Collapse citation, entailment, faithfulness and figure results into one action.
 
     Pairs each CitationCheckResult with the entailment results for the same claim
     (by position). A claim is rejected when all its citations are fabricated — there
@@ -181,7 +205,11 @@ def decide(
     # An answer that overstates its claims is repairable rather than rejected: the
     # evidence is sound and nothing was invented, so the fix is to rewrite the prose to
     # match what was actually established, which is a thing a second attempt can do.
-    repairable = fidelity is AnswerFidelity.OVERSTATED
+    # A figure the passages do not contain is repairable for the same reason — the right
+    # number is sitting in the evidence, and the model can be told to use it.
+    repairable = fidelity is AnswerFidelity.OVERSTATED or any(
+        result.has_unsupported_numbers for result in numeric_results
+    )
 
     for check, ent_results in zip(citation_results, entailment_by_claim, strict=True):
         real_citations = frozenset(check.claim.citations) - check.fabricated_labels
@@ -209,6 +237,7 @@ def build_repair_instructions(
     citation_results: tuple[CitationCheckResult, ...],
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
     fidelity: AnswerFidelity | None = None,
+    numeric_results: Sequence[NumericCheckResult] = (),
 ) -> str:
     """Return a feedback string the model can act on when revising its answer.
 
@@ -236,6 +265,16 @@ def build_repair_instructions(
                 "or remove the claim entirely."
             )
 
+    for numeric in numeric_results:
+        if numeric.has_unsupported_numbers:
+            figures = ", ".join(numeric.unsupported_numbers)
+            verb = "do" if len(numeric.unsupported_numbers) > 1 else "does"
+            bullets.append(
+                f'Claim "{numeric.claim.text}" uses {figures}, which {verb} not appear in '
+                "any passage it cites. Use the figures exactly as the passages write them, "
+                "without rounding or converting, or drop the statement."
+            )
+
     if fidelity is AnswerFidelity.OVERSTATED:
         bullets.append(
             "Your answer states something none of your claims covers. Either rewrite the "
@@ -251,6 +290,68 @@ def build_repair_instructions(
         "Revise it to address all of the following:\n"
         + "\n".join(f"- {b}" for b in bullets)
     )
+
+
+#: Digits, optionally with thousands separators and a decimal part. Deliberately does not
+#: match numbers written as words: "three stages" is prose, and a model that writes it where
+#: the passage wrote "3 stages" has not changed the quantity.
+_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+#: Citation labels are full of digits and are not quantities. Removed before any number is
+#: read out of a claim, or every `[S1]` would look like the figure 1.
+_LABEL = re.compile(r"\[[^\]]*\]")
+
+
+def _numbers_in(text: str) -> list[tuple[str, float]]:
+    """Every numeric literal in the text, as written and as a value.
+
+    Both forms are kept because they answer different questions: the value decides whether
+    the figure is present in a passage, and the original spelling is what a repair
+    instruction has to quote back so the model can find what it wrote.
+    """
+    found: list[tuple[str, float]] = []
+    for match in _NUMBER.finditer(_LABEL.sub(" ", text)):
+        raw = match.group()
+        try:
+            found.append((raw, float(raw.replace(",", ""))))
+        except ValueError:  # pragma: no cover — the pattern cannot produce this
+            continue
+    return found
+
+
+def check_numeric_fidelity(
+    citation_results: Sequence[CitationCheckResult],
+    evidence: Sequence[LabeledPassage],
+) -> tuple[NumericCheckResult, ...]:
+    """Return one result per claim, naming figures that appear in no passage it cites.
+
+    Compared by value rather than by spelling, so `1,000` in a passage carries `1000` in a
+    claim and `0.50` carries `0.5`. What it will not carry is a different number: rounding
+    `3.14159` to `3.14` produces a figure the source does not contain, which is the case
+    this exists to catch.
+
+    Checked only against the passages that claim actually cites, and only the real ones —
+    a fabricated label has no passage to compare against, and the citation existence check
+    has already flagged it.
+    """
+    by_label = {p.label: p for p in evidence}
+    results: list[NumericCheckResult] = []
+
+    for check in citation_results:
+        cited = [
+            by_label[label]
+            for label in check.claim.citations
+            if label not in check.fabricated_labels and label in by_label
+        ]
+        available = {value for p in cited for _, value in _numbers_in(p.text.value)}
+        unsupported = tuple(
+            raw for raw, value in _numbers_in(check.claim.text) if value not in available
+        )
+        results.append(
+            NumericCheckResult(claim=check.claim, unsupported_numbers=unsupported)
+        )
+
+    return tuple(results)
 
 
 def check_citation_existence(

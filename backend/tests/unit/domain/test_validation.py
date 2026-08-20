@@ -11,10 +11,12 @@ from app.domain.models.generation import Claim, GeneratedAnswer
 from app.domain.models.validation import (
     CitationCheckResult,
     EntailmentResult,
+    NumericCheckResult,
     aggregate_claim_status,
     build_fidelity_query,
     build_repair_instructions,
     check_citation_existence,
+    check_numeric_fidelity,
     decide,
     parse_entailment_status,
     parse_fidelity,
@@ -625,3 +627,132 @@ class TestDecideWithFidelity:
         ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
 
         assert build_repair_instructions(checks, ents, AnswerFidelity.FAITHFUL) == ""
+
+
+class TestCheckNumericFidelity:
+    """Figures have to survive into the answer as the source wrote them."""
+
+    @staticmethod
+    def _checked(claim_text: str, passage_text: str) -> tuple[str, ...]:
+        claim = _claim(text=claim_text, citations=("[S1]",))
+        checks = (CitationCheckResult(claim=claim, fabricated_labels=frozenset()),)
+        results = check_numeric_fidelity(checks, [_passage("[S1]", passage_text)])
+        return results[0].unsupported_numbers
+
+    def test_a_figure_the_passage_contains_is_supported(self) -> None:
+        assert self._checked("Training ran for 9 epochs.", "It ran for 9 epochs.") == ()
+
+    def test_a_figure_no_passage_contains_is_flagged(self) -> None:
+        assert self._checked("Training ran for 9 epochs.", "It ran for 12 epochs.") == ("9",)
+
+    def test_thousands_separators_do_not_make_a_figure_look_invented(self) -> None:
+        assert self._checked("The set has 1000 items.", "The set has 1,000 items.") == ()
+
+    def test_trailing_zeros_do_not_make_a_figure_look_invented(self) -> None:
+        assert self._checked("Accuracy was 0.5.", "Accuracy was 0.50.") == ()
+
+    def test_a_rounded_figure_is_flagged(self) -> None:
+        """Rounding produces a number the source does not contain, which is the case this
+        check exists to catch — and one entailment would happily pass."""
+        assert self._checked("Pi is 3.14.", "Pi is 3.14159.") == ("3.14",)
+
+    def test_a_computed_figure_is_flagged(self) -> None:
+        """The passage supports the statement, so the claim entails. The student still
+        cannot find the figure when they follow the citation."""
+        assert self._checked("It rose by 50%.", "It rose from 100 to 150.") == ("50",)
+
+    def test_citation_labels_are_not_read_as_figures(self) -> None:
+        """Every label is full of digits and none of them is a quantity."""
+        assert self._checked("As [S1] shows, there are 5 stages.", "There are 5 stages.") == ()
+
+    def test_numbers_written_as_words_are_left_alone(self) -> None:
+        """Writing "three" where the passage wrote "3" has not changed the quantity, and
+        matching prose against digits would flag every well-written answer."""
+        assert self._checked("There are three stages.", "There are 3 stages.") == ()
+
+    def test_reports_the_figure_as_the_claim_wrote_it(self) -> None:
+        """A repair instruction has to quote back what the model wrote, or it cannot find
+        the thing it is being asked to change."""
+        assert self._checked("The set has 1,500 items.", "The set has 900 items.") == ("1,500",)
+
+    def test_only_the_passages_a_claim_cites_are_consulted(self) -> None:
+        claim = _claim(text="It ran for 9 epochs.", citations=("[S1]",))
+        checks = (CitationCheckResult(claim=claim, fabricated_labels=frozenset()),)
+        evidence = [_passage("[S1]", "No figures here."), _passage("[S2]", "It ran for 9.")]
+
+        results = check_numeric_fidelity(checks, evidence)
+
+        assert results[0].unsupported_numbers == ("9",)
+
+    def test_a_fabricated_label_supplies_no_figures(self) -> None:
+        claim = _claim(text="It ran for 9 epochs.", citations=("[S1]", "[S99]"))
+        checks = (CitationCheckResult(claim=claim, fabricated_labels=frozenset({"[S99]"})),)
+
+        results = check_numeric_fidelity(checks, [_passage("[S1]", "No figures here.")])
+
+        assert results[0].unsupported_numbers == ("9",)
+
+    def test_returns_one_result_per_claim_in_order(self) -> None:
+        first = _claim(text="It ran for 9 epochs.", citations=("[S1]",))
+        second = _claim(text="Accuracy was 0.5.", citations=("[S1]",))
+        checks = tuple(
+            CitationCheckResult(claim=c, fabricated_labels=frozenset()) for c in (first, second)
+        )
+
+        results = check_numeric_fidelity(checks, [_passage("[S1]", "It ran for 9 epochs.")])
+
+        assert len(results) == 2
+        assert results[0].unsupported_numbers == ()
+        assert results[1].unsupported_numbers == ("0.5",)
+
+    def test_a_claim_with_no_figures_is_never_flagged(self) -> None:
+        assert self._checked("Gradients flow backwards.", "Something else entirely.") == ()
+
+
+class TestDecideWithNumericFidelity:
+    def _setup(self, unsupported: tuple[str, ...]) -> tuple:
+        claim = _claim(citations=("[S1]",))
+        answer = _answer(claim)
+        checks = (CitationCheckResult(claim=claim, fabricated_labels=frozenset()),)
+        ents = [[EntailmentResult(claim=claim, passage_label="[S1]", status=ClaimStatus.ENTAILED)]]
+        numeric = (NumericCheckResult(claim=claim, unsupported_numbers=unsupported),)
+        return answer, checks, ents, numeric
+
+    def test_an_invented_figure_makes_an_otherwise_valid_answer_repairable(self) -> None:
+        """Every claim is entailed, so nothing else objects."""
+        answer, checks, ents, numeric = self._setup(("9",))
+
+        result = decide(answer, checks, ents, None, numeric)
+
+        assert result is ValidationDecision.REPAIRABLE
+
+    def test_an_answer_whose_figures_all_check_out_stays_valid(self) -> None:
+        answer, checks, ents, numeric = self._setup(())
+        assert decide(answer, checks, ents, None, numeric) is ValidationDecision.VALID
+
+    def test_rejection_still_outranks_an_invented_figure(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        answer = _answer(claim)
+        checks = (CitationCheckResult(claim=claim, fabricated_labels=frozenset()),)
+        ents = [
+            [EntailmentResult(claim=claim, passage_label="[S1]", status=ClaimStatus.CONTRADICTED)]
+        ]
+        numeric = (NumericCheckResult(claim=claim, unsupported_numbers=("9",)),)
+
+        assert decide(answer, checks, ents, None, numeric) is ValidationDecision.REJECTED
+
+    def test_repair_instructions_quote_the_figure_back(self) -> None:
+        _, checks, ents, numeric = self._setup(("1,500",))
+
+        result = build_repair_instructions(checks, ents, None, numeric)
+
+        assert "1,500" in result
+        assert "does not appear in any passage it cites" in result
+
+    def test_multiple_figures_are_listed_together(self) -> None:
+        _, checks, ents, numeric = self._setup(("9", "0.5"))
+
+        result = build_repair_instructions(checks, ents, None, numeric)
+
+        assert "9, 0.5" in result
+        assert "do not appear" in result

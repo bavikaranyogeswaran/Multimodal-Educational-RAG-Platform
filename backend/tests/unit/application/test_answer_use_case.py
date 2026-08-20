@@ -1339,3 +1339,132 @@ class TestFaithfulnessInThePipeline:
             pass
 
         faithfulness.check_answer.assert_not_called()
+
+
+class TestNumericFidelityInThePipeline:
+    """A figure the passages do not contain, caught without a model call."""
+
+    _INVENTED = json.dumps({
+        "answer": "Training converged in 9 epochs.",
+        "claims": [{"text": "Training converged in 9 epochs.", "citations": ["[S1]"]}],
+        "insufficient_evidence": False,
+    })
+    _CORRECTED = json.dumps({
+        "answer": "Training converged in 12 epochs.",
+        "claims": [{"text": "Training converged in 12 epochs.", "citations": ["[S1]"]}],
+        "insufficient_evidence": False,
+    })
+
+    def _evidence(self) -> list[Evidence]:
+        return [_ev("Training converged in 12 epochs.", label="[S1]")]
+
+    async def test_an_invented_figure_triggers_a_repair(self) -> None:
+        """Nothing else in the pipeline objects: the claim is entailed and the prose
+        matches it. Only the figure is one the passage never wrote."""
+        calls = 0
+
+        def _stream(_req: object) -> _FakeTokenStream:
+            nonlocal calls
+            calls += 1
+            return _FakeTokenStream(self._INVENTED if calls == 1 else self._CORRECTED, None)
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=_stream)
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()), gateway=gateway
+        ).execute(_BASE_CMD)
+        collected = [t async for t in stream]
+
+        assert gateway.generate_stream.call_count == 2
+        assert collected == ["Training converged in 12 epochs."]
+
+    async def test_the_repair_instructions_quote_the_invented_figure(self) -> None:
+        calls = 0
+
+        def _stream(_req: object) -> _FakeTokenStream:
+            nonlocal calls
+            calls += 1
+            return _FakeTokenStream(self._INVENTED if calls == 1 else self._CORRECTED, None)
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=_stream)
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()), gateway=gateway
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        checklist = " ".join(gateway.generate_stream.call_args_list[1].args[0].critical_checklist)
+        assert "9" in checklist
+        assert "without rounding or converting" in checklist
+
+    async def test_an_answer_whose_figures_match_passes_straight_through(self) -> None:
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._CORRECTED, None)
+        )
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()), gateway=gateway
+        ).execute(_BASE_CMD)
+        collected = [t async for t in stream]
+
+        assert gateway.generate_stream.call_count == 1
+        assert collected == ["Training converged in 12 epochs."]
+
+    async def test_a_persistently_invented_figure_is_refused(self) -> None:
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._INVENTED, None)
+        )
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()), gateway=gateway
+        ).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+
+class TestGenerationRules:
+    """The rules the prompt carries, one per §38 requirement that binds here."""
+
+    @staticmethod
+    async def _requirements() -> str:
+        gateway = _mock_gateway()
+        stream = await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+        request = gateway.generate_stream.call_args.args[0]
+        return " ".join(r.rendered for r in request.mandatory_requirements)
+
+    async def test_history_is_declared_not_to_be_evidence(self) -> None:
+        text = await self._requirements()
+        assert "never as a source a claim can rest on" in text
+
+    async def test_figures_are_required_to_survive_verbatim(self) -> None:
+        text = await self._requirements()
+        assert "exactly as the passage" in text
+        assert "Do not round, convert, rescale" in text
+
+    async def test_source_fact_is_separated_from_model_inference(self) -> None:
+        text = await self._requirements()
+        assert "which are your own reasoning" in text
+
+    async def test_the_three_new_rules_bind_critically(self) -> None:
+        """A preference can be shed under budget pressure; a grounding rule cannot."""
+        gateway = _mock_gateway()
+        stream = await _make_use_case(gateway=gateway).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        request = gateway.generate_stream.call_args.args[0]
+        grounding = [
+            r
+            for r in request.mandatory_requirements
+            if r.instruction.category is InstructionCategory.GROUNDING_AND_SOURCE_USE
+        ]
+        assert len(grounding) == 5
+        assert all(r.instruction.level is RequirementLevel.CRITICAL for r in grounding)

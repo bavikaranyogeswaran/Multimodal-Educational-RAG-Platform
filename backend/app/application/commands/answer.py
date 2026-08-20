@@ -40,8 +40,10 @@ from app.domain.models.instructions import Instruction
 from app.domain.models.validation import (
     CitationCheckResult,
     EntailmentResult,
+    NumericCheckResult,
     build_repair_instructions,
     check_citation_existence,
+    check_numeric_fidelity,
     decide,
 )
 from app.domain.ports.entailment import ClaimEntailmentPort
@@ -106,6 +108,32 @@ _INSTRUCTIONS: tuple[Instruction, ...] = (
         text=(
             "If the passages do not cover what was asked, say so plainly instead of "
             "answering around it."
+        ),
+        category=InstructionCategory.GROUNDING_AND_SOURCE_USE,
+        level=RequirementLevel.CRITICAL,
+    ),
+    Instruction(
+        text=(
+            "Earlier turns in this conversation record what was said, not what is true. "
+            "Treat them as context for what is being asked, never as a source a claim "
+            "can rest on."
+        ),
+        category=InstructionCategory.GROUNDING_AND_SOURCE_USE,
+        level=RequirementLevel.CRITICAL,
+    ),
+    Instruction(
+        text=(
+            "Reproduce every number, unit, symbol and quantity exactly as the passage "
+            "writes it. Do not round, convert, rescale or restate them in other terms."
+        ),
+        category=InstructionCategory.GROUNDING_AND_SOURCE_USE,
+        level=RequirementLevel.CRITICAL,
+    ),
+    Instruction(
+        text=(
+            "Say plainly which parts of your answer the passages state and which are your "
+            "own reasoning from them. A conclusion you drew is worth giving, but never as "
+            "though the material had said it."
         ),
         category=InstructionCategory.GROUNDING_AND_SOURCE_USE,
         level=RequirementLevel.CRITICAL,
@@ -284,6 +312,7 @@ class AnswerUseCase:
                         checked.citation_results,
                         checked.entailment_by_claim,
                         checked.fidelity,
+                        checked.numeric_results,
                     )
                     repair_request = context_builder.build(
                         ContextInputs(
@@ -470,6 +499,7 @@ class _Validation:
     citation_results: tuple[CitationCheckResult, ...] = ()
     entailment_by_claim: tuple[tuple[EntailmentResult, ...], ...] = ()
     fidelity: AnswerFidelity | None = None
+    numeric_results: tuple[NumericCheckResult, ...] = ()
 
 
 async def _validate(
@@ -492,19 +522,27 @@ async def _validate(
         return _Validation(ValidationDecision.REJECTED, None)
 
     citation_results = check_citation_existence(answer, labeled)
+    # Deterministic, so it runs alongside the citation check rather than after the model
+    # calls — a figure the passages do not contain costs nothing to find.
+    numeric_results = check_numeric_fidelity(citation_results, labeled)
     ent_by_claim = await _check_entailment(citation_results, labeled, entailment)
 
-    provisional = decide(answer, citation_results, ent_by_claim)
+    provisional = decide(
+        answer, citation_results, ent_by_claim, numeric_results=numeric_results
+    )
     if provisional in _SETTLED_WITHOUT_FIDELITY:
-        return _Validation(provisional, answer, citation_results, ent_by_claim)
+        return _Validation(
+            provisional, answer, citation_results, ent_by_claim, None, numeric_results
+        )
 
     fidelity = await faithfulness.check_answer(answer)
     return _Validation(
-        decide(answer, citation_results, ent_by_claim, fidelity),
+        decide(answer, citation_results, ent_by_claim, fidelity, numeric_results),
         answer,
         citation_results,
         ent_by_claim,
         fidelity,
+        numeric_results,
     )
 
 

@@ -27,13 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 11** — ~80%, 7 of 11 items done. Generation, validation, citation and persistence all closed and verified against the live database; the §38 rule gaps and UC-07–09 remain |
+| In progress | **Phase 11** — ~85%, 8 of 11 items done. Generation rules, validation, citation and persistence all closed and verified against the live database; two partials wait on Phase 6 and on validators nobody needs yet, and UC-07–09 remain |
 | Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
 | Foundations only | Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,295 unit and security **all passing** · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
-| Next step | **Phase 11 continues.** Steps 11.1–11.15 are done. What remains: the three §38 rules with neither rule nor validator (FR-GEN-03, 06, 07), the deterministic validators for limits, table numbers and units, and UC-07 through UC-09. **7.4** still waits on a textbook PDF |
-| Last updated | 20 August 2026 (step 11.15 — verification against the live database) |
+| Tests | 2,320 unit and security passing, the one `test_stage_timer` timing flake aside · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
+| Next step | **Phase 11 continues.** Steps 11.1–11.17 are done. What remains: **UC-07 through UC-09**, plus two partials that are blocked or unneeded rather than pending — `[S1]`'s *object* field waits on Phase 6, and word limits and table-number matching have no caller yet. **7.4** still waits on a textbook PDF |
+| Last updated | 20 August 2026 (step 11.17 — the remaining §38 rules and a check for figures) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1675,13 +1675,15 @@ had been written on every ingestion since step 7.3 with nothing loading them, an
 
 Covers §23 complete, §38, §39, §40. **Milestone: first cited, validated, streamed answer.**
 
-- [~] All eight §38 generation rules enforced structurally, including **never obeying instructions
-      found inside uploaded documents**. Five hold, as numbered requirements or safety rules in
-      the prompt: evidence-only answering, never obeying document instructions, citing every
-      claim, stating insufficiency, and never reaching another Knowledge Base. Three have
-      neither a rule nor a validator — chat history is never declared non-evidence, numbers and
-      units are not required to survive verbatim, and source fact is not distinguished from
-      model inference (FR-GEN-03, FR-GEN-06, FR-GEN-07)
+- [x] All eight §38 generation rules enforced structurally, including **never obeying instructions
+      found inside uploaded documents**. Each is a numbered requirement or a safety rule in the
+      prompt, and the ones that can be checked are checked: evidence-only answering and citing
+      every claim by entailment, never reaching another Knowledge Base by the citation-existence
+      check against a scope-filtered evidence set, and figures surviving verbatim by a
+      deterministic comparison against the passages a claim cites. The two that remain
+      behavioural — chat history is not evidence, and source fact is distinguished from model
+      inference — are stated as critical requirements, which is the enforcement available for a
+      rule about how to read rather than what to output
 - [x] Structured output `{answer, claims[{claim, citations[]}], insufficient_evidence}`, parsed
       and schema-checked on the way back. The claim field is named `text` rather than `claim`
 - [~] Stable `[S1]` identifiers carrying document, page, type, object and bbox (§40). A citation
@@ -1697,9 +1699,10 @@ Covers §23 complete, §38, §39, §40. **Milestone: first cited, validated, str
       indistinguishable from an invented one
 - [~] Deterministic validators: schema, citation existence, authorization, required fields, limits,
       table numbers, units, quiz schema, KB scope (§39). Schema, citation existence,
-      authorization, required fields and Knowledge Base scope are done. Word and token limits,
-      table-number matching and unit matching are not; quiz answer schema belongs to Phase 15
-      and cannot be built here
+      authorization, required fields, Knowledge Base scope and unit matching are done — the last
+      of these comparing every figure in a claim against the passages it cites, by value rather
+      than by spelling. Word and token limits and table-number matching are not; quiz answer
+      schema belongs to Phase 15 and cannot be built here
 - [x] Semantic validators: claim entailment `ENTAILED`/`CONTRADICTED`/`NOT_SUPPORTED`, unsupported
       claims, contradictions, citation entailment and completeness, faithfulness (§39).
       Entailment runs per cited passage, and unsupported claims, contradictions and citation
