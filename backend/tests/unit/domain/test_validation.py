@@ -12,6 +12,7 @@ from app.domain.models.validation import (
     CitationCheckResult,
     EntailmentResult,
     aggregate_claim_status,
+    build_repair_instructions,
     check_citation_existence,
     decide,
     parse_entailment_status,
@@ -424,3 +425,92 @@ class TestDecide:
         checks = (self._check(claim, fabricated=frozenset({"[FAKE1]", "[FAKE2]"})),)
         ents: list[list[EntailmentResult]] = [[]]
         assert decide(answer, checks, ents) is ValidationDecision.REJECTED
+
+
+# ---------------------------------------------------------------------------
+# build_repair_instructions
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRepairInstructions:
+    def _check(
+        self, claim: Claim, fabricated: frozenset[str] = frozenset()
+    ) -> CitationCheckResult:
+        return CitationCheckResult(claim=claim, fabricated_labels=fabricated)
+
+    def _ent(self, claim: Claim, label: str, status: ClaimStatus) -> EntailmentResult:
+        return EntailmentResult(claim=claim, passage_label=label, status=status)
+
+    def test_no_issues_returns_empty_string(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+        assert build_repair_instructions(checks, ents) == ""
+
+    def test_fabricated_label_included_in_output(self) -> None:
+        claim = _claim(citations=("[S1]", "[FAKE]"))
+        checks = (self._check(claim, fabricated=frozenset({"[FAKE]"})),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+        result = build_repair_instructions(checks, ents)
+        assert "[FAKE]" in result
+        assert claim.text in result
+
+    def test_not_supported_mentioned_in_output(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.NOT_SUPPORTED)]]
+        result = build_repair_instructions(checks, ents)
+        assert claim.text in result
+        assert "not supported" in result.lower()
+
+    def test_fabricated_and_not_supported_both_reported(self) -> None:
+        claim = _claim(citations=("[S1]", "[FAKE]"))
+        checks = (self._check(claim, fabricated=frozenset({"[FAKE]"})),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.NOT_SUPPORTED)]]
+        result = build_repair_instructions(checks, ents)
+        assert "[FAKE]" in result
+        assert "not supported" in result.lower()
+
+    def test_multiple_fabricated_labels_all_listed(self) -> None:
+        claim = _claim(citations=("[S1]", "[A]", "[B]"))
+        checks = (self._check(claim, fabricated=frozenset({"[A]", "[B]"})),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+        result = build_repair_instructions(checks, ents)
+        assert "[A]" in result
+        assert "[B]" in result
+
+    def test_multiple_claims_all_issues_listed(self) -> None:
+        c1 = _claim(text="First fact.", citations=("[S1]", "[FAKE]"))
+        c2 = _claim(text="Second fact.", citations=("[S2]",))
+        checks = (
+            self._check(c1, fabricated=frozenset({"[FAKE]"})),
+            self._check(c2),
+        )
+        ents = [
+            [self._ent(c1, "[S1]", ClaimStatus.ENTAILED)],
+            [self._ent(c2, "[S2]", ClaimStatus.NOT_SUPPORTED)],
+        ]
+        result = build_repair_instructions(checks, ents)
+        assert "First fact." in result
+        assert "Second fact." in result
+        assert "[FAKE]" in result
+        assert "not supported" in result.lower()
+
+    def test_entailed_claim_without_fabrication_not_mentioned(self) -> None:
+        c1 = _claim(text="Clean fact.", citations=("[S1]",))
+        c2 = _claim(text="Bad fact.", citations=("[S2]",))
+        checks = (self._check(c1), self._check(c2))
+        ents = [
+            [self._ent(c1, "[S1]", ClaimStatus.ENTAILED)],
+            [self._ent(c2, "[S2]", ClaimStatus.NOT_SUPPORTED)],
+        ]
+        result = build_repair_instructions(checks, ents)
+        assert "Clean fact." not in result
+        assert "Bad fact." in result
+
+    def test_result_starts_with_correction_preamble(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.NOT_SUPPORTED)]]
+        result = build_repair_instructions(checks, ents)
+        assert result.startswith("Your previous answer requires correction.")

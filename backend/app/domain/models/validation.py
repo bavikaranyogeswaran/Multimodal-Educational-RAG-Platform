@@ -148,6 +148,46 @@ def decide(
     return ValidationDecision.VALID
 
 
+def build_repair_instructions(
+    citation_results: tuple[CitationCheckResult, ...],
+    entailment_by_claim: Sequence[Sequence[EntailmentResult]],
+) -> str:
+    """Return a feedback string the model can act on when revising its answer.
+
+    Called only when the previous decide() returned REPAIRABLE. Each bullet
+    names the exact claim and the specific problem so the model can fix it
+    rather than guessing. Returns an empty string when there is nothing to
+    report, though callers should only invoke this function when issues exist.
+    """
+    bullets: list[str] = []
+
+    for check, ent_results in zip(citation_results, entailment_by_claim, strict=True):
+        if check.has_fabricated_citations:
+            labels = ", ".join(sorted(check.fabricated_labels))
+            verb = "do" if len(check.fabricated_labels) > 1 else "does"
+            bullets.append(
+                f'Claim "{check.claim.text}" cited {labels}, which {verb} not appear '
+                "in the reference passages. Use only the labels shown beside each passage."
+            )
+
+        status = aggregate_claim_status(ent_results)
+        if status is ClaimStatus.NOT_SUPPORTED:
+            bullets.append(
+                f'Claim "{check.claim.text}" is not supported by any passage it cites. '
+                "Either cite a passage that actually contains this information, "
+                "or remove the claim entirely."
+            )
+
+    if not bullets:
+        return ""
+
+    return (
+        "Your previous answer requires correction. "
+        "Revise it to address all of the following:\n"
+        + "\n".join(f"- {b}" for b in bullets)
+    )
+
+
 def check_citation_existence(
     answer: GeneratedAnswer,
     evidence: Sequence[LabeledPassage],
