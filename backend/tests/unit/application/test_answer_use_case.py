@@ -26,6 +26,7 @@ from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import (
+    AnswerFidelity,
     ChunkType,
     ClaimStatus,
     InstructionCategory,
@@ -214,6 +215,13 @@ def _mock_entailment(status: ClaimStatus = ClaimStatus.ENTAILED) -> MagicMock:
     return entailment
 
 
+def _mock_faithfulness(fidelity: AnswerFidelity = AnswerFidelity.FAITHFUL) -> MagicMock:
+    """A faithfulness port that always returns the same verdict."""
+    port = MagicMock()
+    port.check_answer = AsyncMock(return_value=fidelity)
+    return port
+
+
 def _context_builder() -> ContextBuilder:
     """A real builder, generous enough that nothing under test ever gets shed.
 
@@ -231,6 +239,7 @@ def _make_use_case(
     opened: list[str] | None = None,
     context_builder: ContextBuilder | None = None,
     entailment: MagicMock | None = None,
+    faithfulness: MagicMock | None = None,
 ) -> AnswerUseCase:
     return AnswerUseCase(
         retrieve=retrieve or _mock_retrieve(),
@@ -238,6 +247,7 @@ def _make_use_case(
         model_gateway=gateway or _mock_gateway(),
         context_builder=context_builder or _context_builder(),
         entailment=entailment or _mock_entailment(),
+        faithfulness=faithfulness or _mock_faithfulness(),
     )
 
 
@@ -1199,3 +1209,133 @@ class TestAbandonedTurn:
             pass
 
         assert self._assistant(repo).status is MessageStatus.COMPLETED
+
+
+class TestFaithfulnessInThePipeline:
+    """The prose the student reads, checked against the claims already verified."""
+
+    _CITED = json.dumps({
+        "answer": "Gradients flow backwards, and training converges in nine epochs.",
+        "claims": [{"text": "Gradients flow backwards.", "citations": ["[S1]"]}],
+        "insufficient_evidence": False,
+    })
+    _REPAIRED = json.dumps({
+        "answer": "Gradients flow backwards.",
+        "claims": [{"text": "Gradients flow backwards.", "citations": ["[S1]"]}],
+        "insufficient_evidence": False,
+    })
+
+    def _evidence(self) -> list[Evidence]:
+        return [_ev("Gradients flow backwards.", label="[S1]")]
+
+    async def test_an_overstated_answer_is_repaired_not_returned_as_it_stands(self) -> None:
+        """Every claim is entailed, so nothing else in the pipeline objects. Only the
+        faithfulness check sees that the prose added an epoch count from nowhere."""
+        calls = 0
+
+        def _stream(_req: object) -> _FakeTokenStream:
+            nonlocal calls
+            calls += 1
+            return _FakeTokenStream(self._CITED if calls == 1 else self._REPAIRED, None)
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=_stream)
+        fidelities = [AnswerFidelity.OVERSTATED, AnswerFidelity.FAITHFUL]
+        faithfulness = MagicMock()
+        faithfulness.check_answer = AsyncMock(side_effect=fidelities)
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            gateway=gateway,
+            faithfulness=faithfulness,
+        ).execute(_BASE_CMD)
+        collected = [t async for t in stream]
+
+        assert gateway.generate_stream.call_count == 2
+        assert collected == ["Gradients flow backwards."]
+
+    async def test_a_persistently_overstated_answer_is_refused(self) -> None:
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._CITED, None)
+        )
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            gateway=gateway,
+            faithfulness=_mock_faithfulness(AnswerFidelity.OVERSTATED),
+        ).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+    async def test_a_faithful_answer_passes_through(self) -> None:
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._REPAIRED, None)
+        )
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()), gateway=gateway
+        ).execute(_BASE_CMD)
+        collected = [t async for t in stream]
+
+        assert collected == ["Gradients flow backwards."]
+
+    async def test_the_repair_instructions_mention_the_overstatement(self) -> None:
+        calls = 0
+
+        def _stream(_req: object) -> _FakeTokenStream:
+            nonlocal calls
+            calls += 1
+            return _FakeTokenStream(self._CITED if calls == 1 else self._REPAIRED, None)
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=_stream)
+        faithfulness = MagicMock()
+        faithfulness.check_answer = AsyncMock(
+            side_effect=[AnswerFidelity.OVERSTATED, AnswerFidelity.FAITHFUL]
+        )
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            gateway=gateway,
+            faithfulness=faithfulness,
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        repair_request = gateway.generate_stream.call_args_list[1].args[0]
+        checklist = " ".join(repair_request.critical_checklist)
+        assert "none of your claims covers" in checklist
+
+    async def test_a_doomed_answer_does_not_pay_for_a_faithfulness_call(self) -> None:
+        """The check is another model call, and an answer already headed for rejection
+        cannot be saved by it."""
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._CITED, None)
+        )
+        faithfulness = _mock_faithfulness()
+
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            gateway=gateway,
+            entailment=_mock_entailment(ClaimStatus.CONTRADICTED),
+            faithfulness=faithfulness,
+        ).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+        faithfulness.check_answer.assert_not_called()
+
+    async def test_an_abstaining_answer_is_not_checked_for_faithfulness(self) -> None:
+        """No claims were made, so there is nothing the prose could overstate."""
+        faithfulness = _mock_faithfulness()
+
+        stream = await _make_use_case(faithfulness=faithfulness).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        faithfulness.check_answer.assert_not_called()

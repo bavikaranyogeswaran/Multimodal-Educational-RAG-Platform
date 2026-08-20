@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.enums import (
+    AnswerFidelity,
     InstructionCategory,
     MessageRole,
     MessageStatus,
@@ -44,6 +45,7 @@ from app.domain.models.validation import (
     decide,
 )
 from app.domain.ports.entailment import ClaimEntailmentPort
+from app.domain.ports.faithfulness import AnswerFaithfulnessPort
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import ConversationUnitOfWork
 from app.domain.retrieval.entities import (
@@ -175,17 +177,20 @@ class AnswerUseCase:
 
     def __init__(
         self,
+        *,
         retrieve: RetrievalOrchestrator,
         conversation_uow: ConversationUnitOfWork,
         model_gateway: ModelGatewayPort,
         context_builder: ContextBuilder,
         entailment: ClaimEntailmentPort,
+        faithfulness: AnswerFaithfulnessPort,
     ) -> None:
         self._retrieve = retrieve
         self._uow = conversation_uow
         self._model_gateway = model_gateway
         self._context_builder = context_builder
         self._entailment = entailment
+        self._faithfulness = faithfulness
 
     async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:
         """Stream the answer for one turn.
@@ -261,6 +266,7 @@ class AnswerUseCase:
         gateway = self._model_gateway
         context_builder = self._context_builder
         entailment = self._entailment
+        faithfulness = self._faithfulness
         query = command.query
 
         async def _tracked() -> AsyncGenerator[str, None]:
@@ -271,12 +277,14 @@ class AnswerUseCase:
             usage: GenerationUsage | None = None
             try:
                 raw, usage = await _collect_stream(initial_stream)
-                decision, answer, citation_results, ent_by_claim = await _validate(
-                    raw, labeled, entailment
-                )
+                checked = await _validate(raw, labeled, entailment, faithfulness)
 
-                if decision is ValidationDecision.REPAIRABLE:
-                    repair = build_repair_instructions(citation_results, ent_by_claim)
+                if checked.decision is ValidationDecision.REPAIRABLE:
+                    repair = build_repair_instructions(
+                        checked.citation_results,
+                        checked.entailment_by_claim,
+                        checked.fidelity,
+                    )
                     repair_request = context_builder.build(
                         ContextInputs(
                             model_task=ModelTask.ANSWER_GENERATION,
@@ -297,15 +305,16 @@ class AnswerUseCase:
                     repair_raw, usage = await _collect_stream(
                         gateway.generate_stream(repair_request)
                     )
-                    decision, answer, _, _ = await _validate(
-                        repair_raw, labeled, entailment
+                    checked = await _validate(
+                        repair_raw, labeled, entailment, faithfulness
                     )
 
-                if not decision.is_returnable:
+                if not checked.decision.is_returnable:
                     raise GenerationRejectedError(  # noqa: TRY301
-                        f"answer rejected after validation: {decision}"
+                        f"answer rejected after validation: {checked.decision}"
                     )
 
+                answer = checked.answer
                 assert answer is not None
                 answer_text = answer.answer
                 # Resolved before the first token leaves, while the evidence set that
@@ -440,44 +449,80 @@ async def _collect_stream(
     return "".join(parts), getattr(stream, "usage", None)
 
 
+#: Outcomes the faithfulness check cannot move, so it is not worth its model call.
+#: A rejected answer cannot be rescued by it, and an abstaining one made no claims for
+#: its prose to overstate.
+_SETTLED_WITHOUT_FIDELITY = frozenset(
+    {ValidationDecision.REJECTED, ValidationDecision.INSUFFICIENT_EVIDENCE}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _Validation:
+    """Everything one validation pass established, kept together.
+
+    The pieces travel as a unit because the repair step needs all of them: the decision
+    to know whether to repair, and the rest to say what was wrong.
+    """
+
+    decision: ValidationDecision
+    answer: GeneratedAnswer | None
+    citation_results: tuple[CitationCheckResult, ...] = ()
+    entailment_by_claim: tuple[tuple[EntailmentResult, ...], ...] = ()
+    fidelity: AnswerFidelity | None = None
+
+
 async def _validate(
     raw: str,
     labeled: tuple[LabeledPassage, ...],
     entailment: ClaimEntailmentPort,
-) -> tuple[
-    ValidationDecision,
-    GeneratedAnswer | None,
-    tuple[CitationCheckResult, ...],
-    list[list[EntailmentResult]],
-]:
+    faithfulness: AnswerFaithfulnessPort,
+) -> _Validation:
+    """Run the checks in increasing cost, stopping as soon as the answer is doomed.
+
+    Parsing first, because a response that is not the required shape has nothing to
+    check. Then citations, which need no model call at all. Then entailment, one call per
+    cited passage. Faithfulness last, and only where it can still change something: it is
+    another model call, and both a rejection and an abstention are already settled — one
+    cannot be saved by the check and the other made no claims to overstate.
+    """
     try:
         answer = parse_generated_answer(raw)
     except GenerationParseError:
-        empty: list[list[EntailmentResult]] = []
-        return ValidationDecision.REJECTED, None, (), empty
+        return _Validation(ValidationDecision.REJECTED, None)
 
     citation_results = check_citation_existence(answer, labeled)
     ent_by_claim = await _check_entailment(citation_results, labeled, entailment)
-    decision = decide(answer, citation_results, ent_by_claim)
-    return decision, answer, citation_results, ent_by_claim
+
+    provisional = decide(answer, citation_results, ent_by_claim)
+    if provisional in _SETTLED_WITHOUT_FIDELITY:
+        return _Validation(provisional, answer, citation_results, ent_by_claim)
+
+    fidelity = await faithfulness.check_answer(answer)
+    return _Validation(
+        decide(answer, citation_results, ent_by_claim, fidelity),
+        answer,
+        citation_results,
+        ent_by_claim,
+        fidelity,
+    )
 
 
 async def _check_entailment(
     citation_results: tuple[CitationCheckResult, ...],
     labeled: tuple[LabeledPassage, ...],
     entailment: ClaimEntailmentPort,
-) -> list[list[EntailmentResult]]:
+) -> tuple[tuple[EntailmentResult, ...], ...]:
     label_map = {p.label: p for p in labeled}
-    per_claim: list[list[EntailmentResult]] = []
+    per_claim: list[tuple[EntailmentResult, ...]] = []
     for check in citation_results:
         real_passages = [
             label_map[lbl]
             for lbl in check.claim.citations
             if lbl not in check.fabricated_labels and lbl in label_map
         ]
-        results = await entailment.check_claim(check.claim, real_passages)
-        per_claim.append(list(results))
-    return per_claim
+        per_claim.append(await entailment.check_claim(check.claim, real_passages))
+    return tuple(per_claim)
 
 
 # ---------------------------------------------------------------------------

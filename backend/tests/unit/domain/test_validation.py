@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.enums import ClaimStatus, ValidationDecision
+from app.domain.enums import AnswerFidelity, ClaimStatus, ValidationDecision
 from app.domain.errors import GenerationParseError
 from app.domain.models.entities import LabeledPassage
 from app.domain.models.generation import Claim, GeneratedAnswer
@@ -12,10 +12,12 @@ from app.domain.models.validation import (
     CitationCheckResult,
     EntailmentResult,
     aggregate_claim_status,
+    build_fidelity_query,
     build_repair_instructions,
     check_citation_existence,
     decide,
     parse_entailment_status,
+    parse_fidelity,
 )
 from app.domain.values import UntrustedText
 
@@ -514,3 +516,112 @@ class TestBuildRepairInstructions:
         ents = [[self._ent(claim, "[S1]", ClaimStatus.NOT_SUPPORTED)]]
         result = build_repair_instructions(checks, ents)
         assert result.startswith("Your previous answer requires correction.")
+
+
+class TestParseFidelity:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("FAITHFUL", AnswerFidelity.FAITHFUL),
+            ("OVERSTATED", AnswerFidelity.OVERSTATED),
+            ("  faithful  ", AnswerFidelity.FAITHFUL),
+            ("Overstated", AnswerFidelity.OVERSTATED),
+        ],
+    )
+    def test_parses_the_forms_a_model_produces(
+        self, raw: str, expected: AnswerFidelity
+    ) -> None:
+        assert parse_fidelity(raw) is expected
+
+    @pytest.mark.parametrize("raw", ["", "MAYBE", "FAITHFUL.", "yes"])
+    def test_an_unrecognised_verdict_is_a_parse_failure_not_a_guess(self, raw: str) -> None:
+        with pytest.raises(GenerationParseError):
+            parse_fidelity(raw)
+
+
+class TestBuildFidelityQuery:
+    def test_shows_the_answer_and_its_claims(self) -> None:
+        claim = _claim(text="Gradients flow backwards.", citations=("[S1]",))
+        answer = _answer(claim, answer_text="Gradients flow backwards through the network.")
+
+        query = build_fidelity_query(answer)
+
+        assert "Gradients flow backwards through the network." in query
+        assert "Gradients flow backwards." in query
+
+    def test_numbers_the_claims(self) -> None:
+        """A numbered list is what the model compares against, rather than a paragraph."""
+        first = _claim(text="First fact.", citations=("[S1]",))
+        second = _claim(text="Second fact.", citations=("[S2]",))
+        query = build_fidelity_query(_answer(first, second))
+
+        assert "1. First fact." in query
+        assert "2. Second fact." in query
+
+
+class TestDecideWithFidelity:
+    """The prose the student reads, checked against the claims already verified."""
+
+    def _check(self, claim: Claim) -> CitationCheckResult:
+        return CitationCheckResult(claim=claim, fabricated_labels=frozenset())
+
+    def _ent(self, claim: Claim, label: str, status: ClaimStatus) -> EntailmentResult:
+        return EntailmentResult(claim=claim, passage_label=label, status=status)
+
+    def _sound_answer(self) -> tuple[GeneratedAnswer, tuple[CitationCheckResult, ...], list]:
+        claim = _claim(citations=("[S1]",))
+        answer = _answer(claim)
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+        return answer, checks, ents
+
+    def test_an_overstated_answer_is_repairable_though_every_claim_holds(self) -> None:
+        """The gap this closes: each claim is entailed, so every claim-level check passes,
+        and the prose still asserts something none of them established."""
+        answer, checks, ents = self._sound_answer()
+
+        result = decide(answer, checks, ents, AnswerFidelity.OVERSTATED)
+
+        assert result is ValidationDecision.REPAIRABLE
+
+    def test_a_faithful_answer_stays_valid(self) -> None:
+        answer, checks, ents = self._sound_answer()
+        assert decide(answer, checks, ents, AnswerFidelity.FAITHFUL) is ValidationDecision.VALID
+
+    def test_an_unchecked_answer_is_treated_as_unchecked_not_as_passing(self) -> None:
+        """None means the check did not run. It must not read as a verdict either way."""
+        answer, checks, ents = self._sound_answer()
+        assert decide(answer, checks, ents, None) is ValidationDecision.VALID
+
+    def test_rejection_still_outranks_an_overstated_answer(self) -> None:
+        """Repairing the prose cannot save an answer whose evidence contradicts it."""
+        claim = _claim(citations=("[S1]",))
+        answer = _answer(claim)
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.CONTRADICTED)]]
+
+        result = decide(answer, checks, ents, AnswerFidelity.OVERSTATED)
+
+        assert result is ValidationDecision.REJECTED
+
+    def test_an_abstaining_answer_is_unaffected(self) -> None:
+        answer = _answer(insufficient_evidence=True, answer_text="Not covered.")
+        result = decide(answer, (), [], AnswerFidelity.OVERSTATED)
+        assert result is ValidationDecision.INSUFFICIENT_EVIDENCE
+
+    def test_repair_instructions_name_the_overstatement(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+
+        result = build_repair_instructions(checks, ents, AnswerFidelity.OVERSTATED)
+
+        assert "none of your claims covers" in result
+        assert result.startswith("Your previous answer requires correction.")
+
+    def test_a_faithful_answer_produces_no_repair_text(self) -> None:
+        claim = _claim(citations=("[S1]",))
+        checks = (self._check(claim),)
+        ents = [[self._ent(claim, "[S1]", ClaimStatus.ENTAILED)]]
+
+        assert build_repair_instructions(checks, ents, AnswerFidelity.FAITHFUL) == ""

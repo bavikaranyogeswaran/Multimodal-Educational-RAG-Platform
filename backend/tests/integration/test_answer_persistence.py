@@ -14,6 +14,7 @@ Requires TEST_DATABASE_URL. Run with: uv run pytest -m integration
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.documents.chunks import Chunk
+from app.domain.enums import AnswerFidelity as _AnswerFidelity
 from app.domain.enums import (
     ChunkType,
     DocumentStatus,
@@ -33,6 +35,7 @@ from app.domain.enums import (
     MessageStatus,
     RetrieverKind,
 )
+from app.domain.models.context_builder import ContextBuilder
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -176,14 +179,34 @@ def _evidence(seed: _Seed) -> Evidence:
     )
 
 
-async def _run_turn(seed: _Seed, *, tokens: list[str]) -> None:
+def _collaborators() -> dict[str, object]:
+    """The validation ports, each answering so nothing is refused on its account.
+
+    These tests are about what reaches the database, not about validation, so the checks
+    are set to pass and the response abstains — which needs no evidence to be entailed.
+    """
+    entailment = AsyncMock()
+    entailment.check_claim = AsyncMock(return_value=())
+    faithfulness = AsyncMock()
+    faithfulness.check_answer = AsyncMock(return_value=_AnswerFidelity.FAITHFUL)
+    return {
+        "context_builder": ContextBuilder(lambda t: len(t.split()), token_budget=100_000),
+        "entailment": entailment,
+        "faithfulness": faithfulness,
+    }
+
+
+async def _run_turn(seed: _Seed, *, answer: str) -> None:
     """Answer one question end to end, consuming the stream to completion."""
     retrieve = AsyncMock()
     retrieve.execute = AsyncMock(return_value=[_evidence(seed)])
 
+    payload = json.dumps(
+        {"answer": answer, "claims": [], "insufficient_evidence": True}
+    )
+
     async def _gen() -> AsyncIterator[str]:
-        for token in tokens:
-            yield token
+        yield payload
 
     gateway = MagicMock()
     gateway.generate_stream = MagicMock(return_value=_gen())
@@ -192,6 +215,7 @@ async def _run_turn(seed: _Seed, *, tokens: list[str]) -> None:
         retrieve=retrieve,
         conversation_uow=build_conversation_unit_of_work(seed.session_factory, seed.scope),
         model_gateway=gateway,
+        **_collaborators(),  # type: ignore[arg-type]
     )
     stream = await use_case.execute(
         AnswerCommand(
@@ -217,7 +241,7 @@ async def _rows(seed: _Seed, sql: str, params: dict[str, object]) -> list[RowMap
 
 class TestAnswerReachesTheDatabase:
     async def test_question_row_is_committed(self, seed: _Seed) -> None:
-        await _run_turn(seed, tokens=["Gradients", " flow", " backwards."])
+        await _run_turn(seed, answer="Gradients flow backwards.")
 
         rows = await _rows(
             seed,
@@ -231,7 +255,7 @@ class TestAnswerReachesTheDatabase:
         assert rows[0]["status"] == MessageStatus.RECEIVED.value
 
     async def test_answer_row_is_committed(self, seed: _Seed) -> None:
-        await _run_turn(seed, tokens=["Gradients", " flow", " backwards."])
+        await _run_turn(seed, answer="Gradients flow backwards.")
 
         rows = await _rows(
             seed,
@@ -247,7 +271,7 @@ class TestAnswerReachesTheDatabase:
         assert rows[0]["status"] == MessageStatus.COMPLETED.value
 
     async def test_evidence_record_is_committed(self, seed: _Seed) -> None:
-        await _run_turn(seed, tokens=["An", " answer."])
+        await _run_turn(seed, answer="An answer.")
 
         rows = await _rows(
             seed,
@@ -264,7 +288,7 @@ class TestAnswerReachesTheDatabase:
         assert rows[0]["score"] == pytest.approx(-9.5)
 
     async def test_evidence_record_points_at_the_answer(self, seed: _Seed) -> None:
-        await _run_turn(seed, tokens=["An", " answer."])
+        await _run_turn(seed, answer="An answer.")
 
         rows = await _rows(
             seed,
@@ -293,6 +317,7 @@ class TestAnswerReachesTheDatabase:
             retrieve=retrieve,
             conversation_uow=build_conversation_unit_of_work(seed.session_factory, seed.scope),
             model_gateway=gateway,
+            **_collaborators(),  # type: ignore[arg-type]
         )
         stream = await use_case.execute(
             AnswerCommand(

@@ -35,7 +35,7 @@ import pytest
 
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.documents.chunks import Chunk
-from app.domain.enums import ChunkType, ClaimStatus, RetrieverKind
+from app.domain.enums import AnswerFidelity, ChunkType, ClaimStatus, RetrieverKind
 from app.domain.errors import GenerationRejectedError
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.models.validation import EntailmentResult
@@ -125,6 +125,9 @@ def _use_case(
     *,
     entailment: MagicMock | None = None,
 ) -> AnswerUseCase:
+    faithfulness = AsyncMock()
+    faithfulness.check_answer = AsyncMock(return_value=AnswerFidelity.FAITHFUL)
+
     retrieve = AsyncMock()
     retrieve.execute = AsyncMock(return_value=evidence)
 
@@ -138,6 +141,7 @@ def _use_case(
         model_gateway=gateway,
         context_builder=ContextBuilder(lambda text: len(text.split()), token_budget=100_000),
         entailment=entailment or _mock_entailment(),
+        faithfulness=faithfulness,
     )
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from app.domain.enums import ClaimStatus, ValidationDecision
+from app.domain.enums import AnswerFidelity, ClaimStatus, ValidationDecision
 from app.domain.errors import GenerationParseError
 from app.domain.models.entities import LabeledPassage
 from app.domain.models.generation import Claim, GeneratedAnswer
@@ -87,6 +87,55 @@ def parse_entailment_status(raw: str) -> ClaimStatus:
     return status
 
 
+#: System preamble for the faithfulness check. The comparison is answer-against-claims,
+#: never answer-against-passages: the claims have already been checked against the
+#: passages one by one, so an answer covered by its claims is covered by the evidence
+#: transitively — and asking about whole prose against a single passage would call
+#: ordinary connective writing unsupported.
+FIDELITY_PREAMBLE = (
+    "You are a precise editor. Given an answer and the list of claims it is built from, "
+    "judge whether the answer states any fact that none of the claims covers."
+)
+
+FIDELITY_SCHEMA = """\
+Respond with exactly one word: FAITHFUL or OVERSTATED.
+
+- FAITHFUL: every fact the answer states is covered by at least one claim. Wording may
+  differ, and connective or explanatory phrasing that asserts nothing new is fine.
+- OVERSTATED: the answer states at least one fact that no claim covers — a figure, a
+  name, a mechanism, a consequence, or a qualifier that appears nowhere in the claims.
+
+Judge only what the answer asserts as fact. No explanation, no punctuation, only the
+single word."""
+
+
+def build_fidelity_query(answer: GeneratedAnswer) -> str:
+    """The answer and its claims, side by side, for the faithfulness check.
+
+    Claims are numbered so the model is comparing against a list rather than a paragraph,
+    which is the same reason the turn's requirements are numbered in the prompt.
+    """
+    claims = "\n".join(f"{n}. {claim.text}" for n, claim in enumerate(answer.claims, start=1))
+    return f"Answer:\n{answer.answer}\n\nClaims:\n{claims}"
+
+
+def parse_fidelity(raw: str) -> AnswerFidelity:
+    """Map the model's one-word response to an AnswerFidelity.
+
+    Strips whitespace and normalises case, as the entailment parser does. An
+    unrecognised value is a parse failure rather than a guess.
+    """
+    normalised = raw.strip().upper()
+    _map: dict[str, AnswerFidelity] = {
+        "FAITHFUL": AnswerFidelity.FAITHFUL,
+        "OVERSTATED": AnswerFidelity.OVERSTATED,
+    }
+    fidelity = _map.get(normalised)
+    if fidelity is None:
+        raise GenerationParseError(f"expected FAITHFUL or OVERSTATED; got {raw!r}")
+    return fidelity
+
+
 def aggregate_claim_status(results: Sequence[EntailmentResult]) -> ClaimStatus:
     """Collapse per-passage results for one claim into a single ClaimStatus.
 
@@ -111,20 +160,28 @@ def decide(
     answer: GeneratedAnswer,
     citation_results: tuple[CitationCheckResult, ...],
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
+    fidelity: AnswerFidelity | None = None,
 ) -> ValidationDecision:
-    """Collapse citation and entailment results into a single action for the answer.
+    """Collapse citation, entailment and faithfulness results into a single action.
 
     Pairs each CitationCheckResult with the entailment results for the same claim
     (by position). A claim is rejected when all its citations are fabricated — there
     is no real evidence to point to — or when the evidence actively contradicts it.
     A claim is repairable when some citations are fabricated but real ones remain, or
     when the evidence does not address it but does not refute it either.
+
+    `fidelity` is optional because the check costs a model call and is worth skipping
+    once the claims alone have already settled the outcome. `None` means it was not run
+    and contributes nothing — never that the answer passed it.
     """
     if answer.insufficient_evidence:
         return ValidationDecision.INSUFFICIENT_EVIDENCE
 
     rejected = False
-    repairable = False
+    # An answer that overstates its claims is repairable rather than rejected: the
+    # evidence is sound and nothing was invented, so the fix is to rewrite the prose to
+    # match what was actually established, which is a thing a second attempt can do.
+    repairable = fidelity is AnswerFidelity.OVERSTATED
 
     for check, ent_results in zip(citation_results, entailment_by_claim, strict=True):
         real_citations = frozenset(check.claim.citations) - check.fabricated_labels
@@ -151,6 +208,7 @@ def decide(
 def build_repair_instructions(
     citation_results: tuple[CitationCheckResult, ...],
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
+    fidelity: AnswerFidelity | None = None,
 ) -> str:
     """Return a feedback string the model can act on when revising its answer.
 
@@ -177,6 +235,13 @@ def build_repair_instructions(
                 "Either cite a passage that actually contains this information, "
                 "or remove the claim entirely."
             )
+
+    if fidelity is AnswerFidelity.OVERSTATED:
+        bullets.append(
+            "Your answer states something none of your claims covers. Either rewrite the "
+            "answer so it says only what the claims establish, or add a claim — with "
+            "citations — for the statement you want to keep."
+        )
 
     if not bullets:
         return ""

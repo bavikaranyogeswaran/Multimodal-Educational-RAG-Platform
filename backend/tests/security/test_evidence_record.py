@@ -39,7 +39,7 @@ import pytest
 
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.documents.chunks import Chunk
-from app.domain.enums import ChunkType, RetrieverKind
+from app.domain.enums import AnswerFidelity, ChunkType, RetrieverKind
 from app.domain.errors import ScopeViolationError
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
@@ -103,6 +103,9 @@ def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> 
     entailment = AsyncMock()
     entailment.check_claim = AsyncMock(return_value=())
 
+    faithfulness = AsyncMock()
+    faithfulness.check_answer = AsyncMock(return_value=AnswerFidelity.FAITHFUL)
+
     @asynccontextmanager
     async def _uow() -> AsyncIterator[AsyncMock]:
         yield repo
@@ -113,6 +116,7 @@ def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> 
         model_gateway=gateway,
         context_builder=ContextBuilder(lambda text: len(text.split()), token_budget=100_000),
         entailment=entailment,
+        faithfulness=faithfulness,
     )
 
 

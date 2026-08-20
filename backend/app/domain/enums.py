@@ -366,6 +366,19 @@ class ClaimStatus(StrEnum):
     NOT_SUPPORTED = "NOT_SUPPORTED"
 
 
+class AnswerFidelity(StrEnum):
+    """Whether the prose an answer shows the student says only what its claims carry.
+
+    Claims are checked one by one against the passages they cite, but the student is shown
+    the `answer` field, not the claims. An answer whose claims are each impeccable can
+    still assert something in prose that none of them supports — and every claim-level
+    check would pass. This is the check on the text that is actually read.
+    """
+
+    FAITHFUL = "FAITHFUL"
+    OVERSTATED = "OVERSTATED"
+
+
 class ValidationDecision(StrEnum):
     """What to do with a generated answer.
 
