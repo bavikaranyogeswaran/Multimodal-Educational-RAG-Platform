@@ -204,6 +204,30 @@ class TestStreamResponse:
         assert resp.status_code == 404
 
 
+class TestStreamCleanup:
+    """The turn is recorded in the stream's cleanup, so the endpoint has to run it."""
+
+    def test_the_endpoint_closes_the_answer_stream(self) -> None:
+        """Left to the garbage collector, the record has no guaranteed arrival time."""
+        closed: list[str] = []
+
+        async def _gen() -> AsyncIterator[str]:
+            try:
+                yield "answer"
+            finally:
+                closed.append("closed")
+
+        use_case = MagicMock()
+        use_case.execute = AsyncMock(return_value=_gen())
+        session = _get_session(_conv_row(conv_id=_CONV_ID))
+
+        with TestClient(_make_app(session, use_case=use_case)) as client:
+            resp = client.post(_STREAM_URL, json={"query": "q"})
+
+        assert resp.status_code == 200
+        assert closed == ["closed"]
+
+
 class TestAnswerUseCaseWiring:
     """The dependency itself, which every test above replaces with a mock.
 

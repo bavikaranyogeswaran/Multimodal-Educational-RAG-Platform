@@ -134,9 +134,16 @@ async def stream_response(
     stream = await use_case.execute(command)
 
     async def _event_stream() -> AsyncIterator[str]:
-        async for token in stream:
-            yield f"data: {token}\n\n"
-        yield "data: [DONE]\n\n"
+        # Closing the inner stream is what tells the use case the student has gone, and
+        # it has to happen here rather than whenever the generator is collected: the turn
+        # is not recorded until its cleanup runs, and a record that waits on the garbage
+        # collector is a record with no guaranteed arrival time.
+        try:
+            async for token in stream:
+                yield f"data: {token}\n\n"
+            yield "data: [DONE]\n\n"
+        finally:
+            await stream.aclose()
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
 

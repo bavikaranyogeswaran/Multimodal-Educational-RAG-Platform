@@ -14,9 +14,10 @@ therefore takes its own unit of work.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -186,7 +187,14 @@ class AnswerUseCase:
         self._context_builder = context_builder
         self._entailment = entailment
 
-    async def execute(self, command: AnswerCommand) -> AsyncIterator[str]:
+    async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:
+        """Stream the answer for one turn.
+
+        Returns a generator rather than a plain iterator because closing it is part of the
+        contract: the turn is recorded in the generator's cleanup, so a caller that stops
+        early must call `aclose()` to say so. Abandoning it without closing leaves the
+        record to whenever the object is collected.
+        """
         now = datetime.now(UTC)
 
         async with self._uow() as repo:
@@ -254,7 +262,8 @@ class AnswerUseCase:
 
         async def _tracked() -> AsyncGenerator[str, None]:
             failed = False
-            answer_text = "(generation failed)"
+            abandoned = False
+            answer_text: str | None = None
             citations: tuple[Citation, ...] = ()
             usage: GenerationUsage | None = None
             try:
@@ -301,52 +310,28 @@ class AnswerUseCase:
                 # numbers in a string nobody can resolve.
                 citations = resolve_citations(answer, evidence)
                 yield answer_text
+            except (asyncio.CancelledError, GeneratorExit):
+                # Both mean the student stopped listening: the first when the server
+                # cancels the response task on disconnect, the second when the consumer
+                # closes the iterator. Neither is an `Exception`, so both used to slip
+                # past the handler below and be recorded as a completed answer — with
+                # the placeholder text, if nothing had been generated yet.
+                abandoned = True
+                raise
             except Exception:
                 failed = True
                 raise
             finally:
-                status = MessageStatus.FAILED if failed else MessageStatus.COMPLETED
-                answer_now = datetime.now(UTC)
-                assistant_message = Message(
-                    id=uuid.uuid4(),
+                await _record_turn(
+                    uow,
+                    scope=scope,
                     conversation_id=conv_id,
-                    user_id=scope.user_id,
-                    knowledge_base_id=scope.knowledge_base_id,
-                    role=MessageRole.ASSISTANT,
-                    status=status,
-                    content=UntrustedText(answer_text),
-                    created_at=answer_now,
-                    updated_at=answer_now,
-                    # Absent when the provider reported nothing, or when the turn failed
-                    # before a stream was drained. Left null in that case rather than
-                    # written as zero, which would read as a call that cost nothing.
-                    model_id=usage.model_id if usage else None,
-                    prompt_tokens=usage.prompt_tokens if usage else None,
-                    completion_tokens=usage.completion_tokens if usage else None,
-                    finish_reason=usage.finish_reason if usage else None,
-                    # Recorded even when the turn failed. The prompt was still the one
-                    # sent, and an answer that had to be refused is worth being able to
-                    # attribute to the template that produced it.
-                    prompt_version=PROMPT_VERSION,
+                    status=_outcome(failed=failed, abandoned=abandoned),
+                    answer_text=answer_text,
+                    usage=usage,
+                    evidence=evidence,
+                    citations=citations,
                 )
-                # A fresh unit of work: by now the response has been streamed and the
-                # request that started it is over, so there is no caller's transaction
-                # left to write into.
-                async with uow() as repo:
-                    await repo.save_message(scope, assistant_message)
-
-                    # The prompt itself is gone once generation ends, so what went into
-                    # it has to be recorded here or the question "did the model actually
-                    # see the passage this answer cites?" becomes unanswerable. Written
-                    # after the message because the record hangs off it, and written on
-                    # failure too — the evidence reached the model either way, and a
-                    # half-finished answer can still carry a citation worth checking.
-                    await repo.save_retrieval_chunks(scope, assistant_message.id, evidence)
-
-                    # What the answer was shown and what it actually used are two
-                    # different records. This is the second: empty on a rejected or
-                    # abstaining answer, which is the honest state — nothing was cited.
-                    await repo.save_citations(scope, assistant_message.id, citations)
 
         return _tracked()
 
@@ -354,6 +339,87 @@ class AnswerUseCase:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+#: Stands in for content when there is no answer to record. The row still needs text —
+#: a message with blank content is refused — but it must not read like something the
+#: student was shown, because nothing was.
+_PLACEHOLDER: dict[MessageStatus, str] = {
+    MessageStatus.FAILED: "(generation failed)",
+    MessageStatus.CANCELLED: "(cancelled before an answer was produced)",
+    MessageStatus.COMPLETED: "(no answer produced)",
+}
+
+
+async def _record_turn(
+    uow: ConversationUnitOfWork,
+    *,
+    scope: ScopeContext,
+    conversation_id: uuid.UUID,
+    status: MessageStatus,
+    answer_text: str | None,
+    usage: GenerationUsage | None,
+    evidence: Sequence[Evidence],
+    citations: Sequence[Citation],
+) -> None:
+    """Write everything the turn leaves behind: the answer, its evidence, its citations.
+
+    Runs however the turn ended, because all three records are worth having when it ended
+    badly. It opens a fresh unit of work: by now the response has been streamed and the
+    request that started it is over, so there is no caller's transaction left to write to.
+    """
+    now = datetime.now(UTC)
+    assistant_message = Message(
+        id=uuid.uuid4(),
+        conversation_id=conversation_id,
+        user_id=scope.user_id,
+        knowledge_base_id=scope.knowledge_base_id,
+        role=MessageRole.ASSISTANT,
+        status=status,
+        content=UntrustedText(answer_text or _PLACEHOLDER[status]),
+        created_at=now,
+        updated_at=now,
+        # Absent when the provider reported nothing, or when the turn ended before a
+        # stream was drained. Left null in that case rather than written as zero, which
+        # would read as a call that cost nothing.
+        model_id=usage.model_id if usage else None,
+        prompt_tokens=usage.prompt_tokens if usage else None,
+        completion_tokens=usage.completion_tokens if usage else None,
+        finish_reason=usage.finish_reason if usage else None,
+        # Recorded whatever the outcome. The prompt was still the one sent, and an answer
+        # that had to be refused is worth attributing to the template that produced it.
+        prompt_version=PROMPT_VERSION,
+    )
+
+    async with uow() as repo:
+        await repo.save_message(scope, assistant_message)
+
+        # The prompt itself is gone once generation ends, so what went into it has to be
+        # recorded here or the question "did the model actually see the passage this
+        # answer cites?" becomes unanswerable. Written after the message because the
+        # record hangs off it, and written on failure too — the evidence reached the
+        # model either way, and a half-finished answer can still carry a citation worth
+        # checking.
+        await repo.save_retrieval_chunks(scope, assistant_message.id, evidence)
+
+        # What the answer was shown and what it actually used are two different records.
+        # This is the second: empty on a rejected or abstaining answer, which is the
+        # honest state — nothing was cited.
+        await repo.save_citations(scope, assistant_message.id, citations)
+
+
+def _outcome(*, failed: bool, abandoned: bool) -> MessageStatus:
+    """How the turn ended, in the order the reasons take precedence.
+
+    Abandonment is checked first: a student who has already left cannot be told about a
+    failure, so what the record should say is that they left. A turn is only COMPLETED
+    when it neither failed nor was walked away from.
+    """
+    if abandoned:
+        return MessageStatus.CANCELLED
+    if failed:
+        return MessageStatus.FAILED
+    return MessageStatus.COMPLETED
 
 
 async def _collect_stream(

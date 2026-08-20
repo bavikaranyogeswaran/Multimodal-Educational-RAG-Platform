@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -1085,3 +1086,104 @@ class TestPromptVersion:
 
     def test_names_the_prompt_it_versions(self) -> None:
         assert PROMPT_VERSION.startswith("answer-")
+
+
+class TestAbandonedTurn:
+    """The student stops listening — by closing the iterator, or by the server cancelling
+    the response task on disconnect. Neither raises `Exception`, so both once slipped past
+    the failure handler and were recorded as completed answers."""
+
+    @staticmethod
+    def _assistant(repo: AsyncMock) -> Message:
+        result: Message = repo.save_message.call_args_list[1].args[1]
+        return result
+
+    async def test_closing_the_stream_records_the_turn_as_cancelled(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
+
+        agen = stream.__aiter__()
+        await agen.asend(None)
+        await agen.aclose()
+
+        assert self._assistant(repo).status is MessageStatus.CANCELLED
+
+    async def test_the_answer_that_was_produced_is_still_kept(self) -> None:
+        """Cancelled describes delivery, not the text. What was generated is still what
+        the record should hold."""
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
+
+        agen = stream.__aiter__()
+        await agen.asend(None)
+        await agen.aclose()
+
+        assert self._assistant(repo).content.value == "Test answer."
+
+    async def test_cancelling_during_generation_records_cancelled(self) -> None:
+        """The task is cancelled before any answer exists — the case that used to store
+        the placeholder text under a COMPLETED status."""
+
+        class _HangingStream:
+            usage = None
+
+            async def __aiter__(self) -> AsyncIterator[str]:
+                await asyncio.sleep(30)
+                yield "never"
+
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(side_effect=lambda _req: _HangingStream())
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo, gateway=gateway).execute(_BASE_CMD)
+
+        async def _consume() -> None:
+            async for _ in stream:
+                pass
+
+        task = asyncio.create_task(_consume())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.05)
+
+        assistant = self._assistant(repo)
+        assert assistant.status is MessageStatus.CANCELLED
+        assert "(generation failed)" not in assistant.content.value
+
+    async def test_the_turn_is_still_recorded_when_abandoned(self) -> None:
+        """The evidence reached the model and the question was asked; walking away does
+        not undo either."""
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            repo=repo, retrieve=_mock_retrieve([_ev("Passage A")])
+        ).execute(_BASE_CMD)
+
+        agen = stream.__aiter__()
+        await agen.asend(None)
+        await agen.aclose()
+
+        assert repo.save_message.await_count == 2
+        assert repo.save_retrieval_chunks.await_count == 1
+        assert repo.save_citations.await_count == 1
+
+    async def test_a_refused_answer_is_still_failed_not_cancelled(self) -> None:
+        """Only abandonment maps to CANCELLED. A validation refusal is a different fact
+        and must not be reclassified as the student leaving."""
+        repo = _mock_repo()
+        stream = await _make_use_case(
+            repo=repo, gateway=_mock_gateway(response="not json")
+        ).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+        assert self._assistant(repo).status is MessageStatus.FAILED
+
+    async def test_a_completed_turn_is_unaffected(self) -> None:
+        repo = _mock_repo()
+        stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assert self._assistant(repo).status is MessageStatus.COMPLETED

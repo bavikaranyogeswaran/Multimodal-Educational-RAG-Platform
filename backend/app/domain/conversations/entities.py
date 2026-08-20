@@ -196,6 +196,10 @@ class Message:
         self._transition(MessageStatus.FAILED)
         return replace(self, status=MessageStatus.FAILED, updated_at=now)
 
+    def mark_cancelled(self, *, now: datetime) -> Message:
+        self._transition(MessageStatus.CANCELLED)
+        return replace(self, status=MessageStatus.CANCELLED, updated_at=now)
+
     def with_rewritten_query(self, query: str, *, now: datetime) -> Message:
         if self.role is not MessageRole.USER:
             raise InvariantViolationError(

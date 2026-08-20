@@ -231,10 +231,24 @@ class MessageStatus(StrEnum):
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    #: The student stopped listening before the answer arrived. Distinct from FAILED
+    #: because nothing went wrong: generation may well have been on its way to a good
+    #: answer, and the two call for different responses — one is a signal about the
+    #: interface, the other about the answer.
+    CANCELLED = "CANCELLED"
 
     @property
     def is_terminal(self) -> bool:
-        return self in {MessageStatus.COMPLETED, MessageStatus.FAILED}
+        return self in {
+            MessageStatus.COMPLETED,
+            MessageStatus.FAILED,
+            MessageStatus.CANCELLED,
+        }
+
+    @property
+    def was_delivered(self) -> bool:
+        """Whether this message reached the student and can be shown back to them."""
+        return self is MessageStatus.COMPLETED
 
     def can_transition_to(self, target: MessageStatus) -> bool:
         return target in _MESSAGE_TRANSITIONS[self]
@@ -246,10 +260,13 @@ class MessageStatus(StrEnum):
 
 _MESSAGE_TRANSITIONS: Final[Mapping[MessageStatus, frozenset[MessageStatus]]] = {
     MessageStatus.RECEIVED: frozenset({MessageStatus.PROCESSING}),
-    MessageStatus.PROCESSING: frozenset({MessageStatus.COMPLETED, MessageStatus.FAILED}),
-    # Generation completed or failed — both are absorbing.
+    MessageStatus.PROCESSING: frozenset(
+        {MessageStatus.COMPLETED, MessageStatus.FAILED, MessageStatus.CANCELLED}
+    ),
+    # Generation completed, failed or was abandoned — all three are absorbing.
     MessageStatus.COMPLETED: frozenset(),
     MessageStatus.FAILED: frozenset(),
+    MessageStatus.CANCELLED: frozenset(),
 }
 
 
