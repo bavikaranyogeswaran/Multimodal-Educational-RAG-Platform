@@ -20,7 +20,11 @@ from app.domain.errors import ProviderError, UnsupportedCapabilityError
 from app.domain.models.entities import GenerationUsage, ModelRequest, ModelResponse
 from app.domain.ports.model_gateway import ModelProfile
 from app.domain.values import UntrustedText
-from app.infrastructure.models.providers.prompt import build_chat_messages
+from app.infrastructure.models.providers.prompt import (
+    DEFAULT_PROMPT_PROFILE,
+    PromptProfile,
+    build_chat_messages,
+)
 
 _ALL_TEXT_TASKS: frozenset[ModelTask] = frozenset(
     {
@@ -85,10 +89,12 @@ class OllamaModelGateway:
         model_id: str,
         *,
         timeout_seconds: int,
+        prompt_profile: PromptProfile | None = None,
     ) -> None:
         self._client = http_client
         self._model_id = model_id
         self._timeout = timeout_seconds
+        self._prompt_profile = prompt_profile if prompt_profile is not None else DEFAULT_PROMPT_PROFILE
         self._profile = ModelProfile(
             model_key=model_id,
             provider="ollama",
@@ -110,7 +116,7 @@ class OllamaModelGateway:
         return self._profile
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
-        messages = build_chat_messages(request)
+        messages = build_chat_messages(request, self._prompt_profile)
 
         options: dict[str, object] = {}
         if request.max_tokens is not None:
@@ -160,7 +166,7 @@ class OllamaModelGateway:
 
     async def _token_lines(self, request: ModelRequest) -> AsyncGenerator[dict[str, Any], None]:
         """The decoded NDJSON lines, including the final one carrying the counts."""
-        messages = build_chat_messages(request)
+        messages = build_chat_messages(request, self._prompt_profile)
 
         options: dict[str, object] = {}
         if request.max_tokens is not None:

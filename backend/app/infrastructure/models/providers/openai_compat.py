@@ -22,7 +22,11 @@ from app.domain.errors import ProviderError, UnsupportedCapabilityError
 from app.domain.models.entities import GenerationUsage, ModelRequest, ModelResponse
 from app.domain.ports.model_gateway import ModelProfile
 from app.domain.values import UntrustedText
-from app.infrastructure.models.providers.prompt import build_chat_messages
+from app.infrastructure.models.providers.prompt import (
+    DEFAULT_PROMPT_PROFILE,
+    PromptProfile,
+    build_chat_messages,
+)
 
 _ALL_TEXT_TASKS: frozenset[ModelTask] = frozenset(
     {
@@ -125,11 +129,13 @@ class OpenAICompatibleGateway:
         api_key: str = "",
         context_tokens: int = 128_000,
         max_output_tokens: int = 4_096,
+        prompt_profile: PromptProfile | None = None,
     ) -> None:
         self._client = http_client
         self._model_id = model_id
         self._timeout = timeout_seconds
         self._api_key = api_key
+        self._prompt_profile = prompt_profile if prompt_profile is not None else DEFAULT_PROMPT_PROFILE
         self._profile = ModelProfile(
             model_key=model_id,
             provider=_PROVIDER_NAME,
@@ -158,7 +164,7 @@ class OpenAICompatibleGateway:
     def _base_payload(self, request: ModelRequest, *, stream: bool) -> dict[str, object]:
         payload: dict[str, object] = {
             "model": self._model_id,
-            "messages": build_chat_messages(request),
+            "messages": build_chat_messages(request, self._prompt_profile),
             "stream": stream,
         }
         if request.max_tokens is not None:

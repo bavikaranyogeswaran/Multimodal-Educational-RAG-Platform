@@ -1105,6 +1105,17 @@ Everything in this table feeds a latency or capacity target in
 | A-622 | choice | The OpenAI-compat adapter is appended after Ollama (second in the provider list) | Provider order is preference order. Ollama (LOCAL) is always tried first; the OpenAI-compatible endpoint (THIRD_PARTY by default) serves as a fallback when Ollama is unavailable. Putting it first would route every public-content request to the external endpoint even when the local model is healthy. |
 | A-623 | choice | `generate_stream` fixture tests use a regular (non-async) `fake_stream_cm` | `httpx.AsyncClient.stream()` is a regular method that returns an async context manager, not a coroutine. The first attempt used `async def`, which returned a coroutine that the `async with` then failed on. Regular function + mock `__aenter__`/`__aexit__` is the correct shape for faking `client.stream`. |
 
+## Step 8.7 — Prompt normalisation profiles
+
+| ID | Type | Decision | Rationale |
+|---|---|---|---|
+| A-628 | choice | `PromptProfile` is a frozen stdlib dataclass, not a Protocol or Pydantic model | It is purely a data object carrying rendering options — no behaviour, no validation beyond Python's type system. Frozen dataclass is the lightest-weight option and is consistent with D-30 (domain entities are stdlib dataclasses). |
+| A-629 | choice | `use_acknowledged_exchange` is the only field in the initial profile | FR-MDL-24 lists five adjustable axes (evidence placement, final instruction repetition, native JSON mode, system-message usage, token limits). The first four are rendering choices; only `use_acknowledged_exchange` is concretely useful now because token limits are already carried on `ModelProfile`. The other rendering axes can be added as named fields later without changing any call sites. |
+| A-630 | choice | `build_chat_messages` default parameter is `DEFAULT_PROMPT_PROFILE = PromptProfile()` rather than `None` | A sentinel `None` would require a null-check at every call site or a guard at the top of the function. Using the constant as the default makes the function's behaviour self-documenting and keeps the common path (no profile argument) identical to the acknowledged-exchange path. |
+| A-631 | choice | Adapters store `self._prompt_profile` and pass it explicitly; they do not call `build_chat_messages(request)` with the default | Relying on the default would hide the adapter's rendering choice from a reader of the adapter code. Explicit passthrough makes it clear that every adapter has a profile, even when that profile is the default. |
+| A-632 | choice | `prompt_profile: PromptProfile | None = None` on adapter constructors, defaulting to `DEFAULT_PROMPT_PROFILE` internally | Callers that do not care about the profile omit the argument. The internal default is the constant, not the dataclass constructor, so there is exactly one `PromptProfile()` call in the module rather than one per adapter instantiation. `None` sentinel on the constructor is more readable at the call site than repeating `PromptProfile()` everywhere. |
+| A-633 | observation | One test failure during development: Ollama wiring test used `AsyncMock(return_value=mock_resp)()` as the `side_effect` return, which produced a coroutine instead of `mock_resp`. Fixed by returning `mock_resp` directly from the `side_effect` function. |
+
 ## Step 8.8 — Data boundary security gate
 
 | ID | Type | Decision | Rationale |

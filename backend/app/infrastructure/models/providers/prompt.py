@@ -1,34 +1,64 @@
 """Provider-neutral prompt rendering.
 
 Maps the twelve-slot ModelRequest to the role-based chat message array that
-both Ollama and the OpenAI-compatible API accept. The structure is identical
-for both; step 8.7 will add per-model variations on top of this base.
+both Ollama and the OpenAI-compatible API accept. The PromptProfile dataclass
+carries per-adapter rendering options so the same ModelRequest can be
+formatted differently for providers that respond better to different layouts.
 
 The acknowledged-exchange pattern — sending context as a user-then-assistant
 pair rather than as a bare system block — is deliberate: a fact the model has
 read and confirmed in the exchange is attended to differently than the same
 fact folded into an instruction block the model never acknowledged.
+Providers that do not benefit from this pattern can set
+use_acknowledged_exchange=False in their profile.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from app.domain.enums import MessageRole
 from app.domain.models.entities import ModelRequest
 
 
-def build_chat_messages(request: ModelRequest) -> list[dict[str, str]]:
+@dataclass(frozen=True, slots=True)
+class PromptProfile:
+    """Per-adapter rendering options for the chat message array.
+
+    Adapters declare a PromptProfile at construction time and pass it to
+    build_chat_messages. The profile controls formatting choices that vary
+    across providers without changing the underlying ModelRequest structure.
+
+    use_acknowledged_exchange: when True, memory and evidence slots are each
+        wrapped in a user-then-assistant pair so the model processes context
+        it has explicitly acknowledged. When False, each slot is a single user
+        message with no assistant reply — suited to providers that treat
+        assistant pre-fills as part of their own turn budget.
+    """
+
+    use_acknowledged_exchange: bool = True
+
+
+DEFAULT_PROMPT_PROFILE = PromptProfile()
+
+
+def build_chat_messages(
+    request: ModelRequest,
+    profile: PromptProfile = DEFAULT_PROMPT_PROFILE,
+) -> list[dict[str, str]]:
     """Render a ModelRequest as an ordered list of role-based chat messages.
 
     The system message combines every structural slot: identity, safety rules,
     the task, this turn's requirements, and the Knowledge Base state. Each
-    subsequent slot arrives as a user-then-assistant acknowledged exchange so
-    the model treats it as already-read context rather than as a new question.
+    context slot is either wrapped in a user-then-assistant acknowledged
+    exchange (profile.use_acknowledged_exchange=True) or emitted as a bare
+    user message (False), depending on the profile.
 
     Slot order:
         system   — preamble + safety + task + requirements + KB state
-        user/a   — memory (pinned + relevant + rolling summary), acknowledged
-        user/a   — conversation history turns, verbatim
-        user/a   — evidence passages, acknowledged
+        user[/a] — memory (pinned + relevant + rolling summary)
+        user     — conversation history turns, verbatim
+        user[/a] — evidence passages
         user     — the current question
         user     — output schema (if present)
         user     — critical checklist (if present)
@@ -48,7 +78,8 @@ def build_chat_messages(request: ModelRequest) -> list[dict[str, str]]:
     if memory:
         facts = "\n".join(f"- {fact}" for fact in memory)
         messages.append({"role": "user", "content": f"[Student context]\n{facts}"})
-        messages.append({"role": "assistant", "content": "Understood, I have noted the context."})
+        if profile.use_acknowledged_exchange:
+            messages.append({"role": "assistant", "content": "Understood, I have noted the context."})
 
     for turn in request.conversation_history:
         role = "user" if turn.role is MessageRole.USER else "assistant"
@@ -57,7 +88,8 @@ def build_chat_messages(request: ModelRequest) -> list[dict[str, str]]:
     if request.evidence:
         passages = "\n\n".join(f"{p.label} {p.text.value}" for p in request.evidence)
         messages.append({"role": "user", "content": f"[Reference material]\n{passages}"})
-        messages.append({"role": "assistant", "content": "I have reviewed the material."})
+        if profile.use_acknowledged_exchange:
+            messages.append({"role": "assistant", "content": "I have reviewed the material."})
 
     messages.append({"role": "user", "content": request.query})
 
