@@ -40,6 +40,7 @@ from app.domain.ports.repositories import (
     MemoryRepository,
 )
 from app.infrastructure.database.session import build_engine, build_session_factory
+from app.infrastructure.models.gateway import ModelGatewayFacade
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.rendering.page_renderer import PageRenderer
 from app.infrastructure.storage.r2 import build_r2_adapters
@@ -48,11 +49,12 @@ from app.infrastructure.tokenization.token_counter import HuggingFaceTokenCounte
 
 def _build_model_gateway(settings: Settings) -> ModelGatewayPort:
     client = httpx.AsyncClient(base_url=settings.model.ollama_base_url)
-    return OllamaModelGateway(
+    ollama = OllamaModelGateway(
         http_client=client,
         model_id=settings.model.default_text_model,
         timeout_seconds=settings.model.request_timeout_seconds,
     )
+    return ModelGatewayFacade([ollama])
 
 
 def _build_reranker(settings: Settings) -> RerankerPort:

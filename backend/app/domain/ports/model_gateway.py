@@ -70,7 +70,7 @@ class ModelProfile:
 
 
 class TextGenerationCapability(Protocol):
-    """Provider-level text-only generation.
+    """Provider-level text generation, streaming and non-streaming.
 
     Implementations do not check the data boundary — the gateway does that
     before selecting a provider. A provider that receives a request has already
@@ -82,20 +82,16 @@ class TextGenerationCapability(Protocol):
 
     async def generate(self, request: ModelRequest) -> ModelResponse: ...
 
+    def generate_stream(self, request: ModelRequest) -> "TokenStream": ...
 
-class MultimodalCapability(Protocol):
+
+class MultimodalCapability(TextGenerationCapability, Protocol):
     """Provider-level text + image inference.
 
-    `generate_with_image` supplements rather than replaces `generate`. A model
-    capable of multimodal input can also handle text-only requests, so both are
-    required. The gateway routes VISUAL_QUESTION tasks to `generate_with_image`
-    and all others to `generate`.
+    Extends TextGenerationCapability: a multimodal provider handles all text
+    tasks plus image input. The gateway routes VISUAL_QUESTION tasks to
+    `generate_with_image` and all others to `generate`.
     """
-
-    @property
-    def profile(self) -> ModelProfile: ...
-
-    async def generate(self, request: ModelRequest) -> ModelResponse: ...
 
     async def generate_with_image(
         self,

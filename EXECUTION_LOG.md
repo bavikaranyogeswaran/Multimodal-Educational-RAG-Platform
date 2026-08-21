@@ -1036,3 +1036,25 @@ Everything in this table feeds a latency or capacity target in
 | A-583 | choice | What was dropped is named, framed as unsupported rather than restated as fact | A student not told what is missing cannot tell a partial answer from a complete one. But the dropped text came from a model and failed validation, so repeating it plainly would hand over the very assertion the evidence declined to back. |
 | A-584 | choice | The result sets `insufficient_evidence=False` | Something was answered. An abstention and a partial answer are different outcomes, and collapsing them would lose the distinction the frontend needs in order to render them differently. |
 | A-585 | deviation | `build_partial_answer` does not take the original answer | It was a parameter until ruff pointed out nothing read it. Nothing in the original survives — the claims are re-derived and the prose is rebuilt — so the signature now says so. |
+
+## Step 8.1 — Gateway façade + task router
+
+| ID | Kind | What | Why |
+|---|---|---|---|
+| A-586 | choice | `ModelGatewayFacade` created in `infrastructure/models/gateway.py`, not alongside the Ollama adapter | The façade is infrastructure (it holds concrete adapters), but its logic is routing-only and applies equally to all providers. Keeping it separate from any one adapter makes it clear that it has no provider-specific code. |
+| A-587 | choice | `TextGenerationCapability` gains `generate_stream` | The façade must delegate all three operations the gateway port exposes — non-streaming, streaming, and image. Without `generate_stream` on the capability Protocol, the façade could not call it on a provider without losing type safety. |
+| A-588 | choice | `MultimodalCapability` extends `TextGenerationCapability` rather than repeating `profile` and `generate` | A multimodal provider can do everything a text provider can, so the relationship is subtyping, not composition. Removing the duplicated members makes the Protocol hierarchy say what it means. |
+| A-589 | choice | `generate_with_image` routing checks both `supports_images` and `supports_task(VISUAL_QUESTION)` | A profile may have `supports_images=True` for some non-VISUAL_QUESTION purpose (e.g., an encoder that does not do QA). Requiring both guards against selecting such a provider for multimodal QA. Found by a test that was initially written the wrong way. |
+| A-590 | correction | Initial test `test_provider_with_supports_images_false_not_selected_for_image` used an impossible profile | `ModelProfile.__post_init__` rejects `VISUAL_QUESTION` in tasks when `supports_images=False`. Replaced with `test_provider_without_visual_question_task_not_selected_for_image`, which tests the reachable scenario: `supports_images=True` but task not declared. |
+| A-591 | choice | `OllamaModelGateway` unchanged — still satisfies both `TextGenerationCapability` and the previous `ModelGatewayPort` | The Ollama adapter already had all three required methods. Wrapping it inside the façade required no changes to the adapter itself; only the wiring in `wire.py` changed. |
+| A-592 | choice | `wire.py` wraps the single Ollama adapter in a `ModelGatewayFacade([ollama])` | The container slot still holds a `ModelGatewayPort` — nothing in the application layer changed. The façade is transparent to all callers. |
+
+## Step 8.2 — Privacy pre-flight (§52)
+
+| ID | Kind | What | Why |
+|---|---|---|---|
+| A-593 | choice | `privacy_sensitive` is a derived property on `ModelRequest`, not a constructor parameter | A parameter could be set incorrectly (e.g., forgetting `True` when evidence is present). A derived property is always consistent with the actual slots in the request — if evidence is there, the request is private. |
+| A-594 | choice | The property treats evidence, memory, history, and rolling summary as private; the query alone is not | The query is the student's question, but for tasks like faithfulness checking the "query" slot carries the model's own output being verified, which is not student-identifiable. Marking the query alone as private would make every single request private and make the check meaningless for all-local setups. |
+| A-595 | choice | `_enforce_privacy` is a private method on the façade called in all three route-and-call methods | The check belongs in the same place as routing — the façade. Putting it in a helper keeps each of `generate`, `generate_stream`, and `generate_with_image` to two lines rather than repeating the same conditional. |
+| A-596 | choice | The error is always fatal — no fallback on boundary violation | §52 is explicit: rerouting to a permitted provider defeats the purpose of the boundary. A student who configured a LOCAL-only data policy must get an error, not a silently rerouted request. |
+| A-597 | finding | `DataBoundaryViolationError` already carried the right fields (`provider`, `boundary`) from Phase 8's earlier work | Nothing new needed on the error type. The test asserts both fields to pin the contract. |

@@ -27,13 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 11** — ~90%, 8 of 11 items done and nothing left unstarted. All three remaining partials are blocked or unneeded rather than pending: `[S1]`'s *object* field and UC-08 both wait on Phase 6, and word limits and table-number matching have no caller |
+| In progress | **Phase 8** — ~40%, step 8.1 done. Façade and task router in place; privacy pre-flight (8.2), fallback chain (8.3), `model_invocations` table (8.4), warm-up (8.5), OpenAI adapter (8.6), and security test (8.8) remain. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
 | Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
-| Foundations only | Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
+| Foundations only | Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,336 unit and security passing, the one `test_stage_timer` timing flake aside · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
-| Next step | **Phase 11 has no unblocked work left.** Steps 11.1–11.18 are done. UC-08 needs Phase 6 and a multimodal gateway; UC-07's remaining steps need Phase 14, 16 and 19. The pipeline has still never run against a real model or real storage — Ollama is not running and the R2 keys are unset, so **7.6–7.8** and any real end-to-end check remain blocked on those. **7.4** still waits on a textbook PDF |
-| Last updated | 20 August 2026 (step 11.18 — partial abstention) |
+| Tests | 2,353 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
+| Next step | Phase 8 — step 8.3 (fallback chain) |
+| Last updated | 21 August 2026 (step 8.2 — privacy pre-flight) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1398,20 +1398,22 @@ container — there is no gateway in front of it. Everything the gateway exists 
 privacy enforcement, fallback, normalization) is therefore absent, and the single-provider setup
 hides that, because with one local provider none of it is exercised.
 
-- [ ] **Gateway façade → task router → capability registry → provider adapter** — the container
-      holds `OllamaModelGateway` in the `model_gateway` slot; nothing sits between caller and
-      provider
+- [x] **Gateway façade → task router → provider adapter** — `ModelGatewayFacade` wraps an
+      ordered provider list; the first provider whose profile supports the requested task is
+      selected; the container now holds the façade, not `OllamaModelGateway` directly
 - [ ] Four capability interfaces: text generation, multimodal, embeddings, reranking — embeddings
-      and reranking are separate ports (`EmbeddingPort`, `RerankerPort`), not gateway capabilities
+      and reranking are separate ports (`EmbeddingPort`, `RerankerPort`), not gateway capabilities;
+      `TextGenerationCapability` and `MultimodalCapability` now form a proper inheritance hierarchy
 - [x] §49 capability metadata including `data_boundary` — `ModelProfile` carries it
-- [ ] §50 routing for all ten model tasks — `ModelProfile.tasks` declares the nine text tasks and
-      `profile_for` rejects unsupported ones, but there is no router choosing between models
+- [x] §50 routing for all ten model tasks — `ModelGatewayFacade._provider_for` selects the first
+      capable provider by task, raising `UnsupportedCapabilityError` when none qualifies
 - [x] Ollama adapter implemented
 - [ ] OpenAI-compatible adapter; Gemini and Anthropic raising `NotImplementedError` (D-17)
 - [ ] Internal model keys resolvable at deployment, task or Knowledge Base level (§51) — one model
       id comes from settings and is passed to the adapter's constructor
-- [ ] **Privacy policy (§52):** pre-flight `data_boundary` check; **no silent local-to-external
-      fallback** — nothing reads `data_boundary` at call time
+- [x] **Privacy policy (§52):** `ModelRequest.privacy_sensitive` derived property; façade raises
+      `DataBoundaryViolationError` before calling a THIRD_PARTY provider for a private request;
+      check applied in `generate`, `generate_stream`, and `generate_with_image`; no silent reroute
 - [ ] **Fallback (§53):** `ProviderError` carries a `retryable` flag and no caller acts on it —
       there is no retry, no approved-fallback chain, and nothing logged
 - [ ] **Prompt normalization (§54)** and per-model prompt profiles — the seven-slot `ModelRequest`

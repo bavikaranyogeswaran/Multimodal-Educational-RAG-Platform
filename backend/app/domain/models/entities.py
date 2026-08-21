@@ -158,6 +158,22 @@ class ModelRequest:
     def has_memory(self) -> bool:
         return bool(self.pinned_memory or self.relevant_memory)
 
+    @property
+    def privacy_sensitive(self) -> bool:
+        """True when the request carries student-identifiable content.
+
+        Evidence comes from the student's documents; memory and conversation
+        history are personal facts about the student. Any provider receiving a
+        private request must have data_boundary=LOCAL.
+        """
+        return bool(
+            self.pinned_memory
+            or self.relevant_memory
+            or self.rolling_summary
+            or self.conversation_history
+            or self.evidence
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ModelResponse:
