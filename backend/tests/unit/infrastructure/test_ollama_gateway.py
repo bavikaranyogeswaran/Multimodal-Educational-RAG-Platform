@@ -31,7 +31,8 @@ from app.domain.errors import ProviderError, UnsupportedCapabilityError
 from app.domain.models.entities import ConversationTurn, LabeledPassage, ModelRequest
 from app.domain.models.instructions import Instruction, NumberedRequirement
 from app.domain.values import UntrustedText
-from app.infrastructure.models.providers.ollama import OllamaModelGateway, _build_messages
+from app.infrastructure.models.providers.ollama import OllamaModelGateway
+from app.infrastructure.models.providers.prompt import build_chat_messages as _build_messages
 
 # ---------------------------------------------------------------------------
 # Fixtures and factories

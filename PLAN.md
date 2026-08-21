@@ -27,13 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 8** — ~65%, steps 8.1–8.5 done. Façade, task router, privacy pre-flight, fallback chain, `model_invocations` persistence, and warm-up in place; OpenAI adapter (8.6) and security test (8.8) remain. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
+| In progress | **Phase 8** — ~80%, steps 8.1–8.6 done. Façade, task router, privacy pre-flight, fallback chain, `model_invocations` persistence, warm-up, and OpenAI-compatible adapter in place; security test (8.8) and prompt-normalisation profiles (8.7) remain. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
 | Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
 | Foundations only | Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,386 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
-| Next step | Phase 8 — step 8.6 (OpenAI-compatible adapter skeleton) |
-| Last updated | 21 August 2026 (step 8.5 — warm-up on startup) |
+| Tests | 2,411 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
+| Next step | Phase 8 — step 8.7 (prompt normalisation profiles) or 8.8 (security: data boundary gate) |
+| Last updated | 21 August 2026 (step 8.6 — OpenAI-compatible adapter skeleton) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1408,7 +1408,7 @@ hides that, because with one local provider none of it is exercised.
 - [x] §50 routing for all ten model tasks — `ModelGatewayFacade._provider_for` selects the first
       capable provider by task, raising `UnsupportedCapabilityError` when none qualifies
 - [x] Ollama adapter implemented
-- [ ] OpenAI-compatible adapter; Gemini and Anthropic raising `NotImplementedError` (D-17)
+- [x] OpenAI-compatible adapter; Gemini and Anthropic raising `NotImplementedError` (D-17)
 - [ ] Internal model keys resolvable at deployment, task or Knowledge Base level (§51) — one model
       id comes from settings and is passed to the adapter's constructor
 - [x] **Privacy policy (§52):** `ModelRequest.privacy_sensitive` derived property; façade raises

@@ -42,6 +42,7 @@ from app.domain.ports.repositories import (
 from app.infrastructure.database.session import build_engine, build_session_factory
 from app.infrastructure.models.gateway import ModelGatewayFacade
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
+from app.infrastructure.models.providers.openai_compat import OpenAICompatibleGateway
 from app.infrastructure.rendering.page_renderer import PageRenderer
 from app.infrastructure.storage.r2 import build_r2_adapters
 from app.infrastructure.tokenization.token_counter import HuggingFaceTokenCounter
@@ -51,13 +52,30 @@ def _build_model_gateway(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession] | None,
 ) -> ModelGatewayPort:
+    from app.domain.enums import DataBoundary  # noqa: PLC0415
+
     client = httpx.AsyncClient(base_url=settings.model.ollama_base_url)
     ollama = OllamaModelGateway(
         http_client=client,
         model_id=settings.model.default_text_model,
         timeout_seconds=settings.model.request_timeout_seconds,
     )
-    return ModelGatewayFacade([ollama], session_factory=session_factory)
+    providers: list[object] = [ollama]
+
+    oai_base_url = settings.model.openai_compatible_base_url
+    if oai_base_url:
+        oai_client = httpx.AsyncClient(base_url=oai_base_url)
+        providers.append(
+            OpenAICompatibleGateway(
+                http_client=oai_client,
+                model_id=settings.model.default_text_model,
+                timeout_seconds=settings.model.request_timeout_seconds,
+                data_boundary=DataBoundary.THIRD_PARTY,
+                api_key=settings.model.openai_compatible_api_key.get_secret_value(),
+            )
+        )
+
+    return ModelGatewayFacade(providers, session_factory=session_factory)
 
 
 def _build_reranker(settings: Settings) -> RerankerPort:
