@@ -32,6 +32,7 @@ from app.api.routers.study_content import router as study_content_router
 from app.configuration.settings import get_settings
 from app.configuration.wire import build_container
 from app.infrastructure.auth.jwks import JwksClient
+from app.infrastructure.models.warmup import warm_up_models
 from app.infrastructure.observability.structlog_setup import configure_structlog
 from app.runtime import explain_unusable_loop, running_loop_reaches_postgres
 
@@ -63,6 +64,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         url=settings.supabase.jwks_url,
         cache_seconds=settings.supabase.jwks_cache_seconds,
     )
+    if settings.model.warm_models_on_startup:
+        await warm_up_models(_app.state.container.model_gateway)
     yield
 
 
