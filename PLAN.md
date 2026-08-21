@@ -27,13 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 8** — ~40%, step 8.1 done. Façade and task router in place; privacy pre-flight (8.2), fallback chain (8.3), `model_invocations` table (8.4), warm-up (8.5), OpenAI adapter (8.6), and security test (8.8) remain. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
+| In progress | **Phase 8** — ~55%, steps 8.1–8.4 done. Façade, task router, privacy pre-flight, fallback chain, and `model_invocations` persistence in place; warm-up (8.5), OpenAI adapter (8.6), and security test (8.8) remain. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
 | Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
 | Foundations only | Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,353 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
-| Next step | Phase 8 — step 8.4 (model_invocations table) |
-| Last updated | 21 August 2026 (step 8.3 — fallback chain) |
+| Tests | 2,378 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
+| Next step | Phase 8 — step 8.5 (warm-up on startup) |
+| Last updated | 21 August 2026 (step 8.4 — model_invocations table) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -65,9 +65,9 @@ compared.
 §40 is met except for its *object* field, which waits on Phase 6 to create the tables and figures
 it would name.
 
-Migrations applied through `0010 (head)` against Supabase; fifteen SQLAlchemy models registered
-with `Base.metadata`, matching fifteen tables in the live schema. ruff and mypy clean across
-`app/`.
+Migrations applied through `0010 (head)` against Supabase; migration `0011` (model_invocations)
+written but not yet applied — requires a hotspot connection. Sixteen SQLAlchemy models registered
+with `Base.metadata`. ruff and mypy clean across `app/`.
 
 The `message_citations` row-level security policy is verified against PostgreSQL rather than
 argued for: SQLite cannot express row-level security, so until the migration was applied the
@@ -1423,8 +1423,9 @@ hides that, because with one local provider none of it is exercised.
       once for one provider rather than as a shared stage
 - [ ] Warm-up at startup for every configured model (§55) — `warm_models_on_startup` is defined in
       settings and read by nothing
-- [ ] `model_invocations` written on every call — no such table exists;
-      `write_model_invocation()` emits a structlog event only
+- [x] `model_invocations` written on every call — migration 0011 creates the table;
+      `write_model_invocation()` emits a structlog event and adds a row per completed call;
+      streaming excluded (no single end-to-end latency); write failures are non-fatal
 - [ ] Security test: external-provider privacy violation blocked
 
 ## Phase 9 — Conversations, query understanding & retrieval core

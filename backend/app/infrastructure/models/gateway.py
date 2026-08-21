@@ -9,6 +9,10 @@ or a privacy violation propagates immediately — there is no silent fallback fo
 Streaming does not participate in the fallback chain: a TokenStream's errors surface
 to the caller during iteration, after tokens may already have been delivered, so there
 is no safe point at which to switch providers.
+
+When a session_factory is supplied at construction, one model_invocations row is written
+per completed call (text and image generation only — streaming is excluded). A write
+failure is caught and logged; it never surfaces to the caller.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from collections.abc import Sequence
 from typing import cast
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.enums import ModelTask
 from app.domain.errors import DataBoundaryViolationError, ProviderError, UnsupportedCapabilityError
@@ -27,6 +32,7 @@ from app.domain.ports.model_gateway import (
     TextGenerationCapability,
     TokenStream,
 )
+from app.infrastructure.observability.invocation_log import write_model_invocation
 
 _log = structlog.get_logger(__name__)
 
@@ -43,10 +49,12 @@ class ModelGatewayFacade:
     def __init__(
         self,
         providers: Sequence[TextGenerationCapability | MultimodalCapability],
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         if not providers:
             raise ValueError("ModelGatewayFacade requires at least one provider")
         self._providers = list(providers)
+        self._session_factory = session_factory
 
     def _capable_providers(
         self, task: ModelTask
@@ -64,6 +72,30 @@ class ModelGatewayFacade:
                 provider.profile.data_boundary.value,
             )
 
+    async def _record_invocation(
+        self,
+        response: ModelResponse,
+        provider: TextGenerationCapability | MultimodalCapability,
+        used_fallback: bool,
+    ) -> None:
+        if self._session_factory is None:
+            return
+        try:
+            async with self._session_factory() as session:
+                async with session.begin():
+                    await write_model_invocation(
+                        session=session,
+                        model_id=response.model_id,
+                        task=response.model_task.value,
+                        provider=provider.profile.provider,
+                        prompt_tokens=response.prompt_tokens,
+                        completion_tokens=response.completion_tokens,
+                        latency_ms=response.latency_ms,
+                        used_fallback=used_fallback,
+                    )
+        except Exception as exc:
+            _log.warning("gateway.invocation_write_failed", error=str(exc))
+
     def profile_for(self, task: ModelTask) -> ModelProfile:
         candidates = self._capable_providers(task)
         if not candidates:
@@ -76,10 +108,12 @@ class ModelGatewayFacade:
             raise UnsupportedCapabilityError("no configured provider", request.model_task.value)
 
         last_error: ProviderError | None = None
-        for provider in candidates:
+        for index, provider in enumerate(candidates):
             self._enforce_privacy(request, provider)
             try:
-                return await provider.generate(request)
+                result = await provider.generate(request)
+                await self._record_invocation(result, provider, used_fallback=(index > 0))
+                return result
             except ProviderError as exc:
                 if not exc.retryable:
                     raise
@@ -115,12 +149,14 @@ class ModelGatewayFacade:
             raise UnsupportedCapabilityError("no configured provider", "image input")
 
         last_error: ProviderError | None = None
-        for provider in candidates:
+        for index, provider in enumerate(candidates):
             self._enforce_privacy(request, provider)
             try:
-                return await cast(MultimodalCapability, provider).generate_with_image(
+                result = await cast(MultimodalCapability, provider).generate_with_image(
                     request, image
                 )
+                await self._record_invocation(result, provider, used_fallback=(index > 0))
+                return result
             except ProviderError as exc:
                 if not exc.retryable:
                     raise

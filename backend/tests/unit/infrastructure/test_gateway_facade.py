@@ -488,3 +488,101 @@ class TestFallbackChain:
         with pytest.raises(DataBoundaryViolationError):
             await facade.generate(_private_request())
         fallback.generate.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Invocation recording (§62, FR-MDL-26)
+# ---------------------------------------------------------------------------
+
+
+from unittest.mock import MagicMock, patch
+
+
+def _make_session_factory() -> tuple[MagicMock, MagicMock]:
+    """Returns (factory, session) — factory() yields the session as an async context manager."""
+    session = MagicMock()
+    session.add = MagicMock()
+
+    begin_ctx = MagicMock()
+    begin_ctx.__aenter__ = AsyncMock(return_value=None)
+    begin_ctx.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_ctx)
+
+    session_ctx = MagicMock()
+    session_ctx.__aenter__ = AsyncMock(return_value=session)
+    session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    factory = MagicMock(return_value=session_ctx)
+    return factory, session
+
+
+class TestInvocationRecording:
+    async def test_invocation_row_added_after_successful_generate(self) -> None:
+        factory, session = _make_session_factory()
+        provider = _StubTextProvider(_profile())
+        facade = ModelGatewayFacade([provider], session_factory=factory)
+        await facade.generate(_request())
+        session.add.assert_called_once()
+
+    async def test_invocation_row_has_correct_model_id(self) -> None:
+        factory, session = _make_session_factory()
+        provider = _StubTextProvider(_profile())
+        facade = ModelGatewayFacade([provider], session_factory=factory)
+        await facade.generate(_request())
+        row = session.add.call_args[0][0]
+        assert row.model_id == provider._response.model_id
+
+    async def test_invocation_used_fallback_false_for_first_provider(self) -> None:
+        factory, session = _make_session_factory()
+        provider = _StubTextProvider(_profile())
+        facade = ModelGatewayFacade([provider], session_factory=factory)
+        await facade.generate(_request())
+        row = session.add.call_args[0][0]
+        assert row.used_fallback is False
+
+    async def test_invocation_used_fallback_true_after_fallback(self) -> None:
+        factory, session = _make_session_factory()
+        first = _StubTextProvider(_profile(key="first"))
+        second = _StubTextProvider(_profile(key="second"))
+        first.generate = AsyncMock(side_effect=_retryable_error("first"))
+        facade = ModelGatewayFacade([first, second], session_factory=factory)
+        await facade.generate(_request())
+        row = session.add.call_args[0][0]
+        assert row.used_fallback is True
+
+    async def test_invocation_row_added_after_successful_image_generate(self) -> None:
+        factory, session = _make_session_factory()
+        image_profile = _profile(
+            key="vision",
+            tasks=frozenset({ModelTask.VISUAL_QUESTION}),
+            supports_images=True,
+        )
+        provider = _StubImageProvider(image_profile)
+        facade = ModelGatewayFacade([provider], session_factory=factory)
+        await facade.generate_with_image(_request(ModelTask.VISUAL_QUESTION), b"\x89PNG")
+        session.add.assert_called_once()
+
+    async def test_write_failure_does_not_propagate_to_caller(self) -> None:
+        factory, session = _make_session_factory()
+        session.add = MagicMock(side_effect=RuntimeError("DB is down"))
+        provider = _StubTextProvider(_profile())
+        facade = ModelGatewayFacade([provider], session_factory=factory)
+        # Must not raise — the generate call itself succeeded
+        result = await facade.generate(_request())
+        assert result is not None
+
+    async def test_no_invocation_written_without_session_factory(self) -> None:
+        provider = _StubTextProvider(_profile())
+        facade = ModelGatewayFacade([provider])  # no session_factory
+        # Must not raise even without a factory
+        result = await facade.generate(_request())
+        assert result is not None
+
+    async def test_no_invocation_written_on_generate_failure(self) -> None:
+        factory, session = _make_session_factory()
+        provider = _StubTextProvider(_profile())
+        provider.generate = AsyncMock(side_effect=_fatal_error("test"))
+        facade = ModelGatewayFacade([provider], session_factory=factory)
+        with pytest.raises(ProviderError):
+            await facade.generate(_request())
+        session.add.assert_not_called()

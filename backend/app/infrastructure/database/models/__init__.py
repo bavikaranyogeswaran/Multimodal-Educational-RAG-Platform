@@ -21,6 +21,7 @@ from app.infrastructure.database.models.document import DocumentModel, DocumentP
 from app.infrastructure.database.models.graph import GraphEntityModel, GraphRelationshipModel
 from app.infrastructure.database.models.job import CacheEntryModel, ProcessingJobModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
+from app.infrastructure.database.models.model_invocation import ModelInvocationModel
 
 __all__ = [
     "CacheEntryModel",
@@ -36,5 +37,6 @@ __all__ = [
     "KnowledgeBaseModel",
     "MemoryFactModel",
     "MessageModel",
+    "ModelInvocationModel",
     "ProcessingJobModel",
 ]

@@ -47,14 +47,17 @@ from app.infrastructure.storage.r2 import build_r2_adapters
 from app.infrastructure.tokenization.token_counter import HuggingFaceTokenCounter
 
 
-def _build_model_gateway(settings: Settings) -> ModelGatewayPort:
+def _build_model_gateway(
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+) -> ModelGatewayPort:
     client = httpx.AsyncClient(base_url=settings.model.ollama_base_url)
     ollama = OllamaModelGateway(
         http_client=client,
         model_id=settings.model.default_text_model,
         timeout_seconds=settings.model.request_timeout_seconds,
     )
-    return ModelGatewayFacade([ollama])
+    return ModelGatewayFacade([ollama], session_factory=session_factory)
 
 
 def _build_reranker(settings: Settings) -> RerankerPort:
@@ -211,5 +214,8 @@ def build_container(settings: Settings) -> Container:
         graph=cast(GraphPort, _u("GraphPort")),
         observability=cast(ObservabilityPort, _u("ObservabilityPort")),
         # Model gateway
-        model_gateway=_build_model_gateway(settings),
+        model_gateway=_build_model_gateway(
+            settings,
+            session_factory=_session_factory if db_url else None,
+        ),
     )
