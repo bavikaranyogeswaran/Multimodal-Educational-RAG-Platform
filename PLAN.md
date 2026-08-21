@@ -32,8 +32,8 @@ system design specification.
 | Foundations only | Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
 | Tests | 2,353 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
-| Next step | Phase 8 — step 8.3 (fallback chain) |
-| Last updated | 21 August 2026 (step 8.2 — privacy pre-flight) |
+| Next step | Phase 8 — step 8.4 (model_invocations table) |
+| Last updated | 21 August 2026 (step 8.3 — fallback chain) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1414,8 +1414,10 @@ hides that, because with one local provider none of it is exercised.
 - [x] **Privacy policy (§52):** `ModelRequest.privacy_sensitive` derived property; façade raises
       `DataBoundaryViolationError` before calling a THIRD_PARTY provider for a private request;
       check applied in `generate`, `generate_stream`, and `generate_with_image`; no silent reroute
-- [ ] **Fallback (§53):** `ProviderError` carries a `retryable` flag and no caller acts on it —
-      there is no retry, no approved-fallback chain, and nothing logged
+- [x] **Fallback (§53):** on `ProviderError(retryable=True)` the façade tries the next capable
+      provider in the list; `retryable=False` propagates immediately; privacy violation is always
+      fatal even during fallback; last error re-raised when all candidates exhaust; fallback event
+      logged via structlog `gateway.provider_fallback`
 - [ ] **Prompt normalization (§54)** and per-model prompt profiles — the seven-slot `ModelRequest`
       is mapped to Ollama's chat array inside the adapter, which is the normalization step done
       once for one provider rather than as a shared stage

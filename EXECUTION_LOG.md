@@ -1058,3 +1058,14 @@ Everything in this table feeds a latency or capacity target in
 | A-595 | choice | `_enforce_privacy` is a private method on the façade called in all three route-and-call methods | The check belongs in the same place as routing — the façade. Putting it in a helper keeps each of `generate`, `generate_stream`, and `generate_with_image` to two lines rather than repeating the same conditional. |
 | A-596 | choice | The error is always fatal — no fallback on boundary violation | §52 is explicit: rerouting to a permitted provider defeats the purpose of the boundary. A student who configured a LOCAL-only data policy must get an error, not a silently rerouted request. |
 | A-597 | finding | `DataBoundaryViolationError` already carried the right fields (`provider`, `boundary`) from Phase 8's earlier work | Nothing new needed on the error type. The test asserts both fields to pin the contract. |
+
+## Step 8.3 — Fallback chain (§53)
+
+| ID | Kind | What | Why |
+|---|---|---|---|
+| A-598 | choice | The provider list IS the fallback chain — the first capable provider is tried, then the second, etc. | A separate per-task fallback config would duplicate the provider order already expressed in the list. The list order is preference order, which is all a fallback chain needs to be. |
+| A-599 | choice | Non-retryable `ProviderError` propagates immediately, bypassing remaining candidates | A malformed request or context-length violation won't be fixed by switching providers — retrying wastes time and may produce a confusing error from a different provider. `retryable=False` is the provider's signal that the request itself is the problem. |
+| A-600 | choice | Privacy violation during fallback is fatal — the error propagates, the remaining provider list is not tried | Falling through to a third provider after a privacy violation on the second would silently ignore the boundary. The privacy check is an invariant of the request, not a property of one specific provider. |
+| A-601 | choice | Streaming does not participate in the fallback chain | A `TokenStream` delivers tokens incrementally. By the time an error surfaces during iteration, some tokens may already have been sent to the caller. There is no safe rollback point at which to switch to a different provider, so the `ProviderError` goes straight to the caller. |
+| A-602 | choice | `last_error` re-raised when all candidates fail | All-candidates-fail means a non-null `last_error` exists (candidates is non-empty by the guard above the loop). The `type: ignore[misc]` suppresses mypy's inability to see the loop's at-least-once invariant. |
+| A-603 | choice | Fallback logged at WARNING with task and failed provider | A fallback is not an error — the request still succeeds — but it signals a degraded state. WARNING makes it visible in production without forcing an alert, and carrying the task and provider lets an operator correlate with provider health. |

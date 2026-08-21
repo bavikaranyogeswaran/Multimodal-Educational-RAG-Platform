@@ -380,3 +380,111 @@ class TestPrivacyPreFlight:
             await facade.generate(_private_request())
         assert exc_info.value.provider == "openai"
         assert "third_party" in exc_info.value.boundary
+
+
+# ---------------------------------------------------------------------------
+# Fallback chain (§53)
+# ---------------------------------------------------------------------------
+
+
+from app.domain.errors import ProviderError
+
+
+def _retryable_error(provider: str = "test") -> ProviderError:
+    return ProviderError(provider, "service unavailable", retryable=True)
+
+
+def _fatal_error(provider: str = "test") -> ProviderError:
+    return ProviderError(provider, "bad request", retryable=False)
+
+
+class TestFallbackChain:
+    async def test_retryable_error_falls_through_to_next_provider(self) -> None:
+        first = _StubTextProvider(_profile(key="first"))
+        second = _StubTextProvider(_profile(key="second"))
+        first.generate = AsyncMock(side_effect=_retryable_error("first"))
+        facade = ModelGatewayFacade([first, second])
+        await facade.generate(_request())
+        second.generate.assert_awaited_once()
+
+    async def test_non_retryable_error_propagates_immediately(self) -> None:
+        first = _StubTextProvider(_profile(key="first"))
+        second = _StubTextProvider(_profile(key="second"))
+        first.generate = AsyncMock(side_effect=_fatal_error("first"))
+        facade = ModelGatewayFacade([first, second])
+        with pytest.raises(ProviderError) as exc_info:
+            await facade.generate(_request())
+        assert exc_info.value.retryable is False
+        second.generate.assert_not_awaited()
+
+    async def test_all_providers_retryable_raises_last_error(self) -> None:
+        first = _StubTextProvider(_profile(key="first"))
+        second = _StubTextProvider(_profile(key="second"))
+        first.generate = AsyncMock(side_effect=_retryable_error("first"))
+        second.generate = AsyncMock(side_effect=_retryable_error("second"))
+        facade = ModelGatewayFacade([first, second])
+        with pytest.raises(ProviderError) as exc_info:
+            await facade.generate(_request())
+        assert exc_info.value.provider == "second"
+
+    async def test_fallback_skips_incapable_providers(self) -> None:
+        wrong_task = _StubTextProvider(_profile(key="wrong", tasks=frozenset({ModelTask.QUERY_REWRITE})))
+        right = _StubTextProvider(_profile(key="right"))
+        first = _StubTextProvider(_profile(key="first"))
+        first.generate = AsyncMock(side_effect=_retryable_error("first"))
+        facade = ModelGatewayFacade([first, wrong_task, right])
+        await facade.generate(_request(ModelTask.ANSWER_GENERATION))
+        wrong_task.generate.assert_not_awaited()
+        right.generate.assert_awaited_once()
+
+    async def test_image_retryable_error_falls_through_to_next_image_provider(self) -> None:
+        image_profile = _profile(
+            tasks=frozenset({ModelTask.VISUAL_QUESTION}), supports_images=True
+        )
+        first = _StubImageProvider(image_profile)
+        second = _StubImageProvider(image_profile)
+        first.generate_with_image = AsyncMock(side_effect=_retryable_error("first"))
+        facade = ModelGatewayFacade([first, second])
+        await facade.generate_with_image(_request(ModelTask.VISUAL_QUESTION), b"\x89PNG")
+        second.generate_with_image.assert_awaited_once()
+
+    async def test_image_non_retryable_propagates_immediately(self) -> None:
+        image_profile = _profile(
+            tasks=frozenset({ModelTask.VISUAL_QUESTION}), supports_images=True
+        )
+        first = _StubImageProvider(image_profile)
+        second = _StubImageProvider(image_profile)
+        first.generate_with_image = AsyncMock(side_effect=_fatal_error("first"))
+        facade = ModelGatewayFacade([first, second])
+        with pytest.raises(ProviderError) as exc_info:
+            await facade.generate_with_image(_request(ModelTask.VISUAL_QUESTION), b"\x89PNG")
+        assert exc_info.value.retryable is False
+        second.generate_with_image.assert_not_awaited()
+
+    async def test_successful_provider_response_returned_after_fallback(self) -> None:
+        expected = _response("from second")
+        first = _StubTextProvider(_profile(key="first"))
+        second = _StubTextProvider(_profile(key="second"), response=expected)
+        first.generate = AsyncMock(side_effect=_retryable_error("first"))
+        facade = ModelGatewayFacade([first, second])
+        result = await facade.generate(_request())
+        assert result.content.value == "from second"
+
+    async def test_privacy_violation_during_fallback_propagates_not_tried(self) -> None:
+        """Privacy violation on the fallback provider is fatal — no further fallback."""
+        third_party_profile = ModelProfile(
+            model_key="gpt-4o",
+            provider="openai",
+            tasks=frozenset({ModelTask.ANSWER_GENERATION}),
+            data_boundary=DataBoundary.THIRD_PARTY,
+            context_tokens=128_000,
+            max_output_tokens=4_096,
+            supports_images=False,
+        )
+        first = _StubTextProvider(_profile(key="first"))
+        fallback = _StubTextProvider(third_party_profile)
+        first.generate = AsyncMock(side_effect=_retryable_error("first"))
+        facade = ModelGatewayFacade([first, fallback])
+        with pytest.raises(DataBoundaryViolationError):
+            await facade.generate(_private_request())
+        fallback.generate.assert_not_awaited()
