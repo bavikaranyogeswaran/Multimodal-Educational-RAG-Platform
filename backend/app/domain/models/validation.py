@@ -233,6 +233,90 @@ def decide(
     return ValidationDecision.VALID
 
 
+def build_partial_answer(
+    citation_results: Sequence[CitationCheckResult],
+    entailment_by_claim: Sequence[Sequence[EntailmentResult]],
+    numeric_results: Sequence[NumericCheckResult],
+) -> GeneratedAnswer | None:
+    """Keep the part of an answer the evidence carries, and say what was dropped.
+
+    Called when a repair has already been spent and claims are still unsupported. The
+    alternative at that point is refusing the whole answer, which is the worse outcome for
+    a student who asked something the material half covers: they learn nothing, including
+    the fact that half of it was answerable.
+
+    The prose is rebuilt from the surviving claims rather than kept from the model, because
+    the model wrote it to carry every claim it made. Dropping claims underneath it would
+    leave prose asserting what no longer stands — which is exactly what the faithfulness
+    check exists to catch, and it would be this function that introduced it. The original
+    answer is therefore not a parameter: nothing in it survives.
+
+    A claim survives only if it passes everything: entailed by a passage it cites, citing
+    nothing invented, and quoting no figure the passages do not contain. Salvage is the one
+    path that returns an answer nobody re-validated, so it has to apply the same bar the
+    validators did rather than a looser one — a claim let through here is a claim shown to
+    a student without a check behind it.
+
+    A fabricated citation disqualifies its claim even when another passage happens to
+    support it. The model invented a source; keeping the claim would ship something built
+    on that invention, and the gate on fabricated citations is meant to hold at zero.
+
+    Returns `None` when there is nothing to salvage: no claim survived, or the evidence
+    actively contradicted one. A contradiction is not a gap. It means the model misread
+    the material, and answering around it would present the rest as though the misreading
+    had not happened.
+    """
+    kept: list[Claim] = []
+    dropped: list[str] = []
+
+    for check, ent_results, numeric in zip(
+        citation_results, entailment_by_claim, numeric_results, strict=True
+    ):
+        status = aggregate_claim_status(ent_results)
+        if status is ClaimStatus.CONTRADICTED:
+            return None
+        if (
+            status is not ClaimStatus.ENTAILED
+            or check.has_fabricated_citations
+            or numeric.has_unsupported_numbers
+        ):
+            dropped.append(check.claim.text)
+            continue
+        kept.append(check.claim)
+
+    if not kept:
+        return None
+
+    return GeneratedAnswer(
+        answer=_partial_prose(kept, dropped),
+        claims=tuple(kept),
+        insufficient_evidence=False,
+    )
+
+
+def _partial_prose(kept: Sequence[Claim], dropped: Sequence[str]) -> str:
+    """The answer text for a partial response: what stands, then what did not.
+
+    What was dropped is named, because a student who is not told what is missing cannot
+    tell a partial answer from a complete one. It is framed as something that could not be
+    supported rather than restated as fact — the text came from a model and failed
+    validation, and repeating it plainly would hand the student the very assertion the
+    evidence declined to back.
+    """
+    body = " ".join(claim.text for claim in kept)
+    if not dropped:
+        return body
+
+    missing = " ".join(dropped)
+    return (
+        f"{body}\n\n"
+        "There is more to your question that your material does not appear to cover. "
+        f"I could not find support for this, so I have left it out: {missing} "
+        "If you expected that to be covered, the relevant pages may not have been "
+        "uploaded yet."
+    )
+
+
 def build_repair_instructions(
     citation_results: tuple[CitationCheckResult, ...],
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],

@@ -27,13 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 11** — ~85%, 8 of 11 items done. Generation rules, validation, citation and persistence all closed and verified against the live database; two partials wait on Phase 6 and on validators nobody needs yet, and UC-07–09 remain |
+| In progress | **Phase 11** — ~90%, 8 of 11 items done and nothing left unstarted. All three remaining partials are blocked or unneeded rather than pending: `[S1]`'s *object* field and UC-08 both wait on Phase 6, and word limits and table-number matching have no caller |
 | Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
 | Foundations only | Phase 8 (~25%) · Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,320 unit and security passing, the one `test_stage_timer` timing flake aside · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
-| Next step | **Phase 11 continues.** Steps 11.1–11.17 are done. What remains: **UC-07 through UC-09**, plus two partials that are blocked or unneeded rather than pending — `[S1]`'s *object* field waits on Phase 6, and word limits and table-number matching have no caller yet. **7.4** still waits on a textbook PDF |
-| Last updated | 20 August 2026 (step 11.17 — the remaining §38 rules and a check for figures) |
+| Tests | 2,336 unit and security passing, the one `test_stage_timer` timing flake aside · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
+| Next step | **Phase 11 has no unblocked work left.** Steps 11.1–11.18 are done. UC-08 needs Phase 6 and a multimodal gateway; UC-07's remaining steps need Phase 14, 16 and 19. The pipeline has still never run against a real model or real storage — Ollama is not running and the R2 keys are unset, so **7.6–7.8** and any real end-to-end check remain blocked on those. **7.4** still waits on a textbook PDF |
+| Last updated | 20 August 2026 (step 11.18 — partial abstention) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1722,7 +1722,17 @@ Covers §23 complete, §38, §39, §40. **Milestone: first cited, validated, str
       metadata comes from the streaming path, which reports what the call cost once it ends;
       `prompt_version` is a fingerprint of the prompt template, so it cannot go stale
 - [x] Security tests: prompt injection inside a PDF, fabricated citation, unauthorized citation
-- [ ] UC-07, UC-08, UC-09
+- [~] UC-07, UC-08, UC-09. **UC-09** is met on the backend: an abstention is produced when
+      nothing is supported, and its alternate flow now holds too — a partially supported
+      answer returns the part the evidence carries and names what was left out, rather than
+      being withheld whole. **UC-07**'s main flow is built end to end, but two of its steps
+      reference things that do not exist yet (relevant memory is Phase 14, the exact-answer
+      cache is Phase 16) and its final step is the Phase 19 viewer, so it can only be
+      verified as far as the backend goes. **UC-08 cannot be met in this phase at all**: it
+      needs a selected table or figure, which Phase 6 has not started creating, and an image
+      crop sent to a multimodal model, which the gateway refuses today
+      (`generate_with_image` raises `UnsupportedCapabilityError`). Listing it under Phase 11
+      was optimistic; it belongs after Phase 6 and the Phase 8 gateway work
 
 ## Phase 12 — Graph construction & Selective Graph RAG
 

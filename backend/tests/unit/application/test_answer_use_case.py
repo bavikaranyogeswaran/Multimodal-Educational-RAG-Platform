@@ -1254,7 +1254,11 @@ class TestFaithfulnessInThePipeline:
         assert gateway.generate_stream.call_count == 2
         assert collected == ["Gradients flow backwards."]
 
-    async def test_a_persistently_overstated_answer_is_refused(self) -> None:
+    async def test_a_persistently_overstated_answer_is_trimmed_to_its_claims(self) -> None:
+        """It used to be refused outright. Salvage is a better answer to overstatement
+        than refusal is: the prose is what overstated, the claims behind it are sound, and
+        rebuilding the prose from those claims removes the overreach rather than the
+        whole answer. The epoch count was never a claim, so it does not survive."""
         gateway = MagicMock()
         gateway.generate_stream = MagicMock(
             side_effect=lambda _req: _FakeTokenStream(self._CITED, None)
@@ -1265,9 +1269,10 @@ class TestFaithfulnessInThePipeline:
             gateway=gateway,
             faithfulness=_mock_faithfulness(AnswerFidelity.OVERSTATED),
         ).execute(_BASE_CMD)
-        with pytest.raises(GenerationRejectedError):
-            async for _ in stream:
-                pass
+        collected = [t async for t in stream]
+
+        assert collected == ["Gradients flow backwards."]
+        assert "nine epochs" not in collected[0]
 
     async def test_a_faithful_answer_passes_through(self) -> None:
         gateway = MagicMock()
@@ -1468,3 +1473,132 @@ class TestGenerationRules:
         ]
         assert len(grounding) == 5
         assert all(r.instruction.level is RequirementLevel.CRITICAL for r in grounding)
+
+
+class TestPartialAbstention:
+    """A question the material half covers, answered by halves rather than refused."""
+
+    _MIXED = json.dumps({
+        "answer": "Gradients flow backwards, and the optimiser is Adam.",
+        "claims": [
+            {"text": "Gradients flow backwards.", "citations": ["[S1]"]},
+            {"text": "The optimiser is Adam.", "citations": ["[S2]"]},
+        ],
+        "insufficient_evidence": False,
+    })
+
+    def _evidence(self) -> list[Evidence]:
+        return [
+            _ev("Gradients flow backwards.", label="[S1]"),
+            _ev("Something about learning rates.", label="[S2]"),
+        ]
+
+    @staticmethod
+    def _split_entailment() -> MagicMock:
+        """[S1] supports its claim; [S2] does not address the one that cites it."""
+
+        async def _check(claim: object, passages: list[object]) -> tuple[EntailmentResult, ...]:
+            return tuple(
+                EntailmentResult(
+                    claim=claim,  # type: ignore[arg-type]
+                    passage_label=p.label,  # type: ignore[union-attr]
+                    status=(
+                        ClaimStatus.ENTAILED
+                        if p.label == "[S1]"  # type: ignore[union-attr]
+                        else ClaimStatus.NOT_SUPPORTED
+                    ),
+                )
+                for p in passages
+            )
+
+        entailment = MagicMock()
+        entailment.check_claim = AsyncMock(side_effect=_check)
+        return entailment
+
+    async def _run(self) -> list[str]:
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._MIXED, None)
+        )
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            gateway=gateway,
+            entailment=self._split_entailment(),
+        ).execute(_BASE_CMD)
+        return [t async for t in stream]
+
+    async def test_the_supported_half_is_answered_rather_than_withheld(self) -> None:
+        collected = await self._run()
+        assert collected[0].startswith("Gradients flow backwards.")
+
+    async def test_the_unsupported_half_is_named(self) -> None:
+        collected = await self._run()
+        assert "The optimiser is Adam." in collected[0]
+        assert "could not find support" in collected[0]
+
+    async def test_only_the_surviving_claim_is_cited(self) -> None:
+        repo = _mock_repo()
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._MIXED, None)
+        )
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            repo=repo,
+            gateway=gateway,
+            entailment=self._split_entailment(),
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        saved = list(repo.save_citations.call_args.args[2])
+        assert [c.label.bracketed for c in saved] == ["[S1]"]
+
+    async def test_the_turn_is_recorded_as_completed(self) -> None:
+        repo = _mock_repo()
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._MIXED, None)
+        )
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            repo=repo,
+            gateway=gateway,
+            entailment=self._split_entailment(),
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert assistant.status is MessageStatus.COMPLETED
+
+    async def test_a_contradiction_is_still_refused(self) -> None:
+        """Salvage handles gaps, not misreadings."""
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._MIXED, None)
+        )
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            gateway=gateway,
+            entailment=_mock_entailment(ClaimStatus.CONTRADICTED),
+        ).execute(_BASE_CMD)
+        with pytest.raises(GenerationRejectedError):
+            async for _ in stream:
+                pass
+
+    async def test_salvage_runs_only_after_the_repair_was_spent(self) -> None:
+        """One repair, then salvage — never salvage in place of the repair."""
+        gateway = MagicMock()
+        gateway.generate_stream = MagicMock(
+            side_effect=lambda _req: _FakeTokenStream(self._MIXED, None)
+        )
+        stream = await _make_use_case(
+            retrieve=_mock_retrieve(self._evidence()),
+            gateway=gateway,
+            entailment=self._split_entailment(),
+        ).execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assert gateway.generate_stream.call_count == 2

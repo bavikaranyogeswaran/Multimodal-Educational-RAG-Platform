@@ -14,6 +14,7 @@ from app.domain.models.validation import (
     NumericCheckResult,
     aggregate_claim_status,
     build_fidelity_query,
+    build_partial_answer,
     build_repair_instructions,
     check_citation_existence,
     check_numeric_fidelity,
@@ -756,3 +757,130 @@ class TestDecideWithNumericFidelity:
 
         assert "9, 0.5" in result
         assert "do not appear" in result
+
+
+class TestBuildPartialAnswer:
+    """Salvaging the part of an answer the evidence carries, once a repair has been spent."""
+
+    @staticmethod
+    def _inputs(
+        *specs: tuple[Claim, ClaimStatus, frozenset[str], tuple[str, ...]],
+    ) -> tuple[tuple, tuple, tuple]:
+        checks = tuple(
+            CitationCheckResult(claim=c, fabricated_labels=fab) for c, _, fab, _ in specs
+        )
+        ents = tuple(
+            (EntailmentResult(claim=c, passage_label=c.citations[0], status=st),)
+            for c, st, _, _ in specs
+        )
+        numeric = tuple(
+            NumericCheckResult(claim=c, unsupported_numbers=nums) for c, _, _, nums in specs
+        )
+        return checks, ents, numeric
+
+    def _build(
+        self, *specs: tuple[Claim, ClaimStatus, frozenset[str], tuple[str, ...]]
+    ) -> GeneratedAnswer | None:
+        return build_partial_answer(*self._inputs(*specs))
+
+    def test_keeps_the_supported_claim_and_drops_the_unsupported_one(self) -> None:
+        good = _claim(text="Gradients flow backwards.", citations=("[S1]",))
+        bad = _claim(text="Training takes nine epochs.", citations=("[S2]",))
+
+        result = self._build(
+            (good, ClaimStatus.ENTAILED, frozenset(), ()),
+            (bad, ClaimStatus.NOT_SUPPORTED, frozenset(), ()),
+        )
+
+        assert result is not None
+        assert result.claims == (good,)
+
+    def test_names_what_was_left_out(self) -> None:
+        """A student not told what is missing cannot tell a partial answer from a whole one."""
+        good = _claim(text="Gradients flow backwards.", citations=("[S1]",))
+        bad = _claim(text="Training takes nine epochs.", citations=("[S2]",))
+
+        result = self._build(
+            (good, ClaimStatus.ENTAILED, frozenset(), ()),
+            (bad, ClaimStatus.NOT_SUPPORTED, frozenset(), ()),
+        )
+
+        assert result is not None
+        assert "Training takes nine epochs." in result.answer
+        assert "could not find support" in result.answer
+
+    def test_the_prose_is_rebuilt_from_the_claims(self) -> None:
+        """The model wrote its prose to carry every claim it made. Keeping that prose over
+        a reduced set of claims would leave it asserting what no longer stands."""
+        good = _claim(text="Gradients flow backwards.", citations=("[S1]",))
+
+        result = self._build((good, ClaimStatus.ENTAILED, frozenset(), ()))
+
+        assert result is not None
+        assert result.answer.startswith("Gradients flow backwards.")
+
+    def test_a_wholly_supported_answer_needs_no_gap_notice(self) -> None:
+        good = _claim(text="Gradients flow backwards.", citations=("[S1]",))
+
+        result = self._build((good, ClaimStatus.ENTAILED, frozenset(), ()))
+
+        assert result is not None
+        assert "could not find support" not in result.answer
+
+    def test_the_result_does_not_claim_insufficient_evidence(self) -> None:
+        """Something was answered. Abstention is a different outcome from a partial answer."""
+        good = _claim(text="Gradients flow backwards.", citations=("[S1]",))
+
+        result = self._build((good, ClaimStatus.ENTAILED, frozenset(), ()))
+
+        assert result is not None
+        assert result.insufficient_evidence is False
+
+    def test_nothing_survives_when_every_claim_is_unsupported(self) -> None:
+        bad = _claim(text="Training takes nine epochs.", citations=("[S1]",))
+        assert self._build((bad, ClaimStatus.NOT_SUPPORTED, frozenset(), ())) is None
+
+    def test_a_contradiction_stops_salvage_entirely(self) -> None:
+        """A contradiction is not a gap. It means the model misread the material, and
+        answering around it would present the rest as though it had not."""
+        good = _claim(text="Gradients flow backwards.", citations=("[S1]",))
+        wrong = _claim(text="Gradients flow forwards.", citations=("[S2]",))
+
+        result = self._build(
+            (good, ClaimStatus.ENTAILED, frozenset(), ()),
+            (wrong, ClaimStatus.CONTRADICTED, frozenset(), ()),
+        )
+
+        assert result is None
+
+    def test_a_claim_with_an_invented_citation_is_not_salvaged(self) -> None:
+        """Even entailed by a real passage. The model invented a source, and keeping the
+        claim would ship something built on that invention."""
+        claim = _claim(text="Gradients flow backwards.", citations=("[S1]", "[S99]"))
+
+        result = self._build((claim, ClaimStatus.ENTAILED, frozenset({"[S99]"}), ()))
+
+        assert result is None
+
+    def test_a_claim_with_an_invented_figure_is_not_salvaged(self) -> None:
+        """Salvage is the one path returning an answer nobody re-validated, so it applies
+        the same bar the validators did rather than a looser one."""
+        claim = _claim(text="Training takes 9 epochs.", citations=("[S1]",))
+
+        result = self._build((claim, ClaimStatus.ENTAILED, frozenset(), ("9",)))
+
+        assert result is None
+
+    def test_surviving_claims_keep_their_order(self) -> None:
+        first = _claim(text="First fact.", citations=("[S1]",))
+        skipped = _claim(text="Unsupported.", citations=("[S2]",))
+        last = _claim(text="Second fact.", citations=("[S3]",))
+
+        result = self._build(
+            (first, ClaimStatus.ENTAILED, frozenset(), ()),
+            (skipped, ClaimStatus.NOT_SUPPORTED, frozenset(), ()),
+            (last, ClaimStatus.ENTAILED, frozenset(), ()),
+        )
+
+        assert result is not None
+        assert [c.text for c in result.claims] == ["First fact.", "Second fact."]

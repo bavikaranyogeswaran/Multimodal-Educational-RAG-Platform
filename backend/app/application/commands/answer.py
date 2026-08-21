@@ -41,6 +41,7 @@ from app.domain.models.validation import (
     CitationCheckResult,
     EntailmentResult,
     NumericCheckResult,
+    build_partial_answer,
     build_repair_instructions,
     check_citation_existence,
     check_numeric_fidelity,
@@ -338,13 +339,12 @@ class AnswerUseCase:
                         repair_raw, labeled, entailment, faithfulness
                     )
 
-                if not checked.decision.is_returnable:
+                answer = _returnable_answer(checked)
+                if answer is None:
                     raise GenerationRejectedError(  # noqa: TRY301
                         f"answer rejected after validation: {checked.decision}"
                     )
 
-                answer = checked.answer
-                assert answer is not None
                 answer_text = answer.answer
                 # Resolved before the first token leaves, while the evidence set that
                 # issued the labels is still in hand. Afterwards the labels are just
@@ -447,6 +447,27 @@ async def _record_turn(
         # This is the second: empty on a rejected or abstaining answer, which is the
         # honest state — nothing was cited.
         await repo.save_citations(scope, assistant_message.id, citations)
+
+
+def _returnable_answer(checked: _Validation) -> GeneratedAnswer | None:
+    """The answer to show the student, or nothing if none can honestly be shown.
+
+    A repair has already been spent by the time this runs. Before refusing outright it
+    tries to salvage the part that stands: a question the material half covers is better
+    half answered than declined, and a student told nothing does not even learn that half
+    of what they asked was answerable.
+
+    Salvage is attempted only from REPAIRABLE, never from REJECTED. A rejection means a
+    citation was invented or the evidence refutes the claim, and answering around either
+    would quietly admit the thing the validation gate exists to stop.
+    """
+    if checked.decision.is_returnable:
+        return checked.answer
+    if checked.decision is not ValidationDecision.REPAIRABLE:
+        return None
+    return build_partial_answer(
+        checked.citation_results, checked.entailment_by_claim, checked.numeric_results
+    )
 
 
 def _outcome(*, failed: bool, abandoned: bool) -> MessageStatus:
