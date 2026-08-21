@@ -27,13 +27,13 @@ system design specification.
 | | |
 |---|---|
 | Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 8** — ~80%, steps 8.1–8.6 done. Façade, task router, privacy pre-flight, fallback chain, `model_invocations` persistence, warm-up, and OpenAI-compatible adapter in place; security test (8.8) and prompt-normalisation profiles (8.7) remain. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
+| In progress | **Phase 8** — ~90%, steps 8.1–8.6 and 8.8 done. Façade, task router, privacy pre-flight, fallback chain, `model_invocations` persistence, warm-up, OpenAI-compatible adapter, and data boundary security gate in place; prompt-normalisation profiles (8.7) remain. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
 | Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
 | Foundations only | Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
 | Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,411 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 115 marked `security`, 81 `gate` |
-| Next step | Phase 8 — step 8.7 (prompt normalisation profiles) or 8.8 (security: data boundary gate) |
-| Last updated | 21 August 2026 (step 8.6 — OpenAI-compatible adapter skeleton) |
+| Tests | 2,417 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 81 `gate` |
+| Next step | Phase 8 — step 8.7 (prompt normalisation profiles) |
+| Last updated | 21 August 2026 (step 8.8 — data boundary security gate) |
 
 Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
 finished, so the numbering no longer describes the build order — work jumped to conversations and
@@ -1426,7 +1426,7 @@ hides that, because with one local provider none of it is exercised.
 - [x] `model_invocations` written on every call — migration 0011 creates the table;
       `write_model_invocation()` emits a structlog event and adds a row per completed call;
       streaming excluded (no single end-to-end latency); write failures are non-fatal
-- [ ] Security test: external-provider privacy violation blocked
+- [x] Security test: external-provider privacy violation blocked
 
 ## Phase 9 — Conversations, query understanding & retrieval core
 
