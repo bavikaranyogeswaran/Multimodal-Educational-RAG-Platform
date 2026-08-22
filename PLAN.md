@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** — Phase 0, 1, 2, 3, 8 ✅ |
 | Effectively done | Phase 10 (~98%) · Phase 9 (~98%) · Phase 11 (~90%) · Phase 4 (~95%) — every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~20%, tables structured) · Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~35%, tables retrievable) · Phase 17 (~20%, evaluation absent) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) · Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,524 unit and security — 2,437 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **6.2 — table serialisation**, or 7.6/7.7 once Ollama and R2 credentials exist. Neither blocks the other |
-| Last updated | 22 August 2026 (step 6.1 — table structure) |
+| Tests | 2,569 unit and security — 2,482 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **6.3 — large-table row groups**, or 6.4 — figure and table numbers. 7.6/7.7 remain available once Ollama and R2 credentials exist |
+| Last updated | 22 August 2026 (step 6.2 — table serialisation) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order — work jumped to
@@ -75,8 +75,9 @@ it would name.
 
 Migrations applied through **`0011 (head)`** against Supabase — `0011` (model_invocations) was
 applied on 22 August 2026, having been written in step 8.4 and waiting on a connection since.
-Migration `0012` (document_tables) is written and **not yet applied**. Seventeen SQLAlchemy
-models registered with `Base.metadata`.
+Migrations `0012` (document_tables) and `0013` (its rendered forms) were applied on the same
+day, so head reads **`0013 (head)`**. Seventeen SQLAlchemy models registered with
+`Base.metadata`.
 
 **ruff is clean across `app/`; mypy is not.** It reports three errors, all predating this
 session: two unused `type: ignore` comments in the Gemini and Anthropic stubs, and a
@@ -1237,10 +1238,12 @@ much of this is worth building, and that number does not exist yet.
 
 Covers §17, §18.
 
-**Status: ~20% — step 6.1 done.** Tables are now first-class records: a detected region is read
-into named columns, per-column units, aligned rows and the caption the document gave it, stored
-in `document_tables` with its own row-level security policy. `Conversation.active_table_id` and
-`active_figure_id` are still never set, because selection needs the API surface Phase 19 provides.
+**Status: ~35% — steps 6.1 and 6.2 done.** Tables are now first-class records and, as of 6.2,
+retrievable ones. A detected region is read into named columns, per-column units, aligned rows
+and the caption the document gave it, then rendered to JSON, Markdown, HTML and the prose that
+gets embedded — and the table's chunk now holds that prose rather than its joined cells, so a
+question about a named column can match. `Conversation.active_table_id` and `active_figure_id`
+are still never set, because selection needs the API surface Phase 19 provides.
 
 **The "blocked on Phase 5" note this section used to carry was stale.** The parser has emitted
 `TABLE` and `FIGURE` elements since step 5.3, and left the seam open on purpose — tables carried
@@ -1257,7 +1260,7 @@ than mocked (A-662).
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 6.1 | Table structure — headers, units, aligned rows, caption association | M | ✅ |
-| 6.2 | Table serialisation — JSON, Markdown, optional HTML, retrieval-oriented prose | M | ☐ |
+| 6.2 | Table serialisation — JSON, Markdown, optional HTML, retrieval-oriented prose | M | ✅ |
 | 6.3 | Large tables split by row group, repeating headers and units | M | ☐ |
 | 6.4 | Figure and table number extraction | S | ☐ |
 | 6.5 | Crops to the object store — **needs R2 credentials** | S | ☐ |
@@ -1288,12 +1291,39 @@ than mocked (A-662).
 - [x] 68 tests: grid reading against wrapped, ragged, headerless and unit-bearing input; entity
       invariants; migration and model; and extraction from a real fixture PDF end to end
 
-- [ ] Tables: detect → title and caption → headers, rows, units → crop → JSON → Markdown →
-      optional HTML → retrieval-oriented text → bbox, page, confidence — **detection, title and
-      caption, headers, rows, units, bbox, page and confidence are done in 6.1**; crop, JSON,
-      Markdown, HTML and retrieval text remain
+### 6.2 — Table serialisation ✅
+
+- [x] Four forms, for four readers: JSON to rebuild the grid from, Markdown to put in front of a
+      model, HTML for a viewer, and prose to embed. All pure functions of the table — nothing
+      reads a clock, a file or a model, so a given grid renders the same way every time
+- [x] **The prose form names a column on every row it appears in.** That repetition buys two
+      things: a search for "accuracy on run 2" matches a line holding both the word and the
+      number rather than bare figures whose meaning sits in a header several lines above, and
+      every line stands alone once a table too large to keep whole is cut between lines
+- [x] **This closes a real defect.** An oversized table was already being split on line
+      boundaries — the split that does not cut a row in half — but every piece after the first
+      then carried rows with no column names anywhere in it, which is precisely what a row must
+      never be embedded without. The format discharges the rule rather than the splitter (A-675)
+- [x] Stored on the row rather than derived on read: the prose form is what a vector is built
+      from, and re-rendering later with a changed renderer would leave stored embeddings
+      describing text that exists nowhere (A-676)
+- [x] Every value escaped in the HTML form, since a cell reading `<script>` is content that
+      happens to look like markup. Pipes escaped in Markdown for a different reason — an
+      unescaped one ends its cell early and shifts every later value a column left
+- [x] `with_renderings` as a named transition; migration `0013` adds the four columns, all
+      nullable, because a table exists as a grid before it is rendered
+- [x] Ingestion renders before saving and hands the chunker a copy whose table elements carry
+      the prose. The stored element keeps the literal reading — the two records are wanted for
+      different things (A-678)
+- [x] 44 tests: every form against wrapped, empty, ragged, unit-bearing and hostile input, plus
+      the ingestion path end to end
+
+- [x] Tables: detect → title and caption → headers, rows, units → crop → JSON → Markdown →
+      optional HTML → retrieval-oriented text → bbox, page, confidence — **all but the crop**,
+      which needs the object store and waits for 6.5
 - [ ] Large tables split by row group, **repeating title, headers, units and row labels in every
-      group**; rows never embedded headerless
+      group**; rows never embedded headerless — the headerless half is now met by the prose
+      format; what remains is repeating the title and caption into each group
 - [ ] Visual objects: crop → caption → surrounding paragraphs → OCR labels → factual description →
       page and bbox → links to related chunks
 - [ ] Chart records: `title`, `chart_type`, `x_axis_label`, `y_axis_label`, `units`, `legend`,

@@ -22,9 +22,16 @@ from app.domain.documents.entities import (
     DocumentPage,
     ParsedPage,
 )
-from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
+from app.domain.documents.tables import DocumentTable
+from app.domain.enums import (
+    ChunkType,
+    DocumentStatus,
+    ElementType,
+    PageKind,
+    ProcessingMethod,
+)
 from app.domain.scope import ScopeContext
-from app.domain.values import UntrustedText
+from app.domain.values import BoundingBox, UntrustedText
 
 _NOW = datetime(2025, 1, 15, tzinfo=UTC)
 _USER_ID = uuid.uuid4()
@@ -540,3 +547,138 @@ class TestParentAndChildChunks:
         for chunk in repo.save_batch.call_args.args[1]:
             assert chunk.scope == _SCOPE
             assert chunk.document_id == _DOC_ID
+
+
+# ---------------------------------------------------------------------------
+# Tables
+# ---------------------------------------------------------------------------
+
+
+_TABLE_BOX = BoundingBox(x0=10.0, y0=20.0, x1=200.0, y1=120.0)
+
+
+def _make_chunk_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.save_batch = AsyncMock()
+    repo.set_embeddings = AsyncMock()
+    return repo
+
+
+def _parser_with_a_table() -> tuple[AsyncMock, DocumentElement]:
+    """A parser returning one page holding a table, with its joined element beside it."""
+    element = DocumentElement(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=1,
+        element_type=ElementType.TABLE,
+        text=UntrustedText("Metal | Density\nAluminium | 2.70"),
+        reading_order=0,
+        processing_method=ProcessingMethod.NATIVE_TEXT,
+        created_at=_NOW,
+        bounding_box=_TABLE_BOX,
+    )
+    table = DocumentTable(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        source_element_id=element.id,
+        page_number=1,
+        headers=("Metal", "Density"),
+        rows=(("Aluminium", "2.70"),),
+        units=(None, "g/cm3"),
+        bounding_box=_TABLE_BOX,
+        created_at=_NOW,
+    )
+    parser = AsyncMock()
+    parser.parse = AsyncMock(
+        return_value=[ParsedPage(page=_page(1), elements=[element], tables=[table])]
+    )
+    return parser, element
+
+
+class TestTablePersistence:
+    async def test_tables_are_saved_under_the_calling_scope(self) -> None:
+        parser, _ = _parser_with_a_table()
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(parser=parser, document_repo=document_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        document_repo.save_tables.assert_awaited_once()
+        assert document_repo.save_tables.await_args.args[0] == _SCOPE
+
+    async def test_tables_are_saved_after_the_elements_they_name(self) -> None:
+        # A table refers to its element, so that row has to exist first.
+        parser, _ = _parser_with_a_table()
+        document_repo = _make_document_repo()
+        order: list[str] = []
+        document_repo.save_elements.side_effect = lambda *a, **k: order.append("elements")
+        document_repo.save_tables.side_effect = lambda *a, **k: order.append("tables")
+        use_case = _make_use_case(parser=parser, document_repo=document_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        assert order == ["elements", "tables"]
+
+    async def test_a_saved_table_carries_every_rendered_form(self) -> None:
+        parser, _ = _parser_with_a_table()
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(parser=parser, document_repo=document_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_tables.await_args.args[1][0]
+        assert saved.is_rendered
+        assert saved.markdown
+        assert saved.html
+        assert saved.table_json
+
+    async def test_the_stored_element_keeps_the_literal_reading(self) -> None:
+        # The element records what the region says; only the copy handed to the chunker
+        # carries the rendered prose.
+        parser, element = _parser_with_a_table()
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(parser=parser, document_repo=document_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_elements.await_args.args[1][0]
+        assert saved.text.value == element.text.value
+
+    async def test_the_table_chunk_holds_the_rendered_prose(self) -> None:
+        parser, _ = _parser_with_a_table()
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        table_chunks = [c for c in written if c.chunk_type is ChunkType.TABLE]
+        assert table_chunks
+        # Column names paired with values, rather than the joined cells.
+        assert "Metal Aluminium" in table_chunks[0].text.value
+
+    async def test_the_units_reach_the_embedded_text(self) -> None:
+        parser, _ = _parser_with_a_table()
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        table_chunks = [c for c in written if c.chunk_type is ChunkType.TABLE]
+        assert "g/cm3" in table_chunks[0].text.value
+
+    async def test_a_document_with_no_tables_writes_none(self) -> None:
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(
+            parser=_make_parser([(1, ["A paragraph of prose."])]),
+            document_repo=document_repo,
+        )
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        document_repo.save_tables.assert_not_awaited()

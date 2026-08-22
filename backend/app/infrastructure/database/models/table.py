@@ -62,3 +62,12 @@ class DocumentTableModel(Base):
 
     confidence: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    # The serialised forms. Nullable because a table exists as a grid before it is
+    # rendered, and because rows written before rendering was added have none.
+    # `table_json` is Text rather than JSONB: unlike `rows`, nothing queries inside it,
+    # and storing the exact string keeps it identical to what a caller was handed.
+    table_json: Mapped[str | None] = mapped_column(Text)
+    markdown: Mapped[str | None] = mapped_column(Text)
+    html: Mapped[str | None] = mapped_column(Text)
+    embedding_text: Mapped[str | None] = mapped_column(Text)

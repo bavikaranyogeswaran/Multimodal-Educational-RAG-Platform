@@ -311,6 +311,10 @@ def _table_to_model(table: DocumentTable) -> DocumentTableModel:
         bounding_box_y1=box.y1,
         confidence=table.confidence,
         created_at=table.created_at,
+        table_json=table.table_json,
+        markdown=table.markdown,
+        html=table.html,
+        embedding_text=table.embedding_text,
     )
 
 
@@ -334,4 +338,8 @@ def _table_to_entity(row: DocumentTableModel) -> DocumentTable:
         ),
         confidence=row.confidence,
         created_at=_utc(row.created_at),
+        table_json=row.table_json,
+        markdown=row.markdown,
+        html=row.html,
+        embedding_text=row.embedding_text,
     )

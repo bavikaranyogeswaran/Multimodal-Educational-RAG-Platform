@@ -130,3 +130,47 @@ class TestModel:
         from app.infrastructure.database.base import Base
 
         assert "document_tables" in Base.metadata.tables
+
+
+_RENDERINGS_MIGRATION = "0013_document_table_renderings.py"
+
+
+class TestRenderingsMigration:
+    def test_revision(self) -> None:
+        assert _load_migration(_RENDERINGS_MIGRATION).revision == "0013"
+
+    def test_down_revision_follows_the_table_migration(self) -> None:
+        assert _load_migration(_RENDERINGS_MIGRATION).down_revision == "0012"
+
+    def test_it_adds_every_rendered_form(self) -> None:
+        src = inspect.getsource(_load_migration(_RENDERINGS_MIGRATION).upgrade)
+        for column in ("table_json", "markdown", "html", "embedding_text"):
+            assert f'"{column}"' in src
+
+    def test_the_columns_are_nullable(self) -> None:
+        # A table exists as a grid before it is rendered, and rows written before this
+        # migration have no renderings at all.
+        src = inspect.getsource(_load_migration(_RENDERINGS_MIGRATION).upgrade)
+        assert "nullable=False" not in src
+
+    def test_downgrade_drops_every_column_it_added(self) -> None:
+        src = inspect.getsource(_load_migration(_RENDERINGS_MIGRATION).downgrade)
+        for column in ("table_json", "markdown", "html", "embedding_text"):
+            assert f'"{column}"' in src
+
+
+class TestRenderingColumns:
+    def test_the_model_carries_every_rendered_form(self) -> None:
+        columns = DocumentTableModel.__table__.columns
+        for column in ("table_json", "markdown", "html", "embedding_text"):
+            assert column in columns
+
+    def test_they_are_all_nullable(self) -> None:
+        columns = DocumentTableModel.__table__.columns
+        for column in ("table_json", "markdown", "html", "embedding_text"):
+            assert columns[column].nullable is True
+
+    def test_table_json_is_text_not_jsonb(self) -> None:
+        # Nothing queries inside it, unlike `rows`, and storing the exact string keeps
+        # it identical to what a caller was handed.
+        assert "JSON" not in str(DocumentTableModel.__table__.columns["table_json"].type)

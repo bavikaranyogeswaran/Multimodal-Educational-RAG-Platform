@@ -22,19 +22,21 @@ in the index would mean a section and a paragraph within it competing over the s
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.domain.documents.chunker import ChunkDraft, Chunker, ChunkFamily
 from app.domain.documents.chunks import Chunk
-from app.domain.documents.entities import Document, DocumentElement, DocumentPage
+from app.domain.documents.entities import Document, DocumentElement
+from app.domain.documents.table_render import render as render_table
+from app.domain.documents.tables import DocumentTable
 from app.domain.ports.adapters import EmbeddingPort, PdfParserPort, StoragePort
 from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
-
 
 
 @dataclass(frozen=True)
@@ -95,12 +97,12 @@ class IngestDocumentUseCase:
 
         # After the elements, never before: a table names the element it was read from,
         # and that row has to exist for the reference to hold.
-        tables = [table for item in parsed for table in item.tables]
+        tables = [_rendered(table) for item in parsed for table in item.tables]
         if tables:
             await self._document_repo.save_tables(scope, tables)
 
         chunks = _to_chunks(
-            self._chunker.chunk(elements),
+            self._chunker.chunk(_with_rendered_tables(elements, tables)),
             doc=doc,
             scope=scope,
             index_version=self._index_version,
@@ -138,6 +140,45 @@ class IngestDocumentUseCase:
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
+
+
+def _rendered(table: DocumentTable) -> DocumentTable:
+    """Attach every serialised form to a table before it is stored."""
+    rendering = render_table(table)
+    return table.with_renderings(
+        # `ensure_ascii=False` because the cells are real document text and may hold
+        # accented characters, superscripts or symbols. Escaping them would store a
+        # different string from the one that was read.
+        table_json=json.dumps(rendering.table_json, ensure_ascii=False),
+        markdown=rendering.markdown,
+        html=rendering.html,
+        embedding_text=rendering.embedding_text,
+    )
+
+
+def _with_rendered_tables(
+    elements: Sequence[DocumentElement],
+    tables: Sequence[DocumentTable],
+) -> list[DocumentElement]:
+    """Swap each table element's joined cells for the prose the table renders to.
+
+    Only the copy handed to the chunker changes; the stored element keeps the literal
+    reading of the page. The two are wanted for different things — the element records
+    what the region says, and what gets embedded should be the form a question can
+    actually match, where every row names its own columns instead of relying on a header
+    line that a chunk boundary may have left behind.
+    """
+    prose = {
+        table.source_element_id: table.embedding_text
+        for table in tables
+        if table.embedding_text
+    }
+    return [
+        replace(element, text=UntrustedText(prose[element.id]))
+        if element.id in prose
+        else element
+        for element in elements
+    ]
 
 
 def _to_chunks(

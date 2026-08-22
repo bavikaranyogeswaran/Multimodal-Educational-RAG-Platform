@@ -21,7 +21,7 @@ sentences again, and carry the untrusted type accordingly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import UUID
 
@@ -71,6 +71,15 @@ class DocumentTable:
     # able to weigh this rather than assume every detection is equally sound.
     confidence: float | None = None
 
+    # The serialised forms, attached after the grid is read. Stored rather than derived
+    # on demand: the prose form is what gets embedded, and a vector only means anything
+    # against the exact text it was built from. Re-rendering with a changed renderer
+    # would leave stored vectors describing text that no longer exists.
+    table_json: str | None = None
+    markdown: str | None = None
+    html: str | None = None
+    embedding_text: str | None = None
+
     def __post_init__(self) -> None:
         require_positive(self.page_number, "DocumentTable.page_number")
         require_timezone_aware(self.created_at, "DocumentTable.created_at")
@@ -100,6 +109,33 @@ class DocumentTable:
     @property
     def scope(self) -> ScopeContext:
         return ScopeContext(user_id=self.user_id, knowledge_base_id=self.knowledge_base_id)
+
+    @property
+    def is_rendered(self) -> bool:
+        """Whether the serialised forms have been attached yet."""
+        return self.embedding_text is not None
+
+    def with_renderings(
+        self,
+        *,
+        table_json: str,
+        markdown: str,
+        html: str,
+        embedding_text: str,
+    ) -> DocumentTable:
+        """Attach the serialised forms, returning a new table.
+
+        Separate from construction because rendering is its own concern with its own
+        rules, and the parser that builds the grid has no business knowing what Markdown
+        looks like.
+        """
+        return replace(
+            self,
+            table_json=table_json,
+            markdown=markdown,
+            html=html,
+            embedding_text=embedding_text,
+        )
 
     @property
     def column_count(self) -> int:
