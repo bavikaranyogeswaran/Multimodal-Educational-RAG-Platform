@@ -722,3 +722,66 @@ class TestFigureRecords:
     async def test_a_page_with_no_images_produces_no_figure_records(self) -> None:
         parsed = await _parse("native_text_sample")
         assert all(item.figures == [] for item in parsed)
+
+
+class TestRunningHeaderSuppression:
+    async def test_the_repeated_heading_is_reclassified_as_paragraph(self) -> None:
+        # "Machine Learning" appears on all 4 pages of the fixture and should not be
+        # treated as a structural heading.
+        parsed = await _parse("running_header_sample")
+        for item in parsed:
+            for element in item.elements:
+                if element.text.value.strip() == "Machine Learning":
+                    assert element.element_type is ElementType.PARAGRAPH
+
+    async def test_real_chapter_headings_are_kept(self) -> None:
+        parsed = await _parse("running_header_sample")
+        headings = [
+            e
+            for item in parsed
+            for e in item.elements
+            if e.element_type is ElementType.HEADING
+        ]
+        heading_texts = {h.text.value for h in headings}
+        assert "Chapter One" in heading_texts
+        assert "Chapter Two" in heading_texts
+
+    async def test_content_is_under_the_real_chapter_not_the_running_header(self) -> None:
+        # Body text on page 1 should be under "Chapter One", not under "Machine Learning".
+        parsed = await _parse("running_header_sample")
+        page_one_paragraphs = [
+            e
+            for e in parsed[0].elements
+            if e.element_type is ElementType.PARAGRAPH
+            and "Gradient descent" in e.text.value
+        ]
+        assert page_one_paragraphs
+        path_segments = list(page_one_paragraphs[0].heading_path.segments)
+        assert "Machine Learning" not in path_segments
+        assert "Chapter One" in path_segments
+
+    async def test_page_with_no_chapter_heading_keeps_the_previous_chapter_in_path(self) -> None:
+        # Page 2 has no chapter heading; content there should still be under "Chapter One"
+        # from page 1, because a section carries over until a new one opens.
+        parsed = await _parse("running_header_sample")
+        page_two_paragraphs = [
+            e
+            for e in parsed[1].elements
+            if e.element_type is ElementType.PARAGRAPH
+            and "Gradient descent" in e.text.value
+        ]
+        assert page_two_paragraphs
+        path_segments = list(page_two_paragraphs[0].heading_path.segments)
+        assert "Chapter One" in path_segments
+
+    async def test_a_heading_on_few_pages_is_not_suppressed(self) -> None:
+        # "Chapter One" and "Chapter Two" each appear on exactly one page out of four
+        # and must survive the threshold.
+        parsed = await _parse("running_header_sample")
+        chapter_elements = [
+            e
+            for item in parsed
+            for e in item.elements
+            if e.text.value in {"Chapter One", "Chapter Two"}
+        ]
+        assert all(e.element_type is ElementType.HEADING for e in chapter_elements)

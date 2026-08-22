@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import uuid
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -50,6 +52,26 @@ _log = structlog.get_logger(__name__)
 
 # (x0, top, x1, bottom) in pdfplumber's downward-measured coordinates.
 _Region = tuple[float, float, float, float]
+
+# A heading text is a running header — page boilerplate rather than document structure —
+# when it appears on at least this many pages AND at least this fraction of the document.
+# A fraction alone misfires on tiny documents; a count alone misfires on long ones.
+_RUNNING_HEADER_MIN_PAGES: int = 3
+_RUNNING_HEADER_PAGE_FRACTION: float = 0.15
+# Running headers appear in the top margin. Only heading drafts whose top coordinate
+# (distance from the page top in pdfplumber's downward system) falls within this many
+# points are candidates; structural headings in the text area are never suppressed.
+_RUNNING_HEADER_TOP_PTS: float = 80.0
+
+# Many books embed the current page number in the running header text, giving each page
+# a unique string ("Overview of Azure ML | 3", "4 | Overview of Azure ML") despite an
+# identical underlying title. Stripping the number before counting lets occurrences that
+# differ only by page number still accumulate toward the suppression threshold.
+_PAGE_NUMBER_NOISE = re.compile(r"^\d+\s*[|—–]\s*|\s*[|—–]\s*\d+$")
+
+
+def _normalize_running_header(text: str) -> str:
+    return _PAGE_NUMBER_NOISE.sub("", text).strip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,10 +155,15 @@ class PdfPlumberParser:
         headings = HeadingStack()
         try:
             with pdfplumber.open(io.BytesIO(data)) as pdf:
+                # Pre-scan for running headers before building any elements, so the
+                # heading stack never enters boilerplate text and heading paths under
+                # real chapter headings are clean from the start.
+                running_headers = self._detect_running_headers(pdf.pages)
                 parsed = [
                     self._parse_page(
                         page, number, document_id=document_id, scope=scope,
                         now=now, headings=headings,
+                        running_headers=running_headers,
                     )
                     for number, page in enumerate(pdf.pages, start=1)
                 ]
@@ -173,6 +200,7 @@ class PdfPlumberParser:
         scope: ScopeContext,
         now: datetime,
         headings: HeadingStack,
+        running_headers: frozenset[str],
     ) -> ParsedPage:
         signals = _page_signals(page)
         kind = self._page_classifier.classify(signals)
@@ -196,9 +224,46 @@ class PdfPlumberParser:
 
         elements, tables, figures = self._elements_for(
             page, page_number, document_id=document_id, scope=scope,
-            now=now, headings=headings,
+            now=now, headings=headings, running_headers=running_headers,
         )
         return ParsedPage(page=document_page, elements=elements, tables=tables, figures=figures)
+
+    def _detect_running_headers(self, pages: Sequence[Any]) -> frozenset[str]:
+        """Normalized heading texts that appear in the top margin on enough pages.
+
+        A running header — the book title or chapter name repeated at the top of every
+        page — looks like a heading: it is usually set larger or heavier than the body.
+        Left in the heading stack, it makes every paragraph appear to be a subsection of
+        the book title rather than of the chapter it actually belongs to.
+
+        Two signals together identify a running header: position (the draft's top
+        coordinate falls within _RUNNING_HEADER_TOP_PTS of the page top) and frequency
+        (the normalized text appears on at least _RUNNING_HEADER_MIN_PAGES pages AND on
+        at least _RUNNING_HEADER_PAGE_FRACTION of the total). The returned set contains
+        normalized texts; callers must normalize draft text before checking membership.
+        """
+        counts: Counter[str] = Counter()
+        page_count = 0
+        for page in pages:
+            page_count += 1
+            table_regions = _table_regions(page)
+            body_size = _page_body_font_size(page)
+            page_headings: set[str] = set()
+            for draft in self._text_drafts(page, table_regions, body_size):
+                if (
+                    draft.element_type is ElementType.HEADING
+                    and draft.top < _RUNNING_HEADER_TOP_PTS
+                ):
+                    normalized = _normalize_running_header(draft.text.strip())
+                    if normalized:
+                        page_headings.add(normalized)
+            counts.update(page_headings)
+
+        cutoff = max(
+            _RUNNING_HEADER_MIN_PAGES,
+            round(page_count * _RUNNING_HEADER_PAGE_FRACTION),
+        )
+        return frozenset(text for text, count in counts.items() if count >= cutoff)
 
     def _elements_for(
         self,
@@ -209,6 +274,7 @@ class PdfPlumberParser:
         scope: ScopeContext,
         now: datetime,
         headings: HeadingStack,
+        running_headers: frozenset[str],
     ) -> tuple[list[DocumentElement], list[DocumentTable], list[DocumentFigure]]:
         """Every element on the page, ordered down it, and every table and figure.
 
@@ -240,9 +306,21 @@ class PdfPlumberParser:
         figure_seeds: list[DocumentElement] = []
 
         for order, draft in enumerate(ordered):
+            # A running header looks like a heading but is page boilerplate. Reclassify
+            # it before entering the heading stack so it never becomes a section ancestor.
+            # Both conditions must hold: position (in the top margin) and normalized text
+            # membership (the suppressor detected this text as a running header).
+            element_type = draft.element_type
+            if (
+                element_type is ElementType.HEADING
+                and draft.top < _RUNNING_HEADER_TOP_PTS
+                and _normalize_running_header(draft.text.strip()) in running_headers
+            ):
+                element_type = ElementType.PARAGRAPH
+
             # Asked once per element, in reading order, so the answer reflects the
             # section the reader would be in at that point.
-            if draft.element_type is ElementType.HEADING:
+            if element_type is ElementType.HEADING:
                 heading_path = headings.enter(draft.text, size=draft.font_size)
             else:
                 heading_path = headings.current
@@ -252,7 +330,7 @@ class PdfPlumberParser:
                 knowledge_base_id=scope.knowledge_base_id,
                 document_id=document_id,
                 page_number=page_number,
-                element_type=draft.element_type,
+                element_type=element_type,
                 text=UntrustedText(draft.text),
                 reading_order=order,
                 processing_method=ProcessingMethod.NATIVE_TEXT,

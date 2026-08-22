@@ -363,6 +363,46 @@ def _no_pages_sample() -> bytes:
     return _build([])
 
 
+def _running_header_sample() -> bytes:
+    """Four pages sharing a repeated heading that is page boilerplate, not structure.
+
+    Every page carries "Machine Learning" set at 14pt — larger than the 10pt body — so
+    the element classifier reads it as a heading. The suppressor should detect that it
+    appears on all four pages and reclassify it as a paragraph, leaving the real chapter
+    headings ("Chapter One" on page 1 and "Chapter Two" on page 3, each at 12pt and
+    appearing only once) as the structural headings.
+    """
+
+    def _page(chapter_heading: str | None) -> str:
+        lines: list[tuple[float, float, int, str]] = [
+            (72, 730, 14, "Machine Learning"),  # running header — every page
+        ]
+        if chapter_heading:
+            lines.append((72, 697, 12, chapter_heading))
+        lines.extend(
+            _prose_block(
+                660,
+                [
+                    "Gradient descent minimises the loss by stepping in the direction",
+                    "opposite to the gradient, scaled by the learning rate. Each step",
+                    "moves the parameters slightly closer to a local minimum.",
+                    "The size of the step governs convergence speed and stability.",
+                    "Too large a rate overshoots; too small a rate wastes iterations.",
+                ],
+            )
+        )
+        return _text_ops(lines)
+
+    return _build(
+        [
+            _page("Chapter One"),
+            _page(None),
+            _page("Chapter Two"),
+            _page(None),
+        ]
+    )
+
+
 _FIXTURES = {
     "native_text_sample.pdf": _native_text_sample,
     "single_line_sample.pdf": _single_line_sample,
@@ -372,6 +412,7 @@ _FIXTURES = {
     "two_column_sample.pdf": _two_column_sample,
     "section_across_pages_sample.pdf": _section_across_pages_sample,
     "no_pages_sample.pdf": _no_pages_sample,
+    "running_header_sample.pdf": _running_header_sample,
 }
 
 

@@ -39,15 +39,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.configuration.settings import Settings
 from app.domain.documents.chunker import Chunker, ChunkFamily
 from app.domain.documents.element_classifier import ElementClassifier
-from app.domain.documents.entities import DocumentElement, DocumentPage
+from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
 from app.domain.documents.page_classifier import PageClassifier
 from app.domain.documents.reading_order import ReadingOrderResolver
 from app.domain.errors import UploadValidationError
 from app.domain.scope import ScopeContext
 from app.infrastructure.parsing.pdfplumber_parser import PdfPlumberParser
 from app.infrastructure.tokenization.token_counter import HuggingFaceTokenCounter
-
-ParsedPage = tuple[DocumentPage, Sequence[DocumentElement]]
 
 #: A child this short is unlikely to be worth retrieving on its own. Not a rule the
 #: chunker enforces — a section really can be two lines long — but a lot of them means
@@ -131,12 +129,12 @@ def _tally(label: str, counts: Counter[str], total: int) -> None:
 
 def report_pages(parsed: Sequence[ParsedPage], settings: Settings) -> None:
     _heading("PAGES")
-    kinds = Counter(page.kind.value for page, _ in parsed)
+    kinds = Counter(item.page.kind.value for item in parsed)
     _tally("kind", kinds, len(parsed))
 
-    unreadable = [page.page_number for page, elements in parsed if not elements]
+    unreadable = [item.page.page_number for item in parsed if not item.elements]
     needing_recognition = [
-        page.page_number for page, _ in parsed if page.kind.value != "NATIVE_TEXT"
+        item.page.page_number for item in parsed if item.page.kind.value != "NATIVE_TEXT"
     ]
     print(f"\n  pages with no elements   {len(unreadable)}")
     if unreadable:
@@ -151,14 +149,14 @@ def report_pages(parsed: Sequence[ParsedPage], settings: Settings) -> None:
         f"(complex vector drawings above {settings.ocr.complex_vector_drawing_threshold})"
     )
 
-    rotated = [page.page_number for page, _ in parsed if page.rotation]
+    rotated = [item.page.page_number for item in parsed if item.page.rotation]
     if rotated:
         print(f"  rotated pages            {_compress(rotated)}")
 
 
 def report_elements(parsed: Sequence[ParsedPage]) -> None:
     _heading("ELEMENTS")
-    elements = [element for _, page_elements in parsed for element in page_elements]
+    elements = [element for item in parsed for element in item.elements]
     print(f"  total                    {len(elements)}")
     if not elements:
         return
@@ -168,13 +166,13 @@ def report_elements(parsed: Sequence[ParsedPage]) -> None:
         Counter(element.element_type.value for element in elements),
         len(elements),
     )
-    _spread("per page", [len(page_elements) for _, page_elements in parsed])
+    _spread("per page", [len(item.elements) for item in parsed])
     _spread("characters", [len(element.text.value) for element in elements])
 
     multi_column = [
-        page.page_number
-        for page, page_elements in parsed
-        if _reads_as_columns(page_elements)
+        item.page.page_number
+        for item in parsed
+        if _reads_as_columns(item.elements)
     ]
     print(f"\n  pages read as columns    {len(multi_column)}")
     if multi_column:
@@ -190,9 +188,9 @@ def report_headings(parsed: Sequence[ParsedPage], limit: int) -> None:
     """
     _heading("HEADINGS INFERRED")
     seen: dict[tuple[str, ...], list[int]] = {}
-    for page, page_elements in parsed:
-        for element in page_elements:
-            seen.setdefault(element.heading_path.segments, []).append(page.page_number)
+    for item in parsed:
+        for element in item.elements:
+            seen.setdefault(element.heading_path.segments, []).append(item.page.page_number)
 
     print(f"  distinct paths           {len(seen)}")
     rootless = len(seen.get((), []))
@@ -265,8 +263,8 @@ def report_coverage(parsed: Sequence[ParsedPage], families: Sequence[ChunkFamily
     _heading("COVERAGE")
     elements = [
         element
-        for _, page_elements in parsed
-        for element in page_elements
+        for item in parsed
+        for element in item.elements
         if element.text.value.strip()
     ]
     haystack = " ".join(
@@ -374,7 +372,7 @@ async def main() -> int:
         return 1
     parse_seconds = time.perf_counter() - started
 
-    elements = [element for _, page_elements in parsed for element in page_elements]
+    elements = [element for item in parsed for element in item.elements]
     started = time.perf_counter()
     families = _chunker(settings, counter.count).chunk(elements)
     chunk_seconds = time.perf_counter() - started
