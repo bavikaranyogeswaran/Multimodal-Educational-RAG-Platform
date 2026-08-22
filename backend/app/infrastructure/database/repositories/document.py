@@ -10,18 +10,20 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
+from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.tables import DocumentTable
 from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, HeadingPath, UntrustedText
 from app.infrastructure.database.models.chunk import DocumentElementModel
 from app.infrastructure.database.models.document import DocumentModel, DocumentPageModel
+from app.infrastructure.database.models.figure import DocumentFigureModel
 from app.infrastructure.database.models.table import DocumentTableModel
 from app.infrastructure.database.repository import ScopedRepository
 
 
 class SqlDocumentRepository(ScopedRepository):
-    """Reads and writes Document, DocumentPage, DocumentElement and DocumentTable."""
+    """Reads and writes Document, DocumentPage, DocumentElement, DocumentTable and DocumentFigure."""
 
     async def get(self, scope: ScopeContext, document_id: UUID) -> Document | None:
         self._require_scope(scope)
@@ -135,6 +137,32 @@ class SqlDocumentRepository(ScopedRepository):
             stmt = stmt.where(DocumentTableModel.page_number == page_number)
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_table_to_entity(row) for row in rows]
+
+    async def save_figures(self, scope: ScopeContext, figures: Sequence[DocumentFigure]) -> None:
+        self._require_scope(scope)
+        for figure in figures:
+            await self._session.merge(_figure_to_model(figure))
+
+    async def get_figures(
+        self,
+        scope: ScopeContext,
+        document_id: UUID,
+        *,
+        page_number: int | None = None,
+    ) -> Sequence[DocumentFigure]:
+        self._require_scope(scope)
+        stmt = (
+            select(DocumentFigureModel)
+            .where(
+                DocumentFigureModel.document_id == document_id,
+                self._scope_filter(DocumentFigureModel),
+            )
+            .order_by(DocumentFigureModel.page_number.asc())
+        )
+        if page_number is not None:
+            stmt = stmt.where(DocumentFigureModel.page_number == page_number)
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_figure_to_entity(row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -344,4 +372,84 @@ def _table_to_entity(row: DocumentTableModel) -> DocumentTable:
         markdown=row.markdown,
         html=row.html,
         embedding_text=row.embedding_text,
+    )
+
+
+# ---------------------------------------------------------------------------
+# DocumentFigure mapping
+# ---------------------------------------------------------------------------
+
+
+def _figure_to_model(figure: DocumentFigure) -> DocumentFigureModel:
+    box = figure.bounding_box
+    return DocumentFigureModel(
+        id=figure.id,
+        user_id=figure.user_id,
+        knowledge_base_id=figure.knowledge_base_id,
+        document_id=figure.document_id,
+        source_element_id=figure.source_element_id,
+        page_number=figure.page_number,
+        kind=figure.kind.value,
+        bounding_box_x0=box.x0,
+        bounding_box_y0=box.y0,
+        bounding_box_x1=box.x1,
+        bounding_box_y1=box.y1,
+        caption=figure.caption.value if figure.caption is not None else None,
+        number=figure.number,
+        confidence=figure.confidence,
+        created_at=figure.created_at,
+        ocr_text=figure.ocr_text,
+        surrounding_text=figure.surrounding_text,
+        description=figure.description,
+        title=figure.title,
+        chart_type=figure.chart_type,
+        x_axis_label=figure.x_axis_label,
+        y_axis_label=figure.y_axis_label,
+        units_label=figure.units_label,
+        legend=figure.legend,
+        data_labels=figure.data_labels,
+        visible_trend=figure.visible_trend,
+        diagram_labels=list(figure.diagram_labels) if figure.diagram_labels else None,
+        components=list(figure.components) if figure.components else None,
+        arrows=list(figure.arrows) if figure.arrows else None,
+        visible_relationships=(
+            list(figure.visible_relationships) if figure.visible_relationships else None
+        ),
+    )
+
+
+def _figure_to_entity(row: DocumentFigureModel) -> DocumentFigure:
+    return DocumentFigure(
+        id=row.id,
+        user_id=row.user_id,
+        knowledge_base_id=row.knowledge_base_id,
+        document_id=row.document_id,
+        source_element_id=row.source_element_id,
+        page_number=row.page_number,
+        kind=ElementType(row.kind),
+        bounding_box=BoundingBox(
+            x0=row.bounding_box_x0,
+            y0=row.bounding_box_y0,
+            x1=row.bounding_box_x1,
+            y1=row.bounding_box_y1,
+        ),
+        caption=UntrustedText(row.caption) if row.caption is not None else None,
+        number=row.number,
+        confidence=row.confidence,
+        created_at=_utc(row.created_at),
+        ocr_text=row.ocr_text,
+        surrounding_text=row.surrounding_text,
+        description=row.description,
+        title=row.title,
+        chart_type=row.chart_type,
+        x_axis_label=row.x_axis_label,
+        y_axis_label=row.y_axis_label,
+        units_label=row.units_label,
+        legend=row.legend,
+        data_labels=row.data_labels,
+        visible_trend=row.visible_trend,
+        diagram_labels=tuple(row.diagram_labels) if row.diagram_labels else (),
+        components=tuple(row.components) if row.components else (),
+        arrows=tuple(row.arrows) if row.arrows else (),
+        visible_relationships=tuple(row.visible_relationships) if row.visible_relationships else (),
     )

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from uuid import UUID
 
+from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.tables import DocumentTable
 from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
 from app.domain.errors import IllegalTransitionError, InvariantViolationError
@@ -295,3 +296,4 @@ class ParsedPage:
     page: DocumentPage
     elements: Sequence[DocumentElement]
     tables: Sequence[DocumentTable] = ()
+    figures: Sequence[DocumentFigure] = ()

@@ -95,11 +95,15 @@ class IngestDocumentUseCase:
         if elements:
             await self._document_repo.save_elements(scope, elements)
 
-        # After the elements, never before: a table names the element it was read from,
-        # and that row has to exist for the reference to hold.
+        # After the elements, never before: a table or figure names the element it was
+        # read from, and that row has to exist for the reference to hold.
         tables = [_rendered(table) for item in parsed for table in item.tables]
         if tables:
             await self._document_repo.save_tables(scope, tables)
+
+        figures = [figure for item in parsed for figure in item.figures]
+        if figures:
+            await self._document_repo.save_figures(scope, figures)
 
         chunks = _to_chunks(
             self._chunker.chunk(_with_rendered_tables(elements, tables)),

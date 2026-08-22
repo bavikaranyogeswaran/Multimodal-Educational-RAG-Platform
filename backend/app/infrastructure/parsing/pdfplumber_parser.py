@@ -35,6 +35,7 @@ import structlog
 from app.domain.documents.caption_label import labels_kind, parse_caption_label
 from app.domain.documents.element_classifier import ElementClassifier, ElementSignals
 from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
+from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.heading_stack import HeadingStack
 from app.domain.documents.page_classifier import PageClassifier, PageSignals
 from app.domain.documents.reading_order import LayoutBox, ReadingOrderResolver
@@ -159,6 +160,7 @@ class PdfPlumberParser:
             pages=len(parsed),
             elements=sum(len(item.elements) for item in parsed),
             tables=sum(len(item.tables) for item in parsed),
+            figures=sum(len(item.figures) for item in parsed),
         )
         return parsed
 
@@ -190,13 +192,13 @@ class PdfPlumberParser:
         # The port's contract: pages needing recognition come back without elements, so
         # a caller cannot mistake a partial read for a complete one.
         if kind in {PageKind.SCANNED, PageKind.COMPLEX}:
-            return ParsedPage(page=document_page, elements=[], tables=[])
+            return ParsedPage(page=document_page, elements=[], tables=[], figures=[])
 
-        elements, tables = self._elements_for(
+        elements, tables, figures = self._elements_for(
             page, page_number, document_id=document_id, scope=scope,
             now=now, headings=headings,
         )
-        return ParsedPage(page=document_page, elements=elements, tables=tables)
+        return ParsedPage(page=document_page, elements=elements, tables=tables, figures=figures)
 
     def _elements_for(
         self,
@@ -207,8 +209,8 @@ class PdfPlumberParser:
         scope: ScopeContext,
         now: datetime,
         headings: HeadingStack,
-    ) -> tuple[list[DocumentElement], list[DocumentTable]]:
-        """Every element on the page, ordered down it, and every table read from it.
+    ) -> tuple[list[DocumentElement], list[DocumentTable], list[DocumentFigure]]:
+        """Every element on the page, ordered down it, and every table and figure.
 
         Text runs, tables and figures are gathered separately because they are found in
         different ways, then interleaved by position. Sorting at the end rather than
@@ -232,9 +234,10 @@ class PdfPlumberParser:
         ]
 
         elements: list[DocumentElement] = []
-        # Kept beside the elements while both are built, because a table record needs
-        # the id of the element it came from and that id does not exist until here.
+        # Kept beside the elements while both are built, because a table or figure record
+        # needs the id of the element it came from, and that id does not exist until here.
         table_seeds: list[tuple[DocumentElement, _Draft]] = []
+        figure_seeds: list[DocumentElement] = []
 
         for order, draft in enumerate(ordered):
             # Asked once per element, in reading order, so the answer reflects the
@@ -260,6 +263,10 @@ class PdfPlumberParser:
             elements.append(element)
             if draft.grid is not None:
                 table_seeds.append((element, draft))
+            elif draft.element_type in {
+                ElementType.FIGURE, ElementType.CHART, ElementType.DIAGRAM
+            }:
+                figure_seeds.append(element)
 
         tables = [
             table
@@ -276,7 +283,21 @@ class PdfPlumberParser:
             )
             is not None
         ]
-        return elements, tables
+        figures = [
+            figure
+            for element in figure_seeds
+            if (
+                figure := _build_figure(
+                    element,
+                    elements=elements,
+                    scope=scope,
+                    document_id=document_id,
+                    now=now,
+                )
+            )
+            is not None
+        ]
+        return elements, tables, figures
 
     def _text_drafts(
         self,
@@ -471,17 +492,23 @@ _CAPTION_REACH = 3.0
 
 
 def _caption_for(
-    table: DocumentElement,
+    element: DocumentElement,
     elements: Sequence[DocumentElement],
+    *,
+    kind: ElementType,
 ) -> UntrustedText | None:
-    """The nearest table caption above or below, if one sits close enough.
+    """The nearest caption that names a specific kind of object, above or below.
 
     Both directions are searched because the convention is not settled — most style
     guides put a table's caption above it and a figure's below, but plenty of textbooks
-    do the opposite, and a caption on the wrong side is still that table's caption.
+    do the opposite, and a caption on the wrong side is still that object's caption.
     Nearest wins, so a page with a caption on each side attaches the closer one.
+
+    The `kind` filter stops a figure's caption being claimed by a table sitting next to
+    it — a caption that says "Figure 3.2" cannot describe a table, and accepting it
+    would give the table a description of something else entirely.
     """
-    if table.bounding_box is None:
+    if element.bounding_box is None:
         return None
 
     best: tuple[float, DocumentElement] | None = None
@@ -491,17 +518,15 @@ def _caption_for(
             continue
         if candidate.bounding_box is None:
             continue
-        # Only a caption that names a table can claim one. A figure's caption sitting
-        # just as close would otherwise describe the wrong object entirely.
-        if not labels_kind(candidate.text.value, ElementType.TABLE):
+        if not labels_kind(candidate.text.value, kind):
             continue
 
         height = candidate.bounding_box.y1 - candidate.bounding_box.y0
-        # Gap between the two boxes: positive when the caption sits clear of the table,
+        # Gap between the two boxes: positive when the caption sits clear of the element,
         # zero when they touch or overlap.
         gap = max(
-            table.bounding_box.y0 - candidate.bounding_box.y1,
-            candidate.bounding_box.y0 - table.bounding_box.y1,
+            element.bounding_box.y0 - candidate.bounding_box.y1,
+            candidate.bounding_box.y0 - element.bounding_box.y1,
             0.0,
         )
         if gap > height * _CAPTION_REACH:
@@ -534,7 +559,7 @@ def _build_table(
     if structure is None:
         return None
 
-    caption = _caption_for(element, elements)
+    caption = _caption_for(element, elements, kind=ElementType.TABLE)
     label = parse_caption_label(caption.value) if caption is not None else None
 
     return DocumentTable(
@@ -555,6 +580,44 @@ def _build_table(
         # read less certainly than one that did neither. Stated as a score rather than a
         # flag so a reader downstream can weigh it alongside everything else.
         confidence=_table_confidence(structure),
+    )
+
+
+def _build_figure(
+    element: DocumentElement,
+    *,
+    elements: Sequence[DocumentElement],
+    scope: ScopeContext,
+    document_id: UUID,
+    now: datetime,
+) -> DocumentFigure | None:
+    """Build a figure record for a detected visual element.
+
+    Returns None for an element with no bounding box — without one there is
+    no region on the page to cite or highlight.
+
+    pdfplumber detects images as FIGURE elements. Charts and diagrams cannot be
+    distinguished from figures at detection time, so every visual starts as a
+    FIGURE record and will be reclassified in Phase 6.7 after image analysis.
+    """
+    if element.bounding_box is None:
+        return None
+
+    caption = _caption_for(element, elements, kind=ElementType.FIGURE)
+    label = parse_caption_label(caption.value) if caption is not None else None
+
+    return DocumentFigure(
+        id=uuid.uuid4(),
+        user_id=scope.user_id,
+        knowledge_base_id=scope.knowledge_base_id,
+        document_id=document_id,
+        source_element_id=element.id,
+        page_number=element.page_number,
+        kind=element.element_type,
+        bounding_box=element.bounding_box,
+        created_at=now,
+        caption=caption,
+        number=label.number if label is not None else None,
     )
 
 

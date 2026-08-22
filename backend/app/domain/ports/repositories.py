@@ -26,6 +26,7 @@ from uuid import UUID
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
+from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.tables import DocumentTable
 from app.domain.enums import JobType
 from app.domain.graph.entities import GraphEntity, GraphRelationship
@@ -108,6 +109,24 @@ class DocumentRepository(Protocol):
         page_number: int | None = None,
     ) -> Sequence[DocumentTable]:
         """Tables for a document, optionally narrowed to a single page."""
+        ...
+
+    async def save_figures(self, scope: ScopeContext, figures: Sequence[DocumentFigure]) -> None:
+        """Store figure, chart and diagram records.
+
+        Must be called after the elements they name, since each figure refers to
+        the element it was read from.
+        """
+        ...
+
+    async def get_figures(
+        self,
+        scope: ScopeContext,
+        document_id: UUID,
+        *,
+        page_number: int | None = None,
+    ) -> Sequence[DocumentFigure]:
+        """Figures for a document, optionally narrowed to a single page."""
         ...
 
 

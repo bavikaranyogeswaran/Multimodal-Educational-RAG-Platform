@@ -22,6 +22,7 @@ from app.domain.documents.entities import (
     DocumentPage,
     ParsedPage,
 )
+from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.tables import DocumentTable
 from app.domain.enums import (
     ChunkType,
@@ -682,3 +683,79 @@ class TestTablePersistence:
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
         document_repo.save_tables.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Figures
+# ---------------------------------------------------------------------------
+
+
+_FIGURE_BOX = BoundingBox(x0=50.0, y0=200.0, x1=400.0, y1=500.0)
+
+
+def _parser_with_a_figure() -> AsyncMock:
+    """A parser returning one page holding a figure element and its visual record."""
+    from datetime import UTC, datetime
+
+    element = DocumentElement(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=1,
+        element_type=ElementType.FIGURE,
+        text=UntrustedText(""),
+        reading_order=0,
+        processing_method=ProcessingMethod.NATIVE_TEXT,
+        created_at=_NOW,
+        bounding_box=_FIGURE_BOX,
+    )
+    figure = DocumentFigure(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        source_element_id=element.id,
+        page_number=1,
+        kind=ElementType.FIGURE,
+        bounding_box=_FIGURE_BOX,
+        created_at=_NOW,
+    )
+    parser = AsyncMock()
+    parser.parse = AsyncMock(
+        return_value=[ParsedPage(page=_page(1), elements=[element], figures=[figure])]
+    )
+    return parser
+
+
+class TestFigurePersistence:
+    async def test_figures_are_saved_under_the_calling_scope(self) -> None:
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(parser=_parser_with_a_figure(), document_repo=document_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        document_repo.save_figures.assert_awaited_once()
+        assert document_repo.save_figures.await_args.args[0] == _SCOPE
+
+    async def test_figures_are_saved_after_the_elements_they_name(self) -> None:
+        document_repo = _make_document_repo()
+        order: list[str] = []
+        document_repo.save_elements.side_effect = lambda *a, **k: order.append("elements")
+        document_repo.save_figures.side_effect = lambda *a, **k: order.append("figures")
+        use_case = _make_use_case(parser=_parser_with_a_figure(), document_repo=document_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        assert order.index("elements") < order.index("figures")
+
+    async def test_a_document_with_no_figures_writes_none(self) -> None:
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(
+            parser=_make_parser([(1, ["A paragraph of prose."])]),
+            document_repo=document_repo,
+        )
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        document_repo.save_figures.assert_not_awaited()

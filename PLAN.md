@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** — Phase 0, 1, 2, 3, 8 ✅ |
 | Effectively done | Phase 10 (~98%) · Phase 9 (~98%) · Phase 11 (~90%) · Phase 4 (~95%) — every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~60%, tables referenceable, large tables split safely) · Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~70%, visual records schema done, crops and OCR descriptions remain) · Phase 17 (~20%, evaluation absent) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) · Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,626 unit and security — 2,539 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **6.5 — crops to object store** (needs R2 credentials) or **6.6 — visual records schema** (no credentials needed). 7.6/7.7 remain available once Ollama and R2 credentials exist |
-| Last updated | 22 August 2026 (step 6.3 — large-table row-group splitting) |
+| Tests | 2,686 unit and security — 2,599 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **6.5 — crops to object store** (needs R2 credentials) or **6.7 — OCR and visual description** (needs Ollama). Migration 0015 needs to be applied via hotspot. |
+| Last updated | 22 August 2026 (step 6.6 — visual records: figure, chart and diagram schema) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order — work jumped to
@@ -1267,7 +1267,7 @@ than mocked (A-662).
 | 6.3 | Large tables split by row group, repeating headers and units | M | ✅ |
 | 6.4 | Figure and table number extraction | S | ✅ |
 | 6.5 | Crops to the object store — **needs R2 credentials** | S | ☐ |
-| 6.6 | Visual records: chart and diagram schema | M | ☐ |
+| 6.6 | Visual records: chart and diagram schema | M | ✅ |
 | 6.7 | Factual descriptions — **needs OCR and a multimodal model** | L | ☐ |
 
 ### 6.1 — Table structure ✅
@@ -1367,21 +1367,50 @@ than mocked (A-662).
 impossible while the number lived only inside a caption sentence. The validator itself is Phase 11
 work and is not done here (A-690).
 
+### 6.6 — Visual records: figure, chart and diagram schema ✅
+
+- [x] `DocumentFigure` domain entity — frozen dataclass with `kind` discriminator (FIGURE, CHART,
+      DIAGRAM), bounding box, caption, number, and all chart-specific and diagram-specific fields.
+      Fields that require image analysis are present but nullable; they are filled in step 6.7
+- [x] One entity for all three visual kinds: they share most fields, and the kind discriminator
+      lets downstream code branch where it needs to. Three separate entities would have tripled
+      the repository protocol, migration and mapper for minimal gain at this stage (A-698)
+- [x] `__post_init__` enforces: kind must be FIGURE/CHART/DIAGRAM; page number positive; timestamp
+      timezone-aware; confidence in `[0.0, 1.0]` when present
+- [x] `is_described` property — `True` once `description` is set (Phase 6.7)
+- [x] `DocumentFigureModel` ORM model — `document_figures` table, `kind` as TEXT (not enum),
+      diagram array fields as `ARRAY(Text())`, both FKs cascade (A-701)
+- [x] Migration `0015` — creates table, 4 indexes, RLS enabled with `document_figures_user_isolation`
+      policy checking both read and write directions. Not yet applied to live Supabase — needs
+      hotspot connection (A-702)
+- [x] `save_figures` / `get_figures` added to `DocumentRepository` protocol and `SqlDocumentRepository`
+- [x] `_caption_for()` in the parser generalised to take `kind` keyword so figure captions are not
+      claimed by nearby tables and vice versa (A-700)
+- [x] `_build_figure()` in the parser — mirrors `_build_table()`; every detected image produces a
+      `DocumentFigure` with FIGURE kind; CHART/DIAGRAM reclassification waits for step 6.7 (A-699)
+- [x] `ParsedPage` gains a `figures` field; early-return paths for scanned/complex pages set it
+      to `[]`
+- [x] `IngestDocumentUseCase` persists figures after elements, same pattern as tables
+- [x] 59 new tests across entity, migration, ORM model, parser and ingest use case
+
 - [x] Tables: detect → title and caption → headers, rows, units → crop → JSON → Markdown →
       optional HTML → retrieval-oriented text → bbox, page, confidence — **all but the crop**,
       which needs the object store and waits for 6.5
 - [x] Large tables split by row group, **repeating the anchor line (caption or first row) in every
       group**; rows never embedded headerless — the headerless half is met by the prose
       format (step 6.2) and the anchor repetition (step 6.3) covers the identity context
+- [x] Schema for figure, chart and diagram visual records — entity, ORM model, migration, parser
+      wiring and ingestion — **fields filled in step 6.7**
 - [ ] Visual objects: crop → caption → surrounding paragraphs → OCR labels → factual description →
       page and bbox → links to related chunks
-- [ ] Chart records: `title`, `chart_type`, `x_axis_label`, `y_axis_label`, `units`, `legend`,
-      `data_labels`, `visible_trend`, `caption`, `ocr_text`, `surrounding_text`, `confidence`
-- [ ] Diagram records: labels, components, arrows, visible relationships, caption, surrounding
-      text, confidence
-- [ ] Descriptions flagged **derived, not authoritative** at schema level (§18)
-- [x] Figure and table number extraction ("Figure 4.2") — **done for tables in 6.4**; figure
-      numbers wait on 6.6, which creates the records that would hold them
+- [ ] Chart records: `chart_type`, `x_axis_label`, `y_axis_label`, `units`, `legend`,
+      `data_labels`, `visible_trend` — schema exists, values wait on step 6.7
+- [ ] Diagram records: labels, components, arrows, visible relationships — schema exists, values
+      wait on step 6.7
+- [ ] Descriptions flagged **derived, not authoritative** at schema level (§18) — `is_described`
+      property exists; `description` itself is filled in step 6.7
+- [x] Figure and table number extraction ("Figure 4.2") — **done for tables in 6.4 and figures
+      in 6.6** via the same `parse_caption_label()` function
 - [ ] UC-06
 
 ## Phase 7 — Chunking, embeddings & indexing

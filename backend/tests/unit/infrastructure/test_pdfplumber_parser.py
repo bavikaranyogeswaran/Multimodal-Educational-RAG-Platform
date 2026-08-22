@@ -680,3 +680,45 @@ class TestTableNumbers:
             for table in item.tables:
                 if table.caption is None:
                     assert table.number is None
+
+
+class TestFigureRecords:
+    async def test_a_detected_image_produces_a_figure_record(self) -> None:
+        item = (await _parse("structured_sample"))[0]
+        assert len(item.figures) == 1
+
+    async def test_the_figure_record_carries_a_bounding_box(self) -> None:
+        fig = (await _parse("structured_sample"))[0].figures[0]
+        assert fig.bounding_box.x1 > fig.bounding_box.x0
+        assert fig.bounding_box.y1 > fig.bounding_box.y0
+
+    async def test_the_figure_record_has_figure_kind(self) -> None:
+        fig = (await _parse("structured_sample"))[0].figures[0]
+        assert fig.kind is ElementType.FIGURE
+
+    async def test_the_figure_caption_is_attached(self) -> None:
+        # The structured_sample fixture has "Figure 1: Loss curve for run 3."
+        fig = (await _parse("structured_sample"))[0].figures[0]
+        assert fig.caption is not None
+        assert "Loss curve" in fig.caption.value
+
+    async def test_the_figure_number_is_extracted(self) -> None:
+        fig = (await _parse("structured_sample"))[0].figures[0]
+        assert fig.number == "1"
+
+    async def test_the_figure_caption_is_not_claimed_by_the_nearby_table(self) -> None:
+        # The table lives on the same page and must take "Table 1:", not "Figure 1:".
+        fig = (await _parse("structured_sample"))[0].figures[0]
+        assert fig.caption is not None
+        assert "Accuracy by run" not in fig.caption.value
+
+    async def test_a_page_left_for_recognition_produces_no_figure_records(self) -> None:
+        always_scanned = _classifier(
+            min_native_characters=10**9, image_coverage_threshold=0.0
+        )
+        parsed = await _parse("structured_sample", _parser(always_scanned))
+        assert all(list(item.figures) == [] for item in parsed)
+
+    async def test_a_page_with_no_images_produces_no_figure_records(self) -> None:
+        parsed = await _parse("native_text_sample")
+        assert all(item.figures == [] for item in parsed)
