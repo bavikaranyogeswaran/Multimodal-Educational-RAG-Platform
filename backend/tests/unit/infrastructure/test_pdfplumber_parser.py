@@ -659,3 +659,24 @@ class TestTables:
         ]
         assert table_elements
         assert "0.91" in table_elements[0].text.value
+
+
+class TestTableNumbers:
+    async def test_the_number_the_document_printed_is_extracted(self) -> None:
+        # The fixture captions its table "Table 1: Accuracy by run."
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.number == "1"
+
+    async def test_the_caption_is_kept_whole_alongside_the_number(self) -> None:
+        # The number is extracted from the caption, not removed from it — a caption
+        # should still read the way the document wrote it.
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.caption is not None
+        assert "Table 1" in table.caption.value
+
+    async def test_a_table_with_no_caption_has_no_number(self) -> None:
+        parsed = await _parse("two_column_sample")
+        for item in parsed:
+            for table in item.tables:
+                if table.caption is None:
+                    assert table.number is None

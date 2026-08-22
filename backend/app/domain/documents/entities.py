@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from uuid import UUID
 
+from app.domain.documents.tables import DocumentTable
 from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
 from app.domain.errors import IllegalTransitionError, InvariantViolationError
 from app.domain.invariants import (
@@ -22,7 +23,6 @@ from app.domain.invariants import (
     require_timezone_aware,
     require_within,
 )
-from app.domain.documents.tables import DocumentTable
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, HeadingPath, UntrustedText
 

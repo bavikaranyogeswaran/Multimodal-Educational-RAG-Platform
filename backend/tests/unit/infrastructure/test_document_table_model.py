@@ -174,3 +174,51 @@ class TestRenderingColumns:
         # Nothing queries inside it, unlike `rows`, and storing the exact string keeps
         # it identical to what a caller was handed.
         assert "JSON" not in str(DocumentTableModel.__table__.columns["table_json"].type)
+
+
+_NUMBER_MIGRATION = "0014_document_table_number.py"
+
+
+class TestNumberMigration:
+    def test_revision(self) -> None:
+        assert _load_migration(_NUMBER_MIGRATION).revision == "0014"
+
+    def test_down_revision_follows_the_renderings_migration(self) -> None:
+        assert _load_migration(_NUMBER_MIGRATION).down_revision == "0013"
+
+    def test_it_adds_the_number_column(self) -> None:
+        src = inspect.getsource(_load_migration(_NUMBER_MIGRATION).upgrade)
+        assert '"number"' in src
+
+    def test_the_column_is_nullable(self) -> None:
+        # Plenty of tables are printed with no number at all.
+        src = inspect.getsource(_load_migration(_NUMBER_MIGRATION).upgrade)
+        assert "nullable=True" in src
+
+    def test_it_indexes_the_number_within_its_scope(self) -> None:
+        # Looking a table up by number is a scoped lookup, and that is the access path
+        # this column exists to serve.
+        src = inspect.getsource(_load_migration(_NUMBER_MIGRATION).upgrade)
+        assert "ix_document_tables_scope_number" in src
+        assert '"user_id", "knowledge_base_id", "number"' in src
+
+    def test_downgrade_removes_both_the_index_and_the_column(self) -> None:
+        src = inspect.getsource(_load_migration(_NUMBER_MIGRATION).downgrade)
+        assert "ix_document_tables_scope_number" in src
+        assert '"number"' in src
+
+
+class TestNumberColumn:
+    def test_the_model_carries_the_number(self) -> None:
+        assert "number" in DocumentTableModel.__table__.columns
+
+    def test_it_is_nullable(self) -> None:
+        assert DocumentTableModel.__table__.columns["number"].nullable is True
+
+    def test_it_is_text_rather_than_numeric(self) -> None:
+        # "4.2", "A.1" and "2b" are all real table numbers, and none of them is a number.
+        assert "TEXT" in str(DocumentTableModel.__table__.columns["number"].type).upper()
+
+    def test_the_scoped_number_index_is_declared(self) -> None:
+        names = {index.name for index in DocumentTableModel.__table__.indexes}
+        assert "ix_document_tables_scope_number" in names

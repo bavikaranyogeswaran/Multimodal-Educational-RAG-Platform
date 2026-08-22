@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** — Phase 0, 1, 2, 3, 8 ✅ |
 | Effectively done | Phase 10 (~98%) · Phase 9 (~98%) · Phase 11 (~90%) · Phase 4 (~95%) — every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~35%, tables retrievable) · Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~45%, tables referenceable) · Phase 17 (~20%, evaluation absent) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) · Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,569 unit and security — 2,482 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **6.3 — large-table row groups**, or 6.4 — figure and table numbers. 7.6/7.7 remain available once Ollama and R2 credentials exist |
-| Last updated | 22 August 2026 (step 6.2 — table serialisation) |
+| Tests | 2,622 unit and security — 2,535 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **6.3 — large-table row groups** (smaller than it looks; the headerless half is already met). 7.6/7.7 remain available once Ollama and R2 credentials exist |
+| Last updated | 22 August 2026 (step 6.4 — table number extraction) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order — work jumped to
@@ -75,15 +75,18 @@ it would name.
 
 Migrations applied through **`0011 (head)`** against Supabase — `0011` (model_invocations) was
 applied on 22 August 2026, having been written in step 8.4 and waiting on a connection since.
-Migrations `0012` (document_tables) and `0013` (its rendered forms) were applied on the same
-day, so head reads **`0013 (head)`**. Seventeen SQLAlchemy models registered with
+Migrations `0012` (document_tables), `0013` (its rendered forms) and `0014` (its number) were
+applied on the same day, so head reads **`0014 (head)`**. Seventeen SQLAlchemy models registered with
 `Base.metadata`.
 
-**ruff is clean across `app/`; mypy is not.** It reports three errors, all predating this
-session: two unused `type: ignore` comments in the Gemini and Anthropic stubs, and a
-`list[object]` passed to `ModelGatewayFacade` in `wire.py`. The claim that both were clean had
-been carried forward without being re-run (A-672). The test tree is held to neither standard and
-carries a little lint debt of its own (A-655).
+**Neither ruff nor mypy is clean across `app/`.** ruff reports 25 findings and mypy 3, all of
+them predating this session's work and none in a file it touched — line lengths and unused `noqa`
+directives in the Gemini and Anthropic stubs, an over-long `execute` in the answer use case, two
+`TRY300`s in the gateway, and an unused argument in the job repository. Both counts were verified
+against the previous commit; ruff was 27 there, so this session reduced it. The long-standing
+"ruff and mypy clean" line had been carried forward without either being re-run against the whole
+package, and re-running it on individual files is what kept the claim looking true (A-672, A-694).
+The test tree is held to neither standard and carries a little lint debt of its own (A-655).
 
 The `message_citations` row-level security policy is verified against PostgreSQL rather than
 argued for: SQLite cannot express row-level security, so until the migration was applied the
@@ -1238,7 +1241,7 @@ much of this is worth building, and that number does not exist yet.
 
 Covers §17, §18.
 
-**Status: ~35% — steps 6.1 and 6.2 done.** Tables are now first-class records and, as of 6.2,
+**Status: ~45% — steps 6.1, 6.2 and 6.4 done.** Tables are now first-class records and, as of 6.2,
 retrievable ones. A detected region is read into named columns, per-column units, aligned rows
 and the caption the document gave it, then rendered to JSON, Markdown, HTML and the prose that
 gets embedded — and the table's chunk now holds that prose rather than its joined cells, so a
@@ -1262,7 +1265,7 @@ than mocked (A-662).
 | 6.1 | Table structure — headers, units, aligned rows, caption association | M | ✅ |
 | 6.2 | Table serialisation — JSON, Markdown, optional HTML, retrieval-oriented prose | M | ✅ |
 | 6.3 | Large tables split by row group, repeating headers and units | M | ☐ |
-| 6.4 | Figure and table number extraction | S | ☐ |
+| 6.4 | Figure and table number extraction | S | ✅ |
 | 6.5 | Crops to the object store — **needs R2 credentials** | S | ☐ |
 | 6.6 | Visual records: chart and diagram schema | M | ☐ |
 | 6.7 | Factual descriptions — **needs OCR and a multimodal model** | L | ☐ |
@@ -1318,6 +1321,30 @@ than mocked (A-662).
 - [x] 44 tests: every form against wrapped, empty, ragged, unit-bearing and hostile input, plus
       the ingestion path end to end
 
+### 6.4 — Figure and table number extraction ✅
+
+- [x] One module now states what a caption label looks like, and both things that were already
+      matching them ask it — the element classifier deciding a line is a caption, and table
+      extraction deciding a caption belongs to a table rather than a figure beside it. This step
+      would otherwise have added a third copy of the same rule (A-684)
+- [x] Kind and number captured, not just detected: `Table 4.2`, `Fig. 3`, `Chart 2b`, `Table A.1`,
+      `Table 12.3.1`, `Table 4-2`. Plate and exhibit read as a figure and scheme as a diagram,
+      because a reader means the same thing by them
+- [x] **The number is stored as the document wrote it.** None of `4.2`, `A.1` or `2b` is a number,
+      and `4.2` and `4-2` are different on the page — a student types what they see, so what was
+      printed is what should match (A-685)
+- [x] Extracted from the caption rather than removed from it, so a caption still reads the way the
+      document wrote it while the number is separately addressable
+- [x] Migration `0014` adds the column and an index on scope plus number, since looking a table up
+      by number is always a scoped lookup
+- [x] Negative cases carry their weight: "Table of contents", "Figure it out", "Section 4.2" and
+      a sentence merely mentioning a table are all refused
+- [x] 41 tests, including extraction from the real fixture PDF
+
+**This retires the input side of Phase 11's table-number matching validator**, which was
+impossible while the number lived only inside a caption sentence. The validator itself is Phase 11
+work and is not done here (A-690).
+
 - [x] Tables: detect → title and caption → headers, rows, units → crop → JSON → Markdown →
       optional HTML → retrieval-oriented text → bbox, page, confidence — **all but the crop**,
       which needs the object store and waits for 6.5
@@ -1331,7 +1358,8 @@ than mocked (A-662).
 - [ ] Diagram records: labels, components, arrows, visible relationships, caption, surrounding
       text, confidence
 - [ ] Descriptions flagged **derived, not authoritative** at schema level (§18)
-- [ ] Figure and table number extraction ("Figure 4.2")
+- [x] Figure and table number extraction ("Figure 4.2") — **done for tables in 6.4**; figure
+      numbers wait on 6.6, which creates the records that would hold them
 - [ ] UC-06
 
 ## Phase 7 — Chunking, embeddings & indexing

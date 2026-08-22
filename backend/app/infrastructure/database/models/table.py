@@ -30,6 +30,7 @@ class DocumentTableModel(Base):
         Index("ix_document_tables_document_id", "document_id"),
         Index("ix_document_tables_user_id_kb_id", "user_id", "knowledge_base_id"),
         Index("ix_document_tables_source_element_id", "source_element_id"),
+        Index("ix_document_tables_scope_number", "user_id", "knowledge_base_id", "number"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -54,6 +55,9 @@ class DocumentTableModel(Base):
     rows: Mapped[list[list[str]]] = mapped_column(JSONB)
 
     caption: Mapped[str | None] = mapped_column(Text)
+    # The number the document printed, as it was written. Text rather than a numeric
+    # type because "4.2", "A.1" and "2b" are all real, and none of them is a number.
+    number: Mapped[str | None] = mapped_column(Text)
 
     bounding_box_x0: Mapped[float] = mapped_column(Float)
     bounding_box_y0: Mapped[float] = mapped_column(Float)

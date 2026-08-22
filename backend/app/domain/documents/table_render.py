@@ -50,6 +50,7 @@ def _unit_at(table: DocumentTable, index: int) -> str | None:
 def to_json_payload(table: DocumentTable) -> dict[str, Any]:
     """The grid as data, for a caller that wants to rebuild it rather than read it."""
     return {
+        "number": table.number,
         "caption": table.caption.value if table.caption is not None else None,
         "headers": list(table.headers),
         "units": [_unit_at(table, index) for index in range(len(table.headers))],

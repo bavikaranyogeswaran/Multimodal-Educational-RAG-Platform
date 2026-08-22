@@ -29,8 +29,9 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 
+from app.domain.documents.caption_label import contains_caption_label
 from app.domain.documents.chunks import Chunk
-from app.domain.enums import ChunkType
+from app.domain.enums import ChunkType, ElementType
 
 
 class ExpansionReason(StrEnum):
@@ -88,10 +89,6 @@ _REFERENCES = frozenset(
     }
 )
 
-#: A table caption, which names what the rows are of. Without it a table is a grid of
-#: numbers with column headings and no subject.
-_TABLE_CAPTION = re.compile(r"^\s*(table|tbl\.?)\s*\d", re.IGNORECASE | re.MULTILINE)
-
 #: Language that introduces what a symbol means. A formula carrying its own definitions
 #: does not need the prose around it.
 _DEFINING = re.compile(
@@ -140,7 +137,9 @@ class ExpansionRules:
 def _incomplete_kind(chunk: Chunk) -> ExpansionReason | None:
     """Kinds of content whose meaning conventionally sits beside them, not inside them."""
     text = chunk.text.value
-    if chunk.chunk_type is ChunkType.TABLE and not _TABLE_CAPTION.search(text):
+    # A table cut off from its caption is a grid of numbers with column headings and no
+    # subject, so the passage around it has to be fetched to say what it is about.
+    if chunk.chunk_type is ChunkType.TABLE and not contains_caption_label(text, ElementType.TABLE):
         return ExpansionReason.TABLE_WITHOUT_ITS_CAPTION
     if chunk.chunk_type is ChunkType.FORMULA and not _DEFINING.search(text):
         return ExpansionReason.FORMULA_WITHOUT_ITS_DEFINITION

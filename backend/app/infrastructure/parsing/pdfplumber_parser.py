@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import re
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -33,6 +32,7 @@ from uuid import UUID
 import pdfplumber
 import structlog
 
+from app.domain.documents.caption_label import labels_kind, parse_caption_label
 from app.domain.documents.element_classifier import ElementClassifier, ElementSignals
 from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
 from app.domain.documents.heading_stack import HeadingStack
@@ -464,11 +464,6 @@ def _line_height(line: dict[str, Any]) -> float:
 # ---------------------------------------------------------------------------
 
 
-# A caption naming a table specifically. The element classifier already recognises
-# captions of every kind by their leading label; this narrows that to the ones a table
-# can claim, so a figure's caption directly above a table is not attached to the table.
-_TABLE_CAPTION = re.compile(r"^\s*(?:table|tbl\.?)\s*\.?\s*\d", re.IGNORECASE)
-
 # How far from a table's edge a caption may sit and still belong to it, as a multiple of
 # the caption's own height. Captions are set close to what they describe; a limit stated
 # in the caption's own terms travels between page sizes better than one in points.
@@ -496,7 +491,9 @@ def _caption_for(
             continue
         if candidate.bounding_box is None:
             continue
-        if not _TABLE_CAPTION.match(candidate.text.value):
+        # Only a caption that names a table can claim one. A figure's caption sitting
+        # just as close would otherwise describe the wrong object entirely.
+        if not labels_kind(candidate.text.value, ElementType.TABLE):
             continue
 
         height = candidate.bounding_box.y1 - candidate.bounding_box.y0
@@ -537,6 +534,9 @@ def _build_table(
     if structure is None:
         return None
 
+    caption = _caption_for(element, elements)
+    label = parse_caption_label(caption.value) if caption is not None else None
+
     return DocumentTable(
         id=uuid.uuid4(),
         user_id=scope.user_id,
@@ -547,7 +547,8 @@ def _build_table(
         headers=structure.headers,
         rows=structure.rows,
         units=structure.units,
-        caption=_caption_for(element, elements),
+        caption=caption,
+        number=label.number if label is not None else None,
         bounding_box=element.bounding_box,
         created_at=now,
         # A grid that arrived ragged, or whose columns had to be named by position, was

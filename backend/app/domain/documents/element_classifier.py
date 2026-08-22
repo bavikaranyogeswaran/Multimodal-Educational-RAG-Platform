@@ -17,16 +17,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from app.domain.documents.caption_label import has_caption_label
 from app.domain.enums import ElementType
 from app.domain.invariants import require_non_negative, require_positive
 
-# "Figure 4.2", "Fig. 1", "Table 3", "Chart 2b" — a label leading the line. Captions are
-# the one element type that announces itself, which is why this is checked before the
+# What a caption label looks like lives in one place, because table extraction needs to
+# read the same labels and a second copy of the rule would drift from this one. Captions
+# are the one element type that announces itself, which is why this is checked before the
 # appearance-based rules that could otherwise claim the same line.
-_CAPTION_LABEL = re.compile(
-    r"^\s*(?:fig(?:ure|\.)?|table|chart|diagram|exhibit|plate|scheme)\s*\.?\s*\d",
-    re.IGNORECASE,
-)
 
 # Bullet characters, hoisted out of the pattern so the suppression can sit on a real
 # source line: en and em dashes genuinely are used as bullets in print, so the linter's
@@ -112,7 +110,7 @@ class ElementClassifier:
         if not text:
             return ElementType.PARAGRAPH
 
-        if _CAPTION_LABEL.match(text):
+        if has_caption_label(text):
             return ElementType.CAPTION
 
         if _LIST_MARKER.match(text):

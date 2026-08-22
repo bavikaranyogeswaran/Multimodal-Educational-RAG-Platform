@@ -61,10 +61,15 @@ class DocumentTable:
     # unit, which is most of them — a name or a category has nothing to measure.
     units: tuple[str | None, ...] = ()
 
-    # The document's own words about the table, when it labelled one. Kept whole here;
-    # separating the "Table 4.2" part from the description it introduces is a later
-    # concern, and doing it now would mean storing the same sentence twice.
+    # The document's own words about the table, when it labelled one. Kept whole, with
+    # the number below extracted from it rather than removed — a caption reads as the
+    # document wrote it, and the number is what a reference resolves against.
     caption: UntrustedText | None = None
+
+    # The number the document gave this table, as it was written: "4.2", "A.1", "3".
+    # A student refers to a table by this, so it is stored as data rather than left
+    # inside a sentence where only a substring search could reach it.
+    number: str | None = None
 
     # How much of the detected region actually read as a table. Detection is heuristic
     # and a page of aligned prose can look like one, so a reader downstream needs to be

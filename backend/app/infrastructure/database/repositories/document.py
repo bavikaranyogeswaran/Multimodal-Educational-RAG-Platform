@@ -305,6 +305,7 @@ def _table_to_model(table: DocumentTable) -> DocumentTableModel:
         units=list(table.units) if table.units else None,
         rows=[list(row) for row in table.rows],
         caption=table.caption.value if table.caption is not None else None,
+        number=table.number,
         bounding_box_x0=box.x0,
         bounding_box_y0=box.y0,
         bounding_box_x1=box.x1,
@@ -330,6 +331,7 @@ def _table_to_entity(row: DocumentTableModel) -> DocumentTable:
         units=tuple(row.units) if row.units else (),
         rows=tuple(tuple(cells) for cells in row.rows),
         caption=UntrustedText(row.caption) if row.caption is not None else None,
+        number=row.number,
         bounding_box=BoundingBox(
             x0=row.bounding_box_x0,
             y0=row.bounding_box_y0,
