@@ -43,6 +43,7 @@ from app.infrastructure.database.session import build_engine, build_session_fact
 from app.infrastructure.models.gateway import ModelGatewayFacade
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.models.providers.openai_compat import OpenAICompatibleGateway
+from app.infrastructure.rendering.figure_cropper import FigureCropper
 from app.infrastructure.rendering.page_renderer import PageRenderer
 from app.infrastructure.storage.r2 import build_r2_adapters
 from app.infrastructure.tokenization.token_counter import HuggingFaceTokenCounter
@@ -198,11 +199,14 @@ def build_container(settings: Settings) -> Container:
 
     _storage: StoragePort
     _cache: CacheStore
+    _figure_cropper: FigureCropper | None
     if settings.storage.account_id:
         _storage, _cache = build_r2_adapters(settings.storage)
+        _figure_cropper = FigureCropper(dpi=settings.storage.page_render_dpi)
     else:
         _storage = cast(StoragePort, _u("StoragePort"))
         _cache = cast(CacheStore, _u("CacheStore"))
+        _figure_cropper = None
 
     return Container(
         session_factory=_session_factory,
@@ -211,6 +215,7 @@ def build_container(settings: Settings) -> Container:
             dpi=settings.storage.page_render_dpi,
             ttl_seconds=settings.storage.page_render_ttl_seconds,
         ),
+        figure_cropper=_figure_cropper,
         # Repository ports — wired in Phase 2 (SQLAlchemy adapters)
         knowledge_base_repository=cast(KnowledgeBaseRepository, _u("KnowledgeBaseRepository")),
         document_repository=cast(DocumentRepository, _u("DocumentRepository")),

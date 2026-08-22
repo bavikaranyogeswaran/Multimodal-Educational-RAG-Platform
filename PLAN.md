@@ -32,8 +32,8 @@ system design specification.
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) · Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
 | Tests | 2,686 unit and security — 2,599 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **6.5 — crops to object store** (needs R2 credentials) or **6.7 — OCR and visual description** (needs Ollama). Migration 0015 needs to be applied via hotspot. |
-| Last updated | 22 August 2026 (step 6.6 — visual records: figure, chart and diagram schema) |
+| Next step | **6.7 — OCR and visual description** (needs Ollama) |
+| Last updated | 22 August 2026 (step 6.5 — crops to object store) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order — work jumped to
@@ -73,11 +73,11 @@ compared.
 §40 is met except for its *object* field, which waits on Phase 6 to create the tables and figures
 it would name.
 
-Migrations applied through **`0011 (head)`** against Supabase — `0011` (model_invocations) was
+Migrations applied through **`0016 (head)`** against Supabase — `0011` (model_invocations) was
 applied on 22 August 2026, having been written in step 8.4 and waiting on a connection since.
-Migrations `0012` (document_tables), `0013` (its rendered forms) and `0014` (its number) were
-applied on the same day, so head reads **`0014 (head)`**. Seventeen SQLAlchemy models registered with
-`Base.metadata`.
+Migrations `0012–0015` were applied on the same day. Migration `0016` (crop_key column on
+document_figures) was applied on 22 August 2026 as part of step 6.5. Eighteen SQLAlchemy models
+registered with `Base.metadata`.
 
 **Neither ruff nor mypy is clean across `app/`.** ruff reports 25 findings and mypy 3, all of
 them predating this session's work and none in a file it touched — line lengths and unused `noqa`
@@ -1266,7 +1266,7 @@ than mocked (A-662).
 | 6.2 | Table serialisation — JSON, Markdown, optional HTML, retrieval-oriented prose | M | ✅ |
 | 6.3 | Large tables split by row group, repeating headers and units | M | ✅ |
 | 6.4 | Figure and table number extraction | S | ✅ |
-| 6.5 | Crops to the object store — **needs R2 credentials** | S | ☐ |
+| 6.5 | Crops to the object store | S | ✅ |
 | 6.6 | Visual records: chart and diagram schema | M | ✅ |
 | 6.7 | Factual descriptions — **needs OCR and a multimodal model** | L | ☐ |
 
@@ -1366,6 +1366,36 @@ than mocked (A-662).
 **This retires the input side of Phase 11's table-number matching validator**, which was
 impossible while the number lived only inside a caption sentence. The validator itself is Phase 11
 work and is not done here (A-690).
+
+### 6.5 — Crops to the object store ✅
+
+- [x] `crop_key: str | None` field on `DocumentFigure` — the R2 key where the cropped image lives.
+      Null on records from documents processed before this step, or when the page failed to render.
+      Not a URL: URLs are signed on-demand and expire; the key is permanent
+- [x] `FigureCropperPort` in `domain/ports/adapters.py` — takes PDF bytes, 1-indexed page number,
+      page height in PDF pts, and bounding box; returns PNG bytes for the region
+- [x] `FigureCropper` in `infrastructure/rendering/figure_cropper.py` — renders via pypdfium2 at
+      `page_render_dpi`, converts bounding box from PDF pts (origin bottom-left) to pixel
+      coordinates (origin top-left), crops with PIL, returns PNG. Runs on a thread via
+      `asyncio.to_thread`, same approach as `PageRenderer`
+- [x] Crop key format: `{crops_prefix}/{user_id}/{kb_id}/{doc_id}/{figure_id}.png` — scoped and
+      deterministic so a re-ingestion overwrites rather than accumulating beside the old file
+- [x] `crops_prefix: str = "figures"` added to `StorageSettings` — separate from
+      `page_render_prefix` because crops are permanent (re-sent to the model on every visual
+      question) while renders are cached with a TTL
+- [x] `IngestDocumentUseCase` extended: `figure_cropper: FigureCropperPort | None` + `crops_prefix`
+      constructor params. After parsing and before `save_figures`, `_crop_and_upload_figures`
+      renders each figure's page, crops it, uploads, and returns the figures with `crop_key` set.
+      A crop failure is logged and skipped — the figure record is still saved, with null `crop_key`
+- [x] Migration `0016` — `ALTER TABLE document_figures ADD COLUMN crop_key TEXT` (nullable)
+- [x] `FigureCropper` wired in `wire.py` whenever `STORAGE_ACCOUNT_ID` is configured; null slot in
+      `container.py` when not, so dev environments without R2 still work
+- [x] `test_container.py` updated: `monkeypatch.delenv("STORAGE_ACCOUNT_ID")` added to the unwired
+      test so it stays correct on machines with R2 configured (A-717)
+- [x] 5 new tests in `TestFigureCropping`: crop uploaded to storage; saved figure carries crop_key;
+      key scoped to user/kb/document; null cropper leaves crop_key null; crop failure leaves figure
+      saved with null crop_key and no storage upload. All 42 ingest tests pass; full unit suite
+      2,614 passing (5 new)
 
 ### 6.6 — Visual records: figure, chart and diagram schema ✅
 

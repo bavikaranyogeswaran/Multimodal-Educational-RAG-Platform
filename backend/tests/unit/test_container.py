@@ -52,8 +52,13 @@ def test_wired_slots_hold_a_real_adapter(slot: str, attribute: str) -> None:
 
 @pytest.mark.parametrize(("slot", "attribute", "port_name"), _UNWIRED)
 def test_unwired_slots_name_themselves_when_used(
-    slot: str, attribute: str, port_name: str
+    slot: str, attribute: str, port_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The test describes behaviour when credentials are absent. Override with an
+    # empty string so a locally-configured .env does not make the adapters "wired"
+    # on machines where R2 has been set up. env vars take precedence over .env
+    # files in pydantic-settings, so the empty string suppresses the .env value.
+    monkeypatch.setenv("STORAGE_ACCOUNT_ID", "")
     container = build_container(Settings())
 
     with pytest.raises(NotImplementedError, match=port_name):

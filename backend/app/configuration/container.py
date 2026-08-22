@@ -18,6 +18,7 @@ from app.domain.ports.adapters import (
     CacheStore,
     DenseRetriever,
     EmbeddingPort,
+    FigureCropperPort,
     GraphPort,
     KeywordRetriever,
     ObservabilityPort,
@@ -56,6 +57,9 @@ class Container:
     # a page; the recognition stage that will is not built. A port invented before
     # its caller exists would be a guess at the signature that caller wants.
     page_renderer: PageRenderer
+
+    # Figure cropping — wired when R2 is configured (step 6.5)
+    figure_cropper: FigureCropperPort | None
 
     # Repository ports
     knowledge_base_repository: KnowledgeBaseRepository

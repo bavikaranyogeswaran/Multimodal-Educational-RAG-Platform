@@ -61,6 +61,10 @@ class DocumentFigureModel(Base):
     confidence: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
+    # R2 storage key for the cropped image. Set during ingestion (step 6.5); null
+    # on records created before that step ran, or when the page failed to render.
+    crop_key: Mapped[str | None] = mapped_column(Text)
+
     # Populated in Phase 6.7 after the crop is processed.
     ocr_text: Mapped[str | None] = mapped_column(Text)
     surrounding_text: Mapped[str | None] = mapped_column(Text)

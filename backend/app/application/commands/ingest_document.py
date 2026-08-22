@@ -28,15 +28,20 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+import structlog
+
 from app.domain.documents.chunker import ChunkDraft, Chunker, ChunkFamily
 from app.domain.documents.chunks import Chunk
-from app.domain.documents.entities import Document, DocumentElement
+from app.domain.documents.entities import Document, DocumentElement, ParsedPage
+from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.table_render import render as render_table
 from app.domain.documents.tables import DocumentTable
-from app.domain.ports.adapters import EmbeddingPort, PdfParserPort, StoragePort
+from app.domain.ports.adapters import EmbeddingPort, FigureCropperPort, PdfParserPort, StoragePort
 from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
+
+_log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,8 @@ class IngestDocumentUseCase:
         chunker: Chunker,
         embedding_model_id: str,
         index_version: int,
+        figure_cropper: FigureCropperPort | None = None,
+        crops_prefix: str = "figures",
     ) -> None:
         self._chunk_repo = chunk_repo
         self._document_repo = document_repo
@@ -75,6 +82,8 @@ class IngestDocumentUseCase:
         self._chunker = chunker
         self._embedding_model_id = embedding_model_id
         self._index_version = index_version
+        self._figure_cropper = figure_cropper
+        self._crops_prefix = crops_prefix
 
     async def execute(self, command: IngestDocumentCommand) -> Document:
         scope = command.scope
@@ -103,6 +112,16 @@ class IngestDocumentUseCase:
 
         figures = [figure for item in parsed for figure in item.figures]
         if figures:
+            if self._figure_cropper is not None:
+                figures = await _crop_and_upload_figures(
+                    figures,
+                    parsed,
+                    data,
+                    self._figure_cropper,
+                    self._storage,
+                    scope,
+                    self._crops_prefix,
+                )
             await self._document_repo.save_figures(scope, figures)
 
         chunks = _to_chunks(
@@ -139,6 +158,62 @@ class IngestDocumentUseCase:
         # The parse counted the pages, so the count is known rather than inferred from
         # whichever page happened to yield text last.
         return doc.mark_completed(page_count=len(parsed), now=now)
+
+
+# ---------------------------------------------------------------------------
+# Figure crops
+# ---------------------------------------------------------------------------
+
+
+async def _crop_and_upload_figures(
+    figures: Sequence[DocumentFigure],
+    parsed: Sequence[ParsedPage],
+    data: bytes,
+    cropper: FigureCropperPort,
+    storage: StoragePort,
+    scope: ScopeContext,
+    crops_prefix: str,
+) -> list[DocumentFigure]:
+    """Render each figure's bounding box, upload the crop, and return updated figures.
+
+    A crop failure is logged and skipped rather than failing the whole ingest: a figure
+    record without a crop_key is still valid and will be reattempted if ingestion re-runs.
+    The page height needed for coordinate flipping is read from the ParsedPage that owns
+    each figure.
+    """
+    page_heights: dict[int, float] = {item.page.page_number: item.page.height for item in parsed}
+
+    result: list[DocumentFigure] = []
+    for figure in figures:
+        page_height = page_heights.get(figure.page_number)
+        if page_height is None:
+            result.append(figure)
+            continue
+
+        try:
+            crop_bytes = await cropper.crop(
+                data,
+                page_number=figure.page_number,
+                page_height=page_height,
+                bounding_box=figure.bounding_box,
+            )
+        except Exception:
+            _log.warning(
+                "figure_crop_failed",
+                figure_id=str(figure.id),
+                page_number=figure.page_number,
+            )
+            result.append(figure)
+            continue
+
+        key = (
+            f"{crops_prefix}/{scope.user_id}/{scope.knowledge_base_id}"
+            f"/{figure.document_id}/{figure.id}.png"
+        )
+        await storage.put(key, crop_bytes, content_type="image/png")
+        result.append(replace(figure, crop_key=key))
+
+    return result
 
 
 # ---------------------------------------------------------------------------

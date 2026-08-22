@@ -71,6 +71,10 @@ class DocumentFigure:
     # to a layout analyser; confidence lets downstream code weigh detections.
     confidence: float | None = None
 
+    # R2 storage key for the cropped image. Set during ingestion; null on records
+    # from documents processed before step 6.5, or when the page failed to render.
+    crop_key: str | None = None
+
     # Populated in Phase 6.7 after OCR runs on the crop and the surrounding
     # paragraphs are located. Both are null until then.
     ocr_text: str | None = None

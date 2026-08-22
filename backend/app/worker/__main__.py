@@ -177,6 +177,8 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
                 ),
                 embedding_model_id=settings.embedding.model_id,
                 index_version=settings.embedding.index_version,
+                figure_cropper=container.figure_cropper,
+                crops_prefix=settings.storage.crops_prefix,
             )
             completed_doc = await use_case.execute(
                 IngestDocumentCommand(scope=scope, document=processing_doc)

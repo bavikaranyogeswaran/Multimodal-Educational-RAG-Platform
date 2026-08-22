@@ -27,6 +27,7 @@ from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedP
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.retrieval.entities import Evidence, RetrievalFilters
 from app.domain.scope import ScopeContext
+from app.domain.values import BoundingBox
 
 # ---------------------------------------------------------------------------
 # Storage
@@ -118,6 +119,30 @@ class PageRendererPort(Protocol):
 
         The page count comes from the caller because the document knows it and this does
         not. Passing it keeps the renderer from having to query anything to do its job.
+        """
+        ...
+
+
+class FigureCropperPort(Protocol):
+    """Renders one page and returns PNG bytes for a bounding-box region on it.
+
+    The bounding box is in PDF user-space points (origin bottom-left). The
+    implementation converts to pixel coordinates at whatever DPI it was
+    constructed with and crops the rendered image.
+    """
+
+    async def crop(
+        self,
+        data: bytes,
+        *,
+        page_number: int,
+        page_height: float,
+        bounding_box: BoundingBox,
+    ) -> bytes:
+        """PNG bytes for the region defined by bounding_box on the given page.
+
+        `page_number` is 1-indexed. `page_height` is the full page height in PDF
+        points — required to flip from PDF's bottom-left origin to pixel top-left.
         """
         ...
 

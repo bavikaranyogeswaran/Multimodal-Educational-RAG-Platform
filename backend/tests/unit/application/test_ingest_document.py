@@ -150,6 +150,7 @@ def _make_use_case(
     storage: AsyncMock | None = None,
     embedder: AsyncMock | None = None,
     parser: AsyncMock | None = None,
+    figure_cropper: AsyncMock | None = None,
     target_tokens: int = 500,
     max_tokens: int = 900,
     parent_target_tokens: int = 1200,
@@ -162,6 +163,7 @@ def _make_use_case(
     if storage is None:
         storage = AsyncMock()
         storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
     if embedder is None:
         embedder = _make_embedder()
     if parser is None:
@@ -182,6 +184,8 @@ def _make_use_case(
         ),
         embedding_model_id="test-model",
         index_version=1,
+        figure_cropper=figure_cropper,
+        crops_prefix="figures",
     )
 
 
@@ -759,3 +763,111 @@ class TestFigurePersistence:
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
         document_repo.save_figures.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Figure cropping
+# ---------------------------------------------------------------------------
+
+
+def _make_cropper(crop_bytes: bytes = b"\x89PNG fake crop") -> AsyncMock:
+    cropper = AsyncMock()
+    cropper.crop = AsyncMock(return_value=crop_bytes)
+    return cropper
+
+
+class TestFigureCropping:
+    async def test_crop_is_uploaded_to_storage(self) -> None:
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+        cropper = _make_cropper()
+
+        use_case = _make_use_case(
+            parser=_parser_with_a_figure(),
+            storage=storage,
+            figure_cropper=cropper,
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        storage.put.assert_awaited_once()
+        key, crop_bytes = (
+            storage.put.await_args.args[0],
+            storage.put.await_args.args[1],
+        )
+        assert crop_bytes == b"\x89PNG fake crop"
+        assert key.startswith("figures/")
+        assert "png" in key
+
+    async def test_saved_figure_carries_the_crop_key(self) -> None:
+        document_repo = _make_document_repo()
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+
+        use_case = _make_use_case(
+            parser=_parser_with_a_figure(),
+            document_repo=document_repo,
+            storage=storage,
+            figure_cropper=_make_cropper(),
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.crop_key is not None
+        assert saved.crop_key.startswith("figures/")
+
+    async def test_crop_key_scoped_to_user_kb_and_document(self) -> None:
+        document_repo = _make_document_repo()
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+
+        use_case = _make_use_case(
+            parser=_parser_with_a_figure(),
+            document_repo=document_repo,
+            storage=storage,
+            figure_cropper=_make_cropper(),
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert str(_USER_ID) in saved.crop_key
+        assert str(_KB_ID) in saved.crop_key
+        assert str(_DOC_ID) in saved.crop_key
+
+    async def test_no_cropper_leaves_crop_key_null(self) -> None:
+        document_repo = _make_document_repo()
+
+        use_case = _make_use_case(
+            parser=_parser_with_a_figure(),
+            document_repo=document_repo,
+            figure_cropper=None,
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.crop_key is None
+
+    async def test_crop_failure_leaves_figure_with_null_crop_key(self) -> None:
+        document_repo = _make_document_repo()
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+
+        cropper = AsyncMock()
+        cropper.crop = AsyncMock(side_effect=ValueError("render failed"))
+
+        use_case = _make_use_case(
+            parser=_parser_with_a_figure(),
+            document_repo=document_repo,
+            storage=storage,
+            figure_cropper=cropper,
+        )
+        # Should not raise — crop failure is logged and skipped
+        result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        assert result.status.name == "COMPLETED"
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.crop_key is None
+        storage.put.assert_not_awaited()

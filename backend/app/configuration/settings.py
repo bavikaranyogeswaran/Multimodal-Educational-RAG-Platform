@@ -108,6 +108,11 @@ class StorageSettings(BaseSettings):
     page_render_ttl_seconds: int = 7 * 24 * 3600
     page_render_dpi: int = 200
 
+    # Permanent storage prefix for figure crops. Crops are re-sent to the
+    # multimodal model on every visual question and are not regenerable from the
+    # original without re-running ingestion, so they live here, not in the cache.
+    crops_prefix: str = "figures"
+
     max_upload_bytes: int = 200 * 1024 * 1024
     max_upload_pages: int = 1500
 
