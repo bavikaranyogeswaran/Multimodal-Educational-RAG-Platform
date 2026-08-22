@@ -292,7 +292,7 @@ class TestFusion:
 
     async def test_returns_empty_when_fuser_produces_no_candidates(self) -> None:
         orc, mocks = _make_orchestrator(fused_results=[])
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert list(result) == []
         mocks["reranker"].rerank.assert_not_called()
 
@@ -345,7 +345,7 @@ class TestScoringAndFiltering:
             relative_score_margin=1.0,
             classify_return=QueryClass.SUMMARY,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert result[0].rerank_score == pytest.approx(0.9)
         assert result[1].rerank_score == pytest.approx(0.5)
         assert result[2].rerank_score == pytest.approx(0.3)
@@ -359,7 +359,7 @@ class TestScoringAndFiltering:
             rerank_scores=[1.0, 0.6],
             relative_score_margin=0.5,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert len(result) == 2
 
     async def test_relative_margin_drops_distant_scores(self) -> None:
@@ -371,7 +371,7 @@ class TestScoringAndFiltering:
             rerank_scores=[1.0, 0.3],
             relative_score_margin=0.5,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert len(result) == 1
         assert result[0].rerank_score == pytest.approx(1.0)
 
@@ -387,7 +387,7 @@ class TestScoringAndFiltering:
             classify_return=QueryClass.SUMMARY,
             max_items=3,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert len(result) == 3
 
     async def test_results_relabelled_from_s1(self) -> None:
@@ -399,7 +399,7 @@ class TestScoringAndFiltering:
             rerank_scores=[0.9, 0.7],
             relative_score_margin=1.0,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert result[0].label == EvidenceLabel(1)
         assert result[1].label == EvidenceLabel(2)
 
@@ -412,7 +412,7 @@ class TestScoringAndFiltering:
             rerank_scores=[0.9, 0.7],
             relative_score_margin=1.0,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert result[0].rank == 0
         assert result[1].rank == 1
 
@@ -422,7 +422,7 @@ class TestScoringAndFiltering:
             fused_results=[ev],
             rerank_scores=[0.75],
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert result[0].rerank_score == pytest.approx(0.75)
 
     async def test_negative_scores_use_absolute_value_for_margin(self) -> None:
@@ -435,7 +435,7 @@ class TestScoringAndFiltering:
             rerank_scores=[-10.0, -12.0],
             relative_score_margin=0.35,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert len(result) == 2
 
     async def test_single_candidate_always_passes_margin_filter(self) -> None:
@@ -445,7 +445,7 @@ class TestScoringAndFiltering:
             rerank_scores=[0.5],
             relative_score_margin=0.99,
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
         assert len(result) == 1
 
 
@@ -603,7 +603,7 @@ class TestParentExpansion:
             rerank_scores=[0.9],
             parents=[parent],
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
 
         assert result[0].chunk.id == parent_id
         assert result[0].parent_expanded is True
@@ -624,7 +624,7 @@ class TestParentExpansion:
             rerank_scores=[0.9],
             parents=[_real_chunk("the whole section", parent_id=None, chunk_id=parent_id)],
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
 
         assert result[0].chunk.id == chunk_id
         assert result[0].parent_expanded is False
@@ -672,7 +672,7 @@ class TestParentExpansion:
             relative_score_margin=1.0,
             parents=[_real_chunk("the section", parent_id=None, chunk_id=parent_id)],
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
 
         expanded = [e for e in result if e.parent_expanded]
         assert len(expanded) == 1
@@ -685,7 +685,7 @@ class TestParentExpansion:
             rerank_scores=[0.9],
             parents=[],
         )
-        result = await orc.execute(_query())
+        result = (await orc.execute(_query())).evidence
 
         assert len(result) == 1
         assert result[0].parent_expanded is False

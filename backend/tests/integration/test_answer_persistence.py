@@ -26,6 +26,7 @@ from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from app.application.commands.answer import PROMPT_VERSION, AnswerCommand, AnswerUseCase
+from app.application.queries.retrieve_evidence import RetrievalResult
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import AnswerFidelity as _AnswerFidelity
 from app.domain.enums import (
@@ -205,7 +206,9 @@ def _collaborators() -> dict[str, object]:
 async def _run_turn(seed: _Seed, *, answer: str) -> None:
     """Answer one question end to end, consuming the stream to completion."""
     retrieve = AsyncMock()
-    retrieve.execute = AsyncMock(return_value=[_evidence(seed)])
+    retrieve.execute = AsyncMock(
+        return_value=RetrievalResult(evidence=[_evidence(seed)], standalone_query="q", was_rewritten=False)
+    )
 
     payload = json.dumps(
         {"answer": answer, "claims": [], "insufficient_evidence": True}
@@ -310,7 +313,9 @@ class TestAnswerReachesTheDatabase:
 
     async def test_failed_generation_still_leaves_both_rows(self, seed: _Seed) -> None:
         retrieve = AsyncMock()
-        retrieve.execute = AsyncMock(return_value=[_evidence(seed)])
+        retrieve.execute = AsyncMock(
+        return_value=RetrievalResult(evidence=[_evidence(seed)], standalone_query="q", was_rewritten=False)
+    )
 
         async def _failing() -> AsyncIterator[str]:
             yield "The answer is"
@@ -356,7 +361,9 @@ async def _run_cited_turn(seed: _Seed) -> None:
     unexercised against a real database.
     """
     retrieve = AsyncMock()
-    retrieve.execute = AsyncMock(return_value=[_evidence(seed)])
+    retrieve.execute = AsyncMock(
+        return_value=RetrievalResult(evidence=[_evidence(seed)], standalone_query="q", was_rewritten=False)
+    )
 
     payload = json.dumps({
         "answer": "Backpropagation computes gradients layer by layer.",

@@ -260,7 +260,7 @@ class AnswerUseCase:
             )
             await repo.save_message(command.scope, user_message)
 
-        evidence = await self._retrieve.execute(
+        retrieval = await self._retrieve.execute(
             RetrieveEvidenceQuery(
                 scope=command.scope,
                 query=command.query,
@@ -268,6 +268,15 @@ class AnswerUseCase:
                 history=history,
             )
         )
+        evidence = retrieval.evidence
+
+        if retrieval.was_rewritten:
+            now_rw = datetime.now(UTC)
+            async with self._uow() as repo:
+                await repo.save_message(
+                    command.scope,
+                    user_message.with_rewritten_query(retrieval.standalone_query, now=now_rw),
+                )
 
         labeled = _labeled(evidence)
 

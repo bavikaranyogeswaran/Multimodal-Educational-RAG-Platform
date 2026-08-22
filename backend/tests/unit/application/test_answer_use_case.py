@@ -22,7 +22,7 @@ from app.application.commands.answer import (
     AnswerUseCase,
     _derive_prompt_version,
 )
-from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
+from app.application.queries.retrieve_evidence import RetrievalResult, RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import (
@@ -114,9 +114,20 @@ def _msg(role: MessageRole, text: str) -> Message:
     )
 
 
-def _mock_retrieve(evidence: list[Evidence] | None = None) -> AsyncMock:
+def _mock_retrieve(
+    evidence: list[Evidence] | None = None,
+    *,
+    standalone_query: str = "What is backpropagation?",
+    was_rewritten: bool = False,
+) -> AsyncMock:
     retrieve = AsyncMock()
-    retrieve.execute = AsyncMock(return_value=evidence or [])
+    retrieve.execute = AsyncMock(
+        return_value=RetrievalResult(
+            evidence=evidence or [],
+            standalone_query=standalone_query,
+            was_rewritten=was_rewritten,
+        )
+    )
     return retrieve
 
 
@@ -148,12 +159,12 @@ def _uow_over(repo: AsyncMock, opened: list[str] | None = None) -> ConversationU
     return _uow
 
 
-def _recording_retrieve(call_order: list[str]) -> Callable[..., list[Evidence]]:
-    """Note that retrieval ran, then return no evidence."""
+def _recording_retrieve(call_order: list[str]) -> Callable[..., RetrievalResult]:
+    """Note that retrieval ran, then return an empty result."""
 
-    def _record(*_args: object, **_kwargs: object) -> list[Evidence]:
+    def _record(*_args: object, **_kwargs: object) -> RetrievalResult:
         call_order.append("retrieve")
-        return []
+        return RetrievalResult(evidence=[], standalone_query="q", was_rewritten=False)
 
     return _record
 
@@ -493,6 +504,57 @@ class TestMessagePersistence:
         failed: Message = repo.save_message.call_args_list[1].args[1]
         assert failed.role is MessageRole.ASSISTANT
         assert failed.status is MessageStatus.FAILED
+
+
+# ---------------------------------------------------------------------------
+# Rewritten query persistence
+# ---------------------------------------------------------------------------
+
+
+class TestRewrittenQueryPersistence:
+    async def test_rewritten_query_stored_when_rewriter_fires(self) -> None:
+        repo = _mock_repo()
+        retrieve = _mock_retrieve(
+            was_rewritten=True,
+            standalone_query="What is the role of ATP in aerobic respiration?",
+        )
+        await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
+
+        # The rewrite update is the second save_message call — the first stores the
+        # original user message, the second patches in the standalone form.
+        assert repo.save_message.await_count == 2
+        rewrite_call: Message = repo.save_message.call_args_list[1].args[1]
+        assert rewrite_call.role is MessageRole.USER
+        assert rewrite_call.rewritten_query == "What is the role of ATP in aerobic respiration?"
+
+    async def test_rewritten_query_not_stored_when_no_rewrite(self) -> None:
+        repo = _mock_repo()
+        await _make_use_case(repo=repo).execute(_BASE_CMD)
+
+        # Only the initial user message — no follow-up save for the rewrite.
+        assert repo.save_message.await_count == 1
+
+    async def test_rewritten_query_uses_user_message_id(self) -> None:
+        repo = _mock_repo()
+        retrieve = _mock_retrieve(
+            was_rewritten=True,
+            standalone_query="Standalone form of the question.",
+        )
+        await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
+
+        original: Message = repo.save_message.call_args_list[0].args[1]
+        rewritten: Message = repo.save_message.call_args_list[1].args[1]
+        assert rewritten.id == original.id
+
+    async def test_rewrite_opens_a_third_transaction_when_consumed(self) -> None:
+        opened: list[str] = []
+        repo = _mock_repo()
+        retrieve = _mock_retrieve(was_rewritten=True, standalone_query="Standalone.")
+        stream = await _make_use_case(retrieve=retrieve, repo=repo, opened=opened).execute(_BASE_CMD)
+        _ = [t async for t in stream]
+
+        # Three blocks: question, rewrite update, answer.
+        assert len(opened) == 3
 
 
 # ---------------------------------------------------------------------------

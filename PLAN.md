@@ -1458,11 +1458,14 @@ remaining stages — which is why the checkbox count reads lower than the percen
 - [ ] **`rolling_summary`** — column exists, absent from the `Conversation` entity, never written.
       Deferrable: nothing reads it until Phase 14
 - [x] Query rewriting — follow-ups resolved to standalone queries before search
-- [ ] **Both forms stored (§24)** — the rewriter's output is used for retrieval and reranking and
-      then discarded; `Message.rewritten_query` and `with_rewritten_query()` exist and are unused
-- [ ] **Model metadata on assistant messages** — `model_id`, `prompt_tokens`,
-      `completion_tokens` are always null, because `generate_stream` yields bare strings and
-      never reports usage. Properly a Phase 8 fix
+- [x] **Both forms stored (§24)** — `RetrievalResult` now surfaces `standalone_query` and
+      `was_rewritten`; when the rewriter changed the query, `answer.py` opens a second
+      unit of work and saves `user_message.with_rewritten_query(...)` before streaming begins
+- [x] **Model metadata on assistant messages** — `OllamaTokenStream` and
+      `OpenAICompatTokenStream` both implement `.usage` (a `GenerationUsage` set once the
+      stream is fully drained); `_collect_stream` reads it via `getattr`; `_record_turn` passes
+      all four fields to `Message`; `_msg_to_model` maps them to `MessageModel`. The open item's
+      description was stale — the pipeline was already complete and verified on 18 August 2026
 - [x] Deterministic classification into all 13 §25 classes — rule-based, no agent
 - [x] Multi-query expansion: 2–3 variants, temperature 0, skipped when the plan forbids it (§26)
 - [x] Hybrid retrieval: pgvector + full-text per variant, run concurrently, with **mandatory

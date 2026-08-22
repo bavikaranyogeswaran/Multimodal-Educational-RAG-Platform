@@ -44,6 +44,13 @@ class RetrieveEvidenceQuery:
     history: tuple[ConversationTurn, ...] = ()
 
 
+@dataclass(frozen=True)
+class RetrievalResult:
+    evidence: Sequence[Evidence]
+    standalone_query: str
+    was_rewritten: bool
+
+
 class RetrievalOrchestrator:
     """Coordinate the full retrieval pipeline for one query."""
 
@@ -86,13 +93,13 @@ class RetrievalOrchestrator:
         self._selector = selector
         self._compressor = compressor
 
-    async def execute(self, query: RetrieveEvidenceQuery) -> Sequence[Evidence]:
+    async def execute(self, query: RetrieveEvidenceQuery) -> RetrievalResult:
         with StageTimer("classify") as _timer:
             query_class = self._classifier.classify(query.query)
         _log.info("retrieval_stage", stage="classify", elapsed_ms=_timer.elapsed_ms())
 
         with StageTimer("rewrite") as _timer:
-            standalone, _ = await self._rewriter.rewrite(query.query, query.history)
+            standalone, was_rewritten = await self._rewriter.rewrite(query.query, query.history)
         _log.info("retrieval_stage", stage="rewrite", elapsed_ms=_timer.elapsed_ms())
 
         with StageTimer("plan_expand") as _timer:
@@ -146,7 +153,7 @@ class RetrievalOrchestrator:
         )
 
         if not candidates:
-            return []
+            return RetrievalResult(evidence=[], standalone_query=standalone, was_rewritten=was_rewritten)
 
         with StageTimer("rerank") as _timer:
             texts = [c.chunk.text.value for c in candidates]
@@ -208,7 +215,7 @@ class RetrievalOrchestrator:
             elapsed_ms=_timer.elapsed_ms(),
             compressed=sum(1 for e in fitted if e.compressed),
         )
-        return fitted
+        return RetrievalResult(evidence=fitted, standalone_query=standalone, was_rewritten=was_rewritten)
 
     # -----------------------------------------------------------------------
 
