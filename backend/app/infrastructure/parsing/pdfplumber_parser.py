@@ -229,12 +229,13 @@ class PdfPlumberParser:
         return ParsedPage(page=document_page, elements=elements, tables=tables, figures=figures)
 
     def _detect_running_headers(self, pages: Sequence[Any]) -> frozenset[str]:
-        """Normalized heading texts that appear in the top margin on enough pages.
+        """Normalized texts that appear in the top margin on enough pages.
 
         A running header — the book title or chapter name repeated at the top of every
-        page — looks like a heading: it is usually set larger or heavier than the body.
-        Left in the heading stack, it makes every paragraph appear to be a subsection of
-        the book title rather than of the chapter it actually belongs to.
+        page — may be larger than the body (classified as HEADING) or at body size
+        (classified as PARAGRAPH). Either way it corrupts retrieval: a heading-size one
+        pollutes the heading stack; a paragraph-size one appears as boilerplate at the
+        start of chunk text. Both are detected and both are dropped.
 
         Two signals together identify a running header: position (the draft's top
         coordinate falls within _RUNNING_HEADER_TOP_PTS of the page top) and frequency
@@ -251,7 +252,7 @@ class PdfPlumberParser:
             page_headings: set[str] = set()
             for draft in self._text_drafts(page, table_regions, body_size):
                 if (
-                    draft.element_type is ElementType.HEADING
+                    draft.element_type in (ElementType.HEADING, ElementType.PARAGRAPH)
                     and draft.top < _RUNNING_HEADER_TOP_PTS
                 ):
                     normalized = _normalize_running_header(draft.text.strip())
@@ -306,17 +307,18 @@ class PdfPlumberParser:
         figure_seeds: list[DocumentElement] = []
 
         for order, draft in enumerate(ordered):
-            # A running header looks like a heading but is page boilerplate. Reclassify
-            # it before entering the heading stack so it never becomes a section ancestor.
-            # Both conditions must hold: position (in the top margin) and normalized text
-            # membership (the suppressor detected this text as a running header).
-            element_type = draft.element_type
+            # Running headers are page boilerplate — drop them entirely so they neither
+            # corrupt the heading stack nor appear in chunk text. Both heading-size and
+            # body-size running headers are handled: position (in the top margin) and
+            # normalized text membership must both hold.
             if (
-                element_type is ElementType.HEADING
+                draft.element_type in (ElementType.HEADING, ElementType.PARAGRAPH)
                 and draft.top < _RUNNING_HEADER_TOP_PTS
                 and _normalize_running_header(draft.text.strip()) in running_headers
             ):
-                element_type = ElementType.PARAGRAPH
+                continue
+
+            element_type = draft.element_type
 
             # Asked once per element, in reading order, so the answer reflects the
             # section the reader would be in at that point.

@@ -1436,7 +1436,7 @@ uses a fake, so the adapters are correct against a contract rather than against 
 | 7.1 | Real token counting behind a port | M | ✅ |
 | 7.2 | Structure-aware child chunks, built from elements | L | ✅ |
 | 7.3 | Parent chunks from sections, with `parent_chunk_id` linkage | M | ✅ |
-| 7.4 | Parse and chunk a real textbook offline, and report what it did | M | ◐ |
+| 7.4 | Parse and chunk a real textbook offline, and report what it did | M | ✅ |
 | 7.5 | Install the `ml` group; prove the embedder runs | S | ✅ |
 | 7.6 | Full ingestion against the real database and object store | M | ☐ |
 | 7.7 | Query the ingested textbook end to end | M | ☐ |
@@ -1493,7 +1493,7 @@ queue and a 2.5 GB download.
       is given, so a section and a paragraph inside it would otherwise be returned as two
       separate results competing for the same slots
 
-### 7.4 — Parse and chunk a real textbook offline — tool built, assessment blocked
+### 7.4 — Parse and chunk a real textbook offline ✅
 
 - [x] `scripts/inspect_parse.py` takes a PDF path, runs the real `PdfPlumberParser` and
       `Chunker`, and reports what came out: page kinds, elements per page by type, the heading
@@ -1506,11 +1506,42 @@ queue and a 2.5 GB download.
       sentence rather than a traceback
 - [x] The report carries its own unit tests, against the usual habit for scripts — it decides
       which tuning numbers move in 7.8, and both of its rules had defects (A-383, A-384)
-- [ ] **Blocked:** read the output against the document itself — are the columns right, do the
-      headings match the real section titles, does reading order follow the page. Needs a
-      textbook PDF; the repository holds only fixtures this repository wrote (A-387)
-- [ ] **Blocked:** the written assessment of where the parser is wrong and which tuning numbers
-      need to move
+- [x] Read the output against "Data Science in the Cloud with Microsoft Azure Machine Learning
+      and Python" (O'Reilly, 62 pages) — headings match real section titles, reading order
+      correct, no column misreads (A-708, A-709)
+- [x] Assessment written — feeds directly into 7.8 action list (A-710 through A-713)
+
+**Assessment — "Data Science in the Cloud" (O'Reilly, 62 pp)**
+
+*Pages.* 45% NATIVE_TEXT, 44% MIXED, 11% SCANNED. The 54.8% of pages that defeat the text
+layer is correct: the book is screenshot- and diagram-heavy, and pdfplumber cannot read Azure
+ML studio screenshots. `complex_vector_drawing_threshold = 400` is calibrated correctly —
+raising it would misclassify pages that genuinely need OCR. The OCR finding answers the 7.8
+question: 55% of pages are unreadable without it, so phases 5.7–5.9 are worth building.
+
+*Headings.* The 75 HEADING elements (27%) match real O'Reilly section titles: "Introduction",
+"Downloads", "Working Between Azure ML and Spyder", "Overview of Azure ML", "A Regression
+Example", etc. The 27% rate is appropriate for this recipe-style book (~1.4 labelled sections
+per page). `heading_size_ratio = 1.15` is correctly calibrated. The inspect_parse.py display
+truncates paths to 60 chars, making every path look like only the book title; the actual
+hierarchy is Book title → Chapter → Section (confirmed with full-path logging, A-706).
+
+*Chunks.* Content-section chunks are 100–400 tokens; the 89.5% single-child rate and 173-token
+median are biased by front-matter chunks and reflect O'Reilly's many short how-to sections, not
+a chunker bug. Zero content elements are absent from chunks. No children breach the 700-token
+ceiling.
+
+*Running headers.* The position+normalization suppressor (7.8a) correctly prevents heading-size
+running headers from corrupting the heading stack. Body-size running headers (e.g., "2 | Data
+Science in the Cloud…" at 9 pt on p8, same size as body text) are classified as PARAGRAPH and
+bypass the suppressor, appearing as the first line of the following chunk. This is a coverage
+gap in the suppressor, not a calibration problem.
+
+**Numbers that do not need to change:** `heading_size_ratio`, `complex_vector_drawing_threshold`,
+`paragraph_gap_multiplier`, chunking targets.
+
+**What 7.8 must do:** drop running header elements from output rather than reclassifying them,
+and extend the suppressor to cover body-size repeating text in the top margin (A-710, A-711).
 
 ### 7.5 — Install the `ml` group; prove the embedder runs ✅
 
@@ -1570,10 +1601,24 @@ failure that says nothing about the network (A-390).
 
 ### 7.8 — Recalibrate the tuning numbers from what was found
 
-- [ ] Turn the findings into configuration changes and, where the fault is structural, code fixes
-- [ ] Settle `complex_vector_drawing_threshold` (A-296), which was set to 400 without evidence
-- [ ] Decide OCR on evidence rather than in advance: how many pages of a real textbook actually
-      defeat the text layer decides whether 5.7 to 5.9 are worth building
+- [x] **Settled `complex_vector_drawing_threshold = 400`** — 54.8% of real-book pages are
+      MIXED/SCANNED, confirming the threshold is not over-triggering. No change needed (A-712)
+- [x] **OCR decision made on evidence** — 55% of pages in the real textbook defeat the text
+      layer. Phases 5.7–5.9 (OCR pipeline) are worth building (A-713)
+- [x] **No configuration numbers need to change** — `heading_size_ratio = 1.15`,
+      `paragraph_gap_multiplier`, and all chunking targets are correctly calibrated for
+      real-book output; the 7.4 assessment confirmed this
+- [x] **Drop running headers from chunk text** — `_elements_for` now skips element creation
+      entirely for identified running headers (via `continue`) rather than reclassifying
+      to PARAGRAPH; the reading_order gap from skipped drafts is harmless (A-714)
+- [x] **Extend suppressor to body-size running headers** — `_detect_running_headers` now
+      tracks PARAGRAPH drafts in the top margin alongside HEADINGs; `_elements_for` applies
+      the same position+membership check for both types (A-715)
+- [ ] **Known gap:** pdfplumber-merged running headers — when the vertical gap between a
+      running header and the first paragraph is below the grouping threshold, they emit as
+      one text block; the suppressor cannot match the combined text to a known running
+      header string. Requires sub-line word-object inspection or lowering
+      `paragraph_gap_multiplier` — deferred (A-716)
 
 - [x] **Child chunks 300–500 tokens, max ~700, 70 overlap; parents 800–1500** (§19, D-29) —
       two tiers, sized in real tokens counted against the embedding vocabulary

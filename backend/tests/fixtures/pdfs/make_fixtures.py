@@ -403,6 +403,48 @@ def _running_header_sample() -> bytes:
     )
 
 
+def _body_size_running_header_sample() -> bytes:
+    """Four pages with a running header that is the same size as the body text.
+
+    Every page carries "Machine Learning" at 10pt — identical to body text — so the
+    element classifier reads it as a paragraph rather than a heading. The suppressor must
+    detect it from the PARAGRAPH population in the top margin and drop it entirely, leaving
+    the real chapter headings ("Chapter One" on page 1 and "Chapter Two" on page 3, each
+    at 12pt and appearing only once in the text area) as the structural headings.
+    """
+
+    def _page(chapter_heading: str | None) -> str:
+        # y=755 puts the baseline at 37pt from the top after ascender; well within 80pt.
+        lines: list[tuple[float, float, int, str]] = [
+            (72, 755, 10, "Machine Learning"),  # body-size running header
+        ]
+        if chapter_heading:
+            # y=697 puts the baseline at 86pt from the top after ascender; outside 80pt.
+            lines.append((72, 697, 12, chapter_heading))
+        lines.extend(
+            _prose_block(
+                660,
+                [
+                    "Gradient descent minimises the loss by stepping in the direction",
+                    "opposite to the gradient, scaled by the learning rate. Each step",
+                    "moves the parameters slightly closer to a local minimum.",
+                    "The size of the step governs convergence speed and stability.",
+                    "Too large a rate overshoots; too small a rate wastes iterations.",
+                ],
+            )
+        )
+        return _text_ops(lines)
+
+    return _build(
+        [
+            _page("Chapter One"),
+            _page(None),
+            _page("Chapter Two"),
+            _page(None),
+        ]
+    )
+
+
 _FIXTURES = {
     "native_text_sample.pdf": _native_text_sample,
     "single_line_sample.pdf": _single_line_sample,
@@ -413,6 +455,7 @@ _FIXTURES = {
     "section_across_pages_sample.pdf": _section_across_pages_sample,
     "no_pages_sample.pdf": _no_pages_sample,
     "running_header_sample.pdf": _running_header_sample,
+    "body_size_running_header_sample.pdf": _body_size_running_header_sample,
 }
 
 

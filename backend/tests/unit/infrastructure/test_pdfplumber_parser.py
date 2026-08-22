@@ -725,14 +725,12 @@ class TestFigureRecords:
 
 
 class TestRunningHeaderSuppression:
-    async def test_the_repeated_heading_is_reclassified_as_paragraph(self) -> None:
-        # "Machine Learning" appears on all 4 pages of the fixture and should not be
-        # treated as a structural heading.
+    async def test_the_repeated_heading_is_excluded_from_elements(self) -> None:
+        # "Machine Learning" appears on all 4 pages and must be dropped entirely —
+        # not reclassified to PARAGRAPH and left in the element list.
         parsed = await _parse("running_header_sample")
-        for item in parsed:
-            for element in item.elements:
-                if element.text.value.strip() == "Machine Learning":
-                    assert element.element_type is ElementType.PARAGRAPH
+        all_texts = {e.text.value.strip() for item in parsed for e in item.elements}
+        assert "Machine Learning" not in all_texts
 
     async def test_real_chapter_headings_are_kept(self) -> None:
         parsed = await _parse("running_header_sample")
@@ -785,3 +783,42 @@ class TestRunningHeaderSuppression:
             if e.text.value in {"Chapter One", "Chapter Two"}
         ]
         assert all(e.element_type is ElementType.HEADING for e in chapter_elements)
+
+
+class TestBodySizeRunningHeaderSuppression:
+    """Running headers set at body size are classified as PARAGRAPH before the suppressor
+    runs, so the HEADING-only check misses them. The suppressor must scan the PARAGRAPH
+    population in the top margin as well, and drop those elements entirely."""
+
+    async def test_body_size_running_header_is_excluded_from_elements(self) -> None:
+        # "Machine Learning" at 10pt (body size) appears in the top margin on all 4
+        # pages. It must be absent from the element list, not reclassified to PARAGRAPH.
+        parsed = await _parse("body_size_running_header_sample")
+        all_texts = {e.text.value.strip() for item in parsed for e in item.elements}
+        assert "Machine Learning" not in all_texts
+
+    async def test_chapter_headings_are_kept(self) -> None:
+        parsed = await _parse("body_size_running_header_sample")
+        heading_texts = {
+            e.text.value
+            for item in parsed
+            for e in item.elements
+            if e.element_type is ElementType.HEADING
+        }
+        assert "Chapter One" in heading_texts
+        assert "Chapter Two" in heading_texts
+
+    async def test_body_text_is_under_the_chapter_heading(self) -> None:
+        # Body paragraphs on page 1 should be under "Chapter One", not under nothing
+        # and not under "Machine Learning".
+        parsed = await _parse("body_size_running_header_sample")
+        page_one_paragraphs = [
+            e
+            for e in parsed[0].elements
+            if e.element_type is ElementType.PARAGRAPH
+            and "Gradient descent" in e.text.value
+        ]
+        assert page_one_paragraphs
+        path_segments = list(page_one_paragraphs[0].heading_path.segments)
+        assert "Machine Learning" not in path_segments
+        assert "Chapter One" in path_segments
