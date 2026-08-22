@@ -23,7 +23,7 @@ from collections.abc import Mapping, Sequence
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.documents.entities import DocumentElement, DocumentPage
+from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.retrieval.entities import Evidence, RetrievalFilters
 from app.domain.scope import ScopeContext
@@ -76,12 +76,13 @@ class PdfParserPort(Protocol):
         *,
         document_id: UUID,
         scope: ScopeContext,
-    ) -> Sequence[tuple[DocumentPage, Sequence[DocumentElement]]]:
-        """Parse a PDF and return one pair per page.
+    ) -> Sequence[ParsedPage]:
+        """Parse a PDF and return one result per page.
 
-        Each pair contains the page (with its kind and dimensions) and any elements
-        extractable without OCR. SCANNED and COMPLEX pages return an empty element
-        sequence; the caller passes those pages to `OcrPort`.
+        Each result carries the page (with its kind and dimensions), any elements
+        extractable without OCR, and any tables read into named columns. SCANNED and
+        COMPLEX pages return no elements and no tables; the caller passes those pages
+        to `OcrPort`.
         """
         ...
 

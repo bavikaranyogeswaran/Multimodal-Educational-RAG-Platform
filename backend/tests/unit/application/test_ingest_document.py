@@ -16,7 +16,12 @@ from app.application.commands.ingest_document import (
     IngestDocumentUseCase,
 )
 from app.domain.documents.chunker import Chunker
-from app.domain.documents.entities import Document, DocumentElement, DocumentPage
+from app.domain.documents.entities import (
+    Document,
+    DocumentElement,
+    DocumentPage,
+    ParsedPage,
+)
 from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -83,9 +88,9 @@ def _make_parser(
 ) -> AsyncMock:
     """A parser returning prepared pages, each with its paragraph texts."""
     parsed = [
-        (
-            _page(number, kind=kind),
-            [_element(number, text, order) for order, text in enumerate(texts)],
+        ParsedPage(
+            page=_page(number, kind=kind),
+            elements=[_element(number, text, order) for order, text in enumerate(texts)],
         )
         for number, texts in pages
     ]

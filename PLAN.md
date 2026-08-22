@@ -26,23 +26,31 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **4 of 21** — Phase 0, 1, 2, 3 ✅ |
-| In progress | **Phase 8** — ✅ complete. All steps done: façade, task router, privacy pre-flight, fallback chain, `model_invocations` persistence, warm-up, OpenAI-compatible adapter, prompt-normalisation profiles, and data boundary security gate. **Phase 11** — ~90%, 8 of 11 items done; three partials all blocked |
-| Mostly built | Phase 10 (~98%) · Phase 9 (~95%, four field-level gaps) · Phase 4 (~95%) · Phase 7 (~85%) · Phase 5 (~70%, OCR deferred) |
-| Foundations only | Phase 17 (~25%) · Phase 16 (~20%) · Phase 12 (~15%) · Phase 14 (~15%) · Phase 18 (~10%) |
-| Not started | Phase 6, 13, 15, 19–20 |
-| Tests | 2,437 unit and security passing · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 81 `gate` |
-| Next step | Phase 8 complete — next phase TBD by user |
-| Last updated | 21 August 2026 (step 8.7 — prompt normalisation profiles; Phase 8 complete) |
+| Phases complete | **5 of 21** — Phase 0, 1, 2, 3, 8 ✅ |
+| Effectively done | Phase 10 (~98%) · Phase 9 (~98%) · Phase 11 (~90%) · Phase 4 (~95%) — every remaining item is blocked on another phase or on an input, not on work in the phase itself |
+| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~20%, tables structured) · Phase 17 (~20%, evaluation absent) |
+| Scaffold only | Phase 18 (~10%, step 0.5 shell) · Phase 16 (~5%, table and adapter but no `CacheStore`) |
+| Not started | Phase 12, 13, 14, 15, 19, 20 |
+| Tests | 2,524 unit and security — 2,437 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **6.2 — table serialisation**, or 7.6/7.7 once Ollama and R2 credentials exist. Neither blocks the other |
+| Last updated | 22 August 2026 (step 6.1 — table structure) |
 
-Phases 0 through 3 are complete. Phase 9 was built well ahead of phases 4 through 8 being
-finished, so the numbering no longer describes the build order — work jumped to conversations and
-retrieval once the data model and API surface were in place. Ingestion now parses into typed
-elements in reading order and chunks on the structure those elements carry, so §19 is built and
-the ceiling it put on retrieval quality is lifted. Two holes remain on that path: pages whose
-text layer cannot be trusted are recorded and left unread, since Phase 5 deferred recognition
-pending a real textbook to calibrate against, and Phase 6 has not been started at all, so nothing
-visual is described or answerable.
+Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
+through 8 being finished, so the numbering no longer describes the build order — work jumped to
+conversations and retrieval once the data model and API surface were in place. Ingestion now
+parses into typed elements in reading order and chunks on the structure those elements carry, so
+§19 is built and the ceiling it put on retrieval quality is lifted. Two holes remain on that
+path: pages whose text layer cannot be trusted are recorded and left unread, since Phase 5
+deferred recognition pending a real textbook to calibrate against, and Phase 6 has not been
+started at all, so nothing visual is described or answerable.
+
+**The percentages above were reconciled against the source tree on 22 August 2026, and several
+of them moved.** Phases 12 and 14 had been carrying a "foundations only, ~15%" figure that
+described work belonging to phases 1 and 2 — the entities and the tables — rather than anything
+either phase had done; `app/infrastructure/graph/` holds nothing but an `__init__.py`, and no
+memory code exists outside its Phase 1 entity and Phase 2 repository. Both now read as not
+started, which is what they are. Phase 16 was likewise credited at 20% in the header while its
+own section said 5%; nothing reads or writes `cache_entries`, so 5% is the honest figure.
 
 Phase 11 now closes the loop the milestone names, and the answer it produces is traceable after
 the fact rather than only correct at the time. A generated answer is parsed against the output
@@ -65,9 +73,16 @@ compared.
 §40 is met except for its *object* field, which waits on Phase 6 to create the tables and figures
 it would name.
 
-Migrations applied through `0010 (head)` against Supabase; migration `0011` (model_invocations)
-written but not yet applied — requires a hotspot connection. Sixteen SQLAlchemy models registered
-with `Base.metadata`. ruff and mypy clean across `app/`.
+Migrations applied through **`0011 (head)`** against Supabase — `0011` (model_invocations) was
+applied on 22 August 2026, having been written in step 8.4 and waiting on a connection since.
+Migration `0012` (document_tables) is written and **not yet applied**. Seventeen SQLAlchemy
+models registered with `Base.metadata`.
+
+**ruff is clean across `app/`; mypy is not.** It reports three errors, all predating this
+session: two unused `type: ignore` comments in the Gemini and Anthropic stubs, and a
+`list[object]` passed to `ModelGatewayFacade` in `wire.py`. The claim that both were clean had
+been carried forward without being re-run (A-672). The test tree is held to neither standard and
+carries a little lint debt of its own (A-655).
 
 The `message_citations` row-level security policy is verified against PostgreSQL rather than
 argued for: SQLite cannot express row-level security, so until the migration was applied the
@@ -75,20 +90,33 @@ policy had only ever been read. The destructive migration round-trip remains gat
 `ALLOW_DESTRUCTIVE_MIGRATION_TEST=1` and has not been run — the chain is verified forward from
 `0008` to `0010`, not as a full rebuild.
 
-**One known flaky test**, not caused by the code under test:
+**Two known flaky tests**, neither caused by the code under test:
 
 - `test_stage_timer.py::test_measures_real_elapsed_time` — fails roughly one run in three.
   Asserts at least 20 ms elapsed after a 20 ms sleep, which Windows timer granularity does not
   reliably satisfy.
+- `test_container.py::test_lifespan_stores_container_on_app_state` — fails intermittently with
+  `httpx.RemoteProtocolError: Server disconnected without sending a response`, and passes on its
+  own. Building a container constructs the token counter, which calls
+  `Tokenizer.from_pretrained` and revalidates its vocabulary against HuggingFace over the
+  network. On a connection that accepts the TCP handshake and then returns nothing — the same
+  failure mode this network shows against Postgres — that surfaces as a protocol error rather
+  than a refusal. **The suite should not need the internet to run**; setting `HF_HUB_OFFLINE`
+  once the vocabulary is cached, or injecting a pre-built tokenizer in tests, would fix it.
 
 `test_container.py::test_every_slot_raises_not_implemented_on_access` was listed here and no
-longer fails; the whole file passes.
+longer fails.
 
 **Documentation debt carried into Phase 20.** `REQUIREMENTS.md` has no status column against its
-334 functional requirements; `USE_CASES.md` tracks no implementation status; `EXECUTION_LOG.md`
-has no entries between step 3.2 and step 9.11, against the standing constraint that every step
-updates it. The transaction boundaries introduced in step 9.15 are now described in
-`ARCHITECTURE.md` §5.4, so that item is cleared.
+334 functional requirements, and `USE_CASES.md` tracks no implementation status. Against the
+standing constraint that every step updates it, `EXECUTION_LOG.md` is missing entries for
+**steps 3.3–3.7, 4.1–4.8, 9.1–9.10 and 10.6** — the phases built before the discipline took hold,
+plus one later omission. Everything from step 4.9 onward is recorded. The transaction boundaries
+introduced in step 9.15 are now described in `ARCHITECTURE.md` §5.4, so that item is cleared.
+
+One structural wrinkle in the log itself: entries appear under `## Step N.M` in some places and
+`### Step N.M entries` in others, and the phases are not in numerical order because the build was
+not either. Reading it front to back does not give the build order; the headings do.
 
 ---
 
@@ -1084,17 +1112,21 @@ so it is not mistaken for done.
 
 Covers §13, §14, §15, §16.
 
-**Status: first pass complete — 6 of 6 steps. OCR deferred pending reassessment.** `app/infrastructure/parsing/` and
-`app/infrastructure/ocr/` are empty packages. What exists instead is a deliberate placeholder:
-`_extract_pdf_pages` in `app/worker/__main__.py` reads native text with `pypdf` and skips pages
-that return none. A scanned page yields nothing and the document still completes, so it is
-indexed as though empty — a silent failure this phase turns into a recorded `PageKind`.
+**Status: ~70% — first pass complete, 6 of 6 steps. OCR deferred pending reassessment.**
+`app/infrastructure/parsing/` now holds `pdfplumber_parser.py`, and the placeholder it replaced —
+`_extract_pdf_pages` in `app/worker/__main__.py`, which read native text with `pypdf` and silently
+skipped pages that returned none — was deleted in step 5.3. A page whose text layer cannot be
+read is now classified and recorded as a `PageKind` rather than indexed as though empty.
 
-**The domain layer for this phase already exists.** `DocumentPage`, `DocumentElement`, `PageKind`,
-`ProcessingMethod` and `ElementType` were written in Phase 1; `PdfParserPort` and `OcrPort` are
-declared; `save_pages`, `get_pages`, `save_elements` and `get_elements` are implemented against
-`document_pages` and `document_elements` from Phase 2. Phase 5 is adapters and wiring — no new
-entities, no migration.
+**`app/infrastructure/ocr/` is still an empty package**, so a `SCANNED` or `COMPLEX` page is
+recorded accurately and then left unread. That is the honest failure the placeholder used to
+hide, but it is still a hole: nothing in a scanned textbook is retrievable.
+
+**The domain layer for this phase was already in place before it started.** `DocumentPage`,
+`DocumentElement`, `PageKind`, `ProcessingMethod` and `ElementType` were written in Phase 1;
+`PdfParserPort` and `OcrPort` are declared; `save_pages`, `get_pages`, `save_elements` and
+`get_elements` are implemented against `document_pages` and `document_elements` from Phase 2.
+Phase 5 was adapters and wiring — no new entities, no migration.
 
 Two §16 requirements are consequently satisfied before any parser is written, by construction
 rather than by discipline: `DocumentElement.text` is `UntrustedText`, so extracted text cannot
@@ -1205,14 +1237,61 @@ much of this is worth building, and that number does not exist yet.
 
 Covers §17, §18.
 
-**Status: not started.** Nothing produces a table, figure, chart or diagram record. The
-`ChunkType` enum carries `TABLE`, `FIGURE`, `CHART` and `DIAGRAM`, and `Chunk.carries_a_visual`
-is written and tested against them, but no chunk is ever created with any type other than `TEXT`.
-`Conversation.active_table_id` and `active_figure_id` are stored and never set, because there is
-nothing to select. Blocked on Phase 5.
+**Status: ~20% — step 6.1 done.** Tables are now first-class records: a detected region is read
+into named columns, per-column units, aligned rows and the caption the document gave it, stored
+in `document_tables` with its own row-level security policy. `Conversation.active_table_id` and
+`active_figure_id` are still never set, because selection needs the API surface Phase 19 provides.
+
+**The "blocked on Phase 5" note this section used to carry was stale.** The parser has emitted
+`TABLE` and `FIGURE` elements since step 5.3, and left the seam open on purpose — tables carried
+joined cell text because "headers, units and row grouping are a later concern", and figures were
+recorded empty because "a figure has nothing to say until something looks at it" (A-661).
+
+**The phase splits along a line worth naming.** Every table requirement is deterministic parsing
+and needs no model, no recognition and no object store. Every visual requirement needs at least
+one of the three: OCR for labels, which is Phase 5's deferred second pass, and a multimodal call
+for the description, which nothing has yet exercised for real. Tables therefore come first —
+not as a preference, but because it is the only order in which the work can be verified rather
+than mocked (A-662).
+
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 6.1 | Table structure — headers, units, aligned rows, caption association | M | ✅ |
+| 6.2 | Table serialisation — JSON, Markdown, optional HTML, retrieval-oriented prose | M | ☐ |
+| 6.3 | Large tables split by row group, repeating headers and units | M | ☐ |
+| 6.4 | Figure and table number extraction | S | ☐ |
+| 6.5 | Crops to the object store — **needs R2 credentials** | S | ☐ |
+| 6.6 | Visual records: chart and diagram schema | M | ☐ |
+| 6.7 | Factual descriptions — **needs OCR and a multimodal model** | L | ☐ |
+
+### 6.1 — Table structure ✅
+
+- [x] `DocumentTable` entity, refusing a row that does not line up with its headers — a short
+      row silently shifts every value after the gap into the wrong column, and a table that
+      answers confidently with the wrong figure is worse than one that admits it could not read
+- [x] `resolve_table_structure` reads a raw grid into headers, units and rows. Three cases, and
+      only the middle is certain: a first row holding numbers is data and the columns are named
+      by position, words above numbers is a header on the evidence, words above words is a
+      header by convention. Both uncertain outcomes are flagged rather than hidden (A-666)
+- [x] Units read from a parenthesised or bracketed suffix on the column name, or from a
+      dedicated units row where one is followed by measurements; the dedicated row wins
+- [x] Caption association searches above and below, nearest wins, bounded by three times the
+      caption's own height. A table-specific label pattern stops a figure's caption being
+      claimed by a table beside it — exercised directly by the structured fixture (A-668)
+- [x] `document_tables` table and migration `0012`, with its own `FOR ALL` policy in both
+      directions. Not covered by the enumeration test, which is pinned to migration 0008 and
+      cannot see a table added later (A-671)
+- [x] `ParsedPage` replaced the bare tuple the parser and the ingestion command each declared
+      separately, and now carries tables alongside elements (A-663)
+- [x] `save_tables` and `get_tables` on the document repository; ingestion persists tables after
+      elements, since each names the element it was read from
+- [x] 68 tests: grid reading against wrapped, ragged, headerless and unit-bearing input; entity
+      invariants; migration and model; and extraction from a real fixture PDF end to end
 
 - [ ] Tables: detect → title and caption → headers, rows, units → crop → JSON → Markdown →
-      optional HTML → retrieval-oriented text → bbox, page, confidence
+      optional HTML → retrieval-oriented text → bbox, page, confidence — **detection, title and
+      caption, headers, rows, units, bbox, page and confidence are done in 6.1**; crop, JSON,
+      Markdown, HTML and retrieval text remain
 - [ ] Large tables split by row group, **repeating title, headers, units and row labels in every
       group**; rows never embedded headerless
 - [ ] Visual objects: crop → caption → surrounding paragraphs → OCR labels → factual description →
@@ -1237,8 +1316,11 @@ constraint on retrieval quality in the system, and it is lifted.
 
 What remains is not chunking. The reindex job has columns and no job, embedding still runs
 inline in the ingestion job rather than as its own, and the milestone check — a real textbook
-through every stage — has never been run, because the `ml` group is not installed in the active
-environment (A-358) and no real model call has yet happened in this repository.
+through every stage — has never been run. Step 7.5 installed the `ml` group and closed A-358, so
+the embedder and reranker are real adapters now; what still blocks 7.6 and 7.7 is not code but
+inputs, namely R2 credentials and a running Ollama. **No real model call has yet happened in
+this repository**, which is the single largest unverified claim in the plan: every gateway test
+uses a fake, so the adapters are correct against a contract rather than against a server.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
@@ -1349,16 +1431,30 @@ failure that says nothing about the network (A-390).
       that unusable loop throughout (A-398)
 - [x] Postgres answers: 17.6, with `vector`, `rum`, `pg_cron` and `pg_trgm` all present. What
       looked like a network failure was this fault the whole time (A-400)
-- [ ] R2 credentials are still unset, and Ollama is not installed — 7.7 needs it
+- [x] **Migration `0011` applied — head is `0011 (head)`.** It had been written and waiting on a
+      connection since step 8.4; it creates `model_invocations` and two indexes and drops
+      nothing (A-656)
+- [x] **The integration suite runs against the live database: 18 passed, 1 skipped.** That closes
+      the item below, unrun since it was written. The skip is the destructive round-trip, still
+      gated and deliberately not enabled (A-657)
+- [x] First opportunity to run the integration suite, unrun since it was written (A-283)
+- [ ] **Blocked on credentials:** `STORAGE_ACCOUNT_ID`, `STORAGE_ACCESS_KEY_ID` and
+      `STORAGE_SECRET_ACCESS_KEY` are present in `.env` but empty. The adapter is built and
+      unit-tested, so this is a credentials task rather than an implementation one (A-659)
+- [ ] **Blocked on a document:** no real textbook exists in the repository. The eight fixtures
+      under `tests/fixtures/pdfs/` are synthetic and were built to exercise specific parser
+      branches, so they cannot answer what D-22 needs them to
 - [ ] Upload → job enqueued → worker claims it → pages, elements, chunks and embeddings persisted
       → document reaches `COMPLETED`
-- [ ] First opportunity to run the integration suite, unrun since it was written (A-283)
 - [ ] Expect to iterate, and re-ingestion still duplicates rather than replaces (A-312) — delete
       and re-upload between attempts, which the deletion path built in 4.11 supports
 
 ### 7.7 — Query the ingested textbook end to end
 
-- [ ] Needs Ollama running with a model pulled; no real model call has ever happened here
+- [ ] **Blocked on Ollama**, which is not installed — nothing is listening on `127.0.0.1:11434`.
+      All four model keys resolve to `gemma3:4b`, so a single pull serves generation, query
+      rewriting, faithfulness checking and vision. **No real model call has ever happened in
+      this repository** (A-660)
 - [ ] Ask real questions of the real document: dense and keyword retrieval, fusion, reranking,
       evidence assembly, a streamed answer with citations that open at the right page
 - [ ] The first observation of retrieval quality on anything other than fixtures
@@ -1393,24 +1489,49 @@ failure that says nothing about the network (A-390).
 
 Covers §48, §49, §50, §51, §52, §53, §54, and §55's warm-model requirement.
 
-**Status: ~25%.** One adapter satisfies `ModelGatewayPort` directly and is wired straight into the
-container — there is no gateway in front of it. Everything the gateway exists to provide (routing,
-privacy enforcement, fallback, normalization) is therefore absent, and the single-provider setup
-hides that, because with one local provider none of it is exercised.
+**Status: complete — 8 of 8 steps.** There is a real gateway in front of the adapters now. A
+façade holds an ordered provider list and routes each of the ten tasks to the first provider whose
+profile declares it, refuses a private request bound for a third party before the call is made,
+falls through to the next capable provider when one fails retryably, and renders the prompt
+through a per-adapter profile so two providers wanting different message shapes do not each get
+their own copy of the twelve-slot logic. Every completed call leaves a `model_invocations` row.
+
+The step this phase existed to prevent is now structurally impossible: with one local provider
+none of the routing, privacy or fallback logic was ever exercised, so the single-provider setup
+was hiding the absence of all of it. A second adapter — OpenAI-compatible, covering vLLM and
+llama.cpp servers — is what makes the machinery load-bearing rather than decorative.
+
+Two items stay open, and both are deliberate rather than unfinished. Neither blocks a later phase.
+
+| Step | Deliverable | Done |
+|---|---|---|
+| 8.1 | Gateway façade + task router | ✅ |
+| 8.2 | Privacy pre-flight (§52) | ✅ |
+| 8.3 | Fallback chain (§53) | ✅ |
+| 8.4 | `model_invocations` table (§48) | ✅ |
+| 8.5 | Warm-up on startup (§55) | ✅ |
+| 8.6 | OpenAI-compatible adapter; Gemini and Anthropic stubs (D-17) | ✅ |
+| 8.7 | Prompt normalisation profiles (§54) | ✅ |
+| 8.8 | Data boundary security gate | ✅ |
 
 - [x] **Gateway façade → task router → provider adapter** — `ModelGatewayFacade` wraps an
       ordered provider list; the first provider whose profile supports the requested task is
       selected; the container now holds the façade, not `OllamaModelGateway` directly
-- [ ] Four capability interfaces: text generation, multimodal, embeddings, reranking — embeddings
-      and reranking are separate ports (`EmbeddingPort`, `RerankerPort`), not gateway capabilities;
-      `TextGenerationCapability` and `MultimodalCapability` now form a proper inheritance hierarchy
+- [~] Four capability interfaces: text generation, multimodal, embeddings, reranking. Embeddings
+      and reranking are deliberately **separate ports** (`EmbeddingPort`, `RerankerPort`) rather
+      than gateway capabilities — they are called from retrieval, not from generation, and routing
+      them through a provider façade would put a task router in front of two adapters that have
+      exactly one implementation each. `TextGenerationCapability` and `MultimodalCapability` do
+      form a proper hierarchy, multimodal extending text (A-588)
 - [x] §49 capability metadata including `data_boundary` — `ModelProfile` carries it
 - [x] §50 routing for all ten model tasks — `ModelGatewayFacade._provider_for` selects the first
       capable provider by task, raising `UnsupportedCapabilityError` when none qualifies
 - [x] Ollama adapter implemented
 - [x] OpenAI-compatible adapter; Gemini and Anthropic raising `NotImplementedError` (D-17)
-- [ ] Internal model keys resolvable at deployment, task or Knowledge Base level (§51) — one model
-      id comes from settings and is passed to the adapter's constructor
+- [~] Internal model keys resolvable at deployment, task or Knowledge Base level (§51) — only the
+      deployment level resolves: one model id comes from settings and is passed to the adapter's
+      constructor. Per-task and per-Knowledge-Base overrides need a Knowledge Base setting to
+      read, which is Phase 14's surface, and a routing table the façade does not yet consult
 - [x] **Privacy policy (§52):** `ModelRequest.privacy_sensitive` derived property; façade raises
       `DataBoundaryViolationError` before calling a THIRD_PARTY provider for a private request;
       check applied in `generate`, `generate_stream`, and `generate_with_image`; no silent reroute
@@ -1433,13 +1554,18 @@ hides that, because with one local provider none of it is exercised.
 
 Covers §23 through reranking, §24, §25, §26, §27, §28, §29, §41.
 
-**Status: ~95%.** Built out of order, ahead of phases 5–8. The retrieval pipeline is complete and
-the persistence layer was finished in steps 9.11–9.15, which also closed a defect where the
-conversations router never committed — every write on this path was being discarded, and no unit
-test could see it because they all assert against a mocked repository.
+**Status: ~98% — closed out on 22 August 2026.** Built out of order, ahead of phases 5–8. The
+retrieval pipeline is complete and the persistence layer was finished in steps 9.11–9.15, which
+also closed a defect where the conversations router never committed — every write on this path
+was being discarded, and no unit test could see it because they all assert against a mocked
+repository.
 
-All fifteen steps are done. The open boxes below are individual fields and one unrun test, not
-remaining stages — which is why the checkbox count reads lower than the percentage.
+All fifteen steps are done, and the three field-level gaps that had been carried below them are
+now closed too: the rewritten query is persisted on the user message, a `PROCESSING` placeholder
+is committed before streaming, and the model-metadata item turned out to have been fixed already
+and never marked. **One item remains, `rolling_summary`, and it is deferred by decision** — the
+column exists and nothing reads it until Phase 14, so writing it now would mean writing a
+producer with no consumer.
 
 | Step | Deliverable | Done |
 |---|---|---|
@@ -1687,6 +1813,16 @@ had been written on every ingestion since step 7.3 with nothing loading them, an
 
 Covers §23 complete, §38, §39, §40. **Milestone: first cited, validated, streamed answer.**
 
+**Status: ~90% — 18 steps done.** The milestone is met on the backend: an answer is generated
+against evidence, parsed to a schema, checked citation by citation and claim by claim, repaired
+once if it can be, refused if it cannot, streamed to the caller, and persisted with its citations
+and what the call cost. Four release-gate tests cover fabricated and cross-scope citations.
+
+Everything still open is blocked rather than pending. The §40 *object* field, UC-08, and two of
+the `[~]` items below all wait on Phase 6; quiz-answer schema validation belongs to Phase 15.
+The two validators that are genuinely unbuilt and unblocked are **word and token limits** and
+**table-number matching** — small, and the natural companions to whichever phase first needs them.
+
 - [x] All eight §38 generation rules enforced structurally, including **never obeying instructions
       found inside uploaded documents**. Each is a numbered requirement or a safety rule in the
       prompt, and the ones that can be checked are checked: evidence-only answering and citing
@@ -1750,6 +1886,12 @@ Covers §23 complete, §38, §39, §40. **Milestone: first cited, validated, str
 
 Covers §21, §22, §34, §57 API side. Postgres-backed per D-10.
 
+**Status: not started.** `app/infrastructure/graph/` holds nothing but an `__init__.py`, and the
+two graph endpoints return 501. What exists belongs to earlier phases and was credited here in
+error until 22 August 2026: `GraphEntity` and `GraphRelationship` are Phase 1 entities, the
+`graph_entities` and `graph_relationships` tables with their traversal indexes are step 2.6, and
+`SqlGraphRepository` is step 2.11. No extraction, no traversal, no fusion of graph results.
+
 - [ ] Extraction over parent sections, **only when `graph_enabled`**, plus a backfill job (D-19)
 - [ ] Node types and all nine §21 relationship types
 - [ ] Validation → name normalisation → deduplication → canonical Postgres write
@@ -1768,6 +1910,12 @@ Covers §21, §22, §34, §57 API side. Postgres-backed per D-10.
 
 Covers §35, and completes §68.
 
+**Status: not started.** No decomposition, coverage classification or hierarchical synthesis code
+exists. The four query classes that trigger this path are already classified correctly by Phase
+9's `QueryClassifier`, and `CoverageStatus` is a Phase 1 enum — so the entry points are there and
+lead nowhere. Partly blocked: the per-sub-question pipeline calls selective graph retrieval,
+which is Phase 12.
+
 - [ ] Triggered by `MULTI_DOCUMENT` / `MULTI_HOP` / `AGGREGATION` / `COMPARISON`
 - [ ] Dependency-aware decomposition with `depends_on`, topologically ordered
 - [ ] Full pipeline per sub-question: expansion, dense, keyword, selective graph, RRF, rerank
@@ -1784,6 +1932,12 @@ Covers §35, and completes §68.
 ## Phase 14 — Scalable long-term memory
 
 Covers §42, §43, §44, §45.
+
+**Status: not started.** The three memory endpoints return 501. As with Phase 12, what exists is
+earlier work: `MemoryFact` with its six statuses and the supersession rule is a Phase 1 entity,
+the `memory_facts` table is step 2.5, and `SqlMemoryRepository` is step 2.11. Nothing writes a
+fact, nothing compacts, nothing retrieves. Phase 9's `rolling_summary` gap and Phase 10's empty
+memory slots both wait here.
 
 - [ ] Six tiers (§42); history lives in the database and is **queried**, never pasted
 - [ ] Canonical history preserved permanently
@@ -1806,6 +1960,10 @@ Covers §42, §43, §44, §45.
 
 Covers §46, §47.
 
+**Status: not started.** `app/domain/study/` is an empty package and all ten study-content
+endpoints return 501. Unlike phases 12 and 14 there is no groundwork at all here — no entity, no
+table, no repository.
+
 - [ ] Summaries: brief, detailed, examination notes, definitions, key concepts, formula lists,
       section outlines — from parent sections, batched, **citations retained**
 - [ ] Quizzes: six question types, structured JSON with source provenance. **Scoring is
@@ -1823,8 +1981,14 @@ Covers §55, §56, §58.
 
 **Status: ~5%.** Groundwork only, laid by earlier phases: the UNLOGGED `cache_entries` table and
 its `pg_cron` sweep exist from step 2.7, and `R2CacheAdapter` with TTL-on-read exists from Phase 4.
-No `CacheStore` port implementation reads or writes `cache_entries`, and the deletion path is
-half-built — see the `DELETE_DOCUMENT` gap in Phase 4.
+**No `CacheStore` implementation reads or writes `cache_entries`** — the only module in `app/` that
+names the table is the ORM model that declares it.
+
+Document deletion is no longer part of this gap: step 4.11 built the `DELETE_DOCUMENT` consumer,
+so an individual document's file, cached renders and row are removed. What is still missing here
+is deletion's *lifecycle* half — index-version bumping and cache invalidation, which have no
+consumer until the answer cache below exists — and Knowledge Base deletion, which currently
+relies on cascades and leaves every document's stored object orphaned in R2.
 
 - [ ] `CacheStore` on UNLOGGED PostgreSQL — no Redis (D-14, ADR-005); table and sweep exist,
       nothing uses them
@@ -1852,8 +2016,9 @@ half-built — see the `DELETE_DOCUMENT` gap in Phase 4.
 
 Covers §62, §63, §64, and closes §30's calibration debt.
 
-**Status: ~15%.** The observability baseline arrived early in step 3.4 and the security suite has
-been growing alongside each phase — 109 tests marked `security`, 75 marked `gate`. What is entirely
+**Status: ~20%.** The observability baseline arrived early in step 3.4 and the security suite has
+been growing alongside each phase — 121 tests marked `security`, 87 marked `gate`, across eight
+files. What is entirely
 absent is evaluation: no gold dataset, no metric harness, and no calibration, which means every
 tuning number in `settings.py` is still the placeholder it was written as, and D-23's promise to
 replace the derived latency budgets with measured p95 is unmet.
@@ -1872,19 +2037,27 @@ replace the derived latency budgets with measured p95 is unmet.
 - [ ] Multi-hop evaluation: all seven §63 metrics
 - [ ] Memory evaluation: all seven §63 metrics
 - [ ] Instruction-following evaluation: all five §63 metrics
-- [ ] **All ten §64 security tests** in one suite — five files exist under `tests/security/`
-      covering KB access, RLS through the API, upload, document deletion, retrieval scope and the
-      evidence record; the rest await the phases they test
-- [ ] **Six release gates as failing tests:** cross-user leakage 0 ✅ · cross-KB leakage 0 ✅ ·
-      fabricated citation acceptance 0 (Phase 11 — the evidence record it depends on is in place)
-      · deleted memory retrieval 0 (Phase 14) · unauthorized cache reuse 0 (Phase 16) · graph edge
-      without provenance 0 (Phase 12)
+- [~] **All ten §64 security tests** in one suite — eight files exist under `tests/security/`
+      covering KB access, RLS through the API, upload, document deletion, retrieval scope, the
+      evidence record, the generation pipeline and the data boundary; the rest await the phases
+      they test
+- [~] **Six release gates as failing tests:** cross-user leakage 0 ✅ · cross-KB leakage 0 ✅ ·
+      fabricated citation acceptance 0 ✅ (`test_generation_security.py`, four tests, resting on
+      the evidence record) · deleted memory retrieval 0 (Phase 14) · unauthorized cache reuse 0
+      (Phase 16) · graph edge without provenance 0 (Phase 12). Three of six are enforced; the
+      three that are not each name a phase that has not started
 - [ ] Threshold calibration; latency NFRs recalibrated against measured p95 (D-23)
 - [ ] `evaluation_results` persisted; results written into `REQUIREMENTS.md`
 
 ## Phase 18 — Frontend foundation
 
 Covers §7 authentication, Knowledge Base management and uploads.
+
+**Status: ~10% — the step 0.5 scaffold and nothing since.** `App.tsx`, `main.tsx`,
+`AppProviders.tsx`, `queryClient.ts` and `global.css` exist with its design tokens; every
+directory under `src/features/` is a bare `.gitkeep`, as are `src/api/`, `src/schemas/`,
+`src/pages/`, `src/hooks/`, `src/components/` and `src/state/`. **Nothing in the frontend calls
+the backend.** D-01 put the backend first deliberately, so this is on plan rather than behind it.
 
 - [ ] App shell, routing, layout, CSS Modules design tokens, light and dark
 - [ ] TanStack Query client, typed API layer, **Zod schemas mirroring every backend Pydantic model**
@@ -1898,6 +2071,10 @@ Covers §7 authentication, Knowledge Base management and uploads.
 ## Phase 19 — Frontend chat, streaming, PDF viewer & citations
 
 Covers §7 chat, streaming, PDF, citations and selection; §40 frontend contract.
+
+**Status: not started.** Blocked on Phase 18. Two items are additionally blocked on Phase 6:
+table and figure region selection has nothing to select, and citation navigation can highlight a
+bounding box but cannot name the object it belongs to until §40's *object* field is fillable.
 
 - [ ] Conversation list, create, rename, delete
 - [ ] Chat rendering the structured response **as natural prose** (§38)
@@ -1914,6 +2091,9 @@ Covers §7 chat, streaming, PDF, citations and selection; §40 frontend contract
 ## Phase 20 — Frontend graph, study features, memory & end-to-end
 
 Covers §7 complete, §57 UI, §68 verified end to end.
+
+**Status: not started.** Blocked on Phase 18 and on every backend phase it renders — 12 for the
+graph, 14 for memory, 15 for study content. Cytoscape.js is not installed.
 
 - [ ] Cytoscape.js concept graph: 30–50 node initial view, node evidence and source page, one-hop
       expansion, ask-about-this-node, prerequisite and related views. **Never renders the whole

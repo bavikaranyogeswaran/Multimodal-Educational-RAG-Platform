@@ -10,16 +10,18 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
+from app.domain.documents.tables import DocumentTable
 from app.domain.enums import DocumentStatus, ElementType, PageKind, ProcessingMethod
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, HeadingPath, UntrustedText
 from app.infrastructure.database.models.chunk import DocumentElementModel
 from app.infrastructure.database.models.document import DocumentModel, DocumentPageModel
+from app.infrastructure.database.models.table import DocumentTableModel
 from app.infrastructure.database.repository import ScopedRepository
 
 
 class SqlDocumentRepository(ScopedRepository):
-    """Reads and writes Document, DocumentPage, and DocumentElement via SQLAlchemy."""
+    """Reads and writes Document, DocumentPage, DocumentElement and DocumentTable."""
 
     async def get(self, scope: ScopeContext, document_id: UUID) -> Document | None:
         self._require_scope(scope)
@@ -107,6 +109,32 @@ class SqlDocumentRepository(ScopedRepository):
             stmt = stmt.where(DocumentElementModel.page_number == page_number)
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_element_to_entity(row) for row in rows]
+
+    async def save_tables(self, scope: ScopeContext, tables: Sequence[DocumentTable]) -> None:
+        self._require_scope(scope)
+        for table in tables:
+            await self._session.merge(_table_to_model(table))
+
+    async def get_tables(
+        self,
+        scope: ScopeContext,
+        document_id: UUID,
+        *,
+        page_number: int | None = None,
+    ) -> Sequence[DocumentTable]:
+        self._require_scope(scope)
+        stmt = (
+            select(DocumentTableModel)
+            .where(
+                DocumentTableModel.document_id == document_id,
+                self._scope_filter(DocumentTableModel),
+            )
+            .order_by(DocumentTableModel.page_number.asc())
+        )
+        if page_number is not None:
+            stmt = stmt.where(DocumentTableModel.page_number == page_number)
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_table_to_entity(row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -259,4 +287,51 @@ def _element_to_model(element: DocumentElement) -> DocumentElementModel:
         bounding_box_y1=bbox.y1 if bbox else None,
         heading_path=list(element.heading_path.segments),
         confidence=element.confidence,
+    )
+
+
+def _table_to_model(table: DocumentTable) -> DocumentTableModel:
+    box = table.bounding_box
+    return DocumentTableModel(
+        id=table.id,
+        user_id=table.user_id,
+        knowledge_base_id=table.knowledge_base_id,
+        document_id=table.document_id,
+        source_element_id=table.source_element_id,
+        page_number=table.page_number,
+        headers=list(table.headers),
+        # Stored as None rather than an empty array when no column carries a unit, so
+        # "nothing was measured" and "units were never looked for" stay distinguishable.
+        units=list(table.units) if table.units else None,
+        rows=[list(row) for row in table.rows],
+        caption=table.caption.value if table.caption is not None else None,
+        bounding_box_x0=box.x0,
+        bounding_box_y0=box.y0,
+        bounding_box_x1=box.x1,
+        bounding_box_y1=box.y1,
+        confidence=table.confidence,
+        created_at=table.created_at,
+    )
+
+
+def _table_to_entity(row: DocumentTableModel) -> DocumentTable:
+    return DocumentTable(
+        id=row.id,
+        user_id=row.user_id,
+        knowledge_base_id=row.knowledge_base_id,
+        document_id=row.document_id,
+        source_element_id=row.source_element_id,
+        page_number=row.page_number,
+        headers=tuple(row.headers),
+        units=tuple(row.units) if row.units else (),
+        rows=tuple(tuple(cells) for cells in row.rows),
+        caption=UntrustedText(row.caption) if row.caption is not None else None,
+        bounding_box=BoundingBox(
+            x0=row.bounding_box_x0,
+            y0=row.bounding_box_y0,
+            x1=row.bounding_box_x1,
+            y1=row.bounding_box_y1,
+        ),
+        confidence=row.confidence,
+        created_at=_utc(row.created_at),
     )

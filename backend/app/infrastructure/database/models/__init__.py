@@ -22,6 +22,7 @@ from app.infrastructure.database.models.graph import GraphEntityModel, GraphRela
 from app.infrastructure.database.models.job import CacheEntryModel, ProcessingJobModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 from app.infrastructure.database.models.model_invocation import ModelInvocationModel
+from app.infrastructure.database.models.table import DocumentTableModel
 
 __all__ = [
     "CacheEntryModel",
@@ -32,6 +33,7 @@ __all__ = [
     "DocumentElementModel",
     "DocumentModel",
     "DocumentPageModel",
+    "DocumentTableModel",
     "GraphEntityModel",
     "GraphRelationshipModel",
     "KnowledgeBaseModel",

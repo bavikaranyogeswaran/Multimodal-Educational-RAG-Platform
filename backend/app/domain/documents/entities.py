@@ -7,6 +7,7 @@ produces as it advances that lifecycle.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from uuid import UUID
@@ -21,6 +22,7 @@ from app.domain.invariants import (
     require_timezone_aware,
     require_within,
 )
+from app.domain.documents.tables import DocumentTable
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, HeadingPath, UntrustedText
 
@@ -273,3 +275,23 @@ class DocumentElement:
     def with_heading_path(self, heading_path: HeadingPath) -> DocumentElement:
         """Attach section context, assigned once the page's heading structure is known."""
         return replace(self, heading_path=heading_path)
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedPage:
+    """What reading one page produced: the page itself, its elements, and its tables.
+
+    Tables travel alongside the elements rather than inside them because they are a
+    different kind of thing. An element is a run of the page in reading order, and a
+    table is one — it has a position among the paragraphs and is ordered with them. But
+    a table also has a grid, and a grid does not fit in a field called `text`. The two
+    records describe the same region for different purposes, and each names the other.
+
+    Replaced a bare tuple, which had been declared separately in the parser and in the
+    ingestion command. Two definitions of the same shape drift, and a third field would
+    have had to be added to both.
+    """
+
+    page: DocumentPage
+    elements: Sequence[DocumentElement]
+    tables: Sequence[DocumentTable] = ()

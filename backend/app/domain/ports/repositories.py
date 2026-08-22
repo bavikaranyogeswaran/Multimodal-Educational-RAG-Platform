@@ -26,6 +26,7 @@ from uuid import UUID
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
+from app.domain.documents.tables import DocumentTable
 from app.domain.enums import JobType
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.jobs.entities import ProcessingJob
@@ -89,6 +90,24 @@ class DocumentRepository(Protocol):
         page_number: int | None = None,
     ) -> Sequence[DocumentElement]:
         """Elements for a document, optionally narrowed to a single page."""
+        ...
+
+    async def save_tables(self, scope: ScopeContext, tables: Sequence[DocumentTable]) -> None:
+        """Store tables read into named columns.
+
+        Must be called after the elements they name, since each table refers to the
+        element it was read from.
+        """
+        ...
+
+    async def get_tables(
+        self,
+        scope: ScopeContext,
+        document_id: UUID,
+        *,
+        page_number: int | None = None,
+    ) -> Sequence[DocumentTable]:
+        """Tables for a document, optionally narrowed to a single page."""
         ...
 
 

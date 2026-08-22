@@ -35,7 +35,6 @@ from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
 
-ParsedPage = tuple[DocumentPage, Sequence[DocumentElement]]
 
 
 @dataclass(frozen=True)
@@ -89,10 +88,16 @@ class IngestDocumentUseCase:
 
         # Persisted before chunking, because they are what the parse established and
         # they remain true regardless of what the later stages do.
-        await self._document_repo.save_pages(scope, [page for page, _ in parsed])
-        elements = [element for _, page_elements in parsed for element in page_elements]
+        await self._document_repo.save_pages(scope, [item.page for item in parsed])
+        elements = [element for item in parsed for element in item.elements]
         if elements:
             await self._document_repo.save_elements(scope, elements)
+
+        # After the elements, never before: a table names the element it was read from,
+        # and that row has to exist for the reference to hold.
+        tables = [table for item in parsed for table in item.tables]
+        if tables:
+            await self._document_repo.save_tables(scope, tables)
 
         chunks = _to_chunks(
             self._chunker.chunk(elements),

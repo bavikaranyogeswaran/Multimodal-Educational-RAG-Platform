@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.domain.documents.entities import Document, DocumentPage
+from app.domain.documents.entities import Document, DocumentPage, ParsedPage
 from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType, PageKind
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
@@ -161,8 +161,8 @@ class TestRunJobHappyPath:
         parser_mock = AsyncMock()
         parser_mock.parse = AsyncMock(
             return_value=[
-                (
-                    DocumentPage(
+                ParsedPage(
+                    page=DocumentPage(
                         id=uuid.uuid4(),
                         user_id=doc.user_id,
                         knowledge_base_id=doc.knowledge_base_id,
@@ -172,7 +172,7 @@ class TestRunJobHappyPath:
                         width=612.0,
                         height=792.0,
                     ),
-                    [],
+                    elements=[],
                 )
             ]
         )

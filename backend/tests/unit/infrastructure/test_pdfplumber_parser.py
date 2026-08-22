@@ -89,6 +89,11 @@ async def _parse(name: str, parser: PdfPlumberParser | None = None) -> list[Any]
     )
 
 
+def _pairs(parsed: list[Any]) -> list[tuple[Any, Any]]:
+    """Page and elements together, for assertions that need to compare the two."""
+    return [(item.page, item.elements) for item in parsed]
+
+
 def _snapshot(parsed: list[Any]) -> list[dict[str, Any]]:
     """Everything about the parse that is stable across runs."""
     return [
@@ -119,7 +124,7 @@ def _snapshot(parsed: list[Any]) -> list[dict[str, Any]]:
                 for element in elements
             ],
         }
-        for page, elements in parsed
+        for page, elements in _pairs(parsed)
     ]
 
 
@@ -143,36 +148,36 @@ class TestGoldenFile:
 class TestPages:
     async def test_one_page_record_per_page(self) -> None:
         parsed = await _parse("native_text_sample")
-        assert [page.page_number for page, _ in parsed] == [1, 2]
+        assert [item.page.page_number for item in parsed] == [1, 2]
 
     async def test_pages_carry_dimensions(self) -> None:
-        (page, _), *_ = await _parse("native_text_sample")
+        page = (await _parse("native_text_sample"))[0].page
         assert (page.width, page.height) == (612.0, 792.0)
 
     async def test_pages_are_scoped_to_the_caller(self) -> None:
         parsed = await _parse("native_text_sample")
-        for page, _ in parsed:
+        for page in (item.page for item in parsed):
             assert page.scope == _SCOPE
             assert page.document_id == _DOCUMENT_ID
 
     async def test_dense_prose_classifies_as_native_text(self) -> None:
-        (page, _), *_ = await _parse("native_text_sample")
+        page = (await _parse("native_text_sample"))[0].page
         assert page.kind is PageKind.NATIVE_TEXT
 
     async def test_a_page_with_nothing_on_it_is_still_recorded(self) -> None:
         parsed = await _parse("empty_page_sample")
         assert len(parsed) == 1
-        page, elements = parsed[0]
+        page, elements = parsed[0].page, parsed[0].elements
         assert page.page_number == 1
         assert list(elements) == []
 
     async def test_rotation_is_recorded(self) -> None:
-        (page, _), *_ = await _parse("rotated_sample")
+        page = (await _parse("rotated_sample"))[0].page
         assert page.rotation == 90
 
     async def test_rotated_pages_report_presented_dimensions(self) -> None:
         """A quarter-turned page is wider than it is tall, and is stored that way."""
-        (page, _), *_ = await _parse("rotated_sample")
+        page = (await _parse("rotated_sample"))[0].page
         assert page.width > page.height
 
 
@@ -183,42 +188,42 @@ class TestPages:
 
 class TestElements:
     async def test_a_page_of_prose_yields_a_heading_and_paragraphs(self) -> None:
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         assert elements[0].element_type is ElementType.HEADING
         assert all(e.element_type is ElementType.PARAGRAPH for e in elements[1:])
 
     async def test_every_element_records_how_it_was_obtained(self) -> None:
         parsed = await _parse("native_text_sample")
-        for _, elements in parsed:
+        for elements in (item.elements for item in parsed):
             assert all(e.processing_method is ProcessingMethod.NATIVE_TEXT for e in elements)
 
     async def test_reading_order_starts_at_zero_and_is_contiguous_per_page(self) -> None:
         parsed = await _parse("native_text_sample")
-        for _, elements in parsed:
+        for elements in (item.elements for item in parsed):
             assert [e.reading_order for e in elements] == list(range(len(elements)))
 
     async def test_elements_are_scoped_to_the_caller(self) -> None:
         parsed = await _parse("native_text_sample")
-        for _, elements in parsed:
+        for elements in (item.elements for item in parsed):
             for element in elements:
                 assert element.scope == _SCOPE
                 assert element.document_id == _DOCUMENT_ID
 
     async def test_element_page_number_matches_its_page(self) -> None:
         parsed = await _parse("native_text_sample")
-        for page, elements in parsed:
+        for page, elements in _pairs(parsed):
             assert all(e.page_number == page.page_number for e in elements)
 
     async def test_a_single_line_page_yields_one_element(self) -> None:
         parsed = await _parse("single_line_sample")
-        _, elements = parsed[0]
+        elements = parsed[0].elements
         assert len(elements) == 1
         assert elements[0].text.value == "Only one line."
 
     async def test_extracted_text_is_untrusted(self) -> None:
         """It came out of a file a student uploaded, so it is evidence, not instruction."""
         parsed = await _parse("single_line_sample")
-        _, elements = parsed[0]
+        elements = parsed[0].elements
         assert "Only one line." not in str(elements[0].text)
 
 
@@ -229,33 +234,33 @@ class TestElements:
 
 class TestParagraphGrouping:
     async def test_lines_at_ordinary_leading_join_one_paragraph(self) -> None:
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         body = elements[1]
         assert "chain rule" in body.text.value
         assert "tractable" in body.text.value
 
     async def test_a_wide_gap_starts_a_new_paragraph(self) -> None:
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         assert len(elements) > 1
 
     async def test_a_heading_does_not_absorb_the_paragraph_below_it(self) -> None:
         """The gap under a heading is modest next to the heading and generous next to
         the body, which is why the smaller of the two lines is the reference."""
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         assert elements[0].text.value == "Introduction to Backpropagation"
 
     async def test_a_larger_multiplier_groups_more_aggressively(self) -> None:
         """Raising the gap tolerance merges the paragraphs, but not the heading with
         them: a change of type size ends a block whatever the spacing allows."""
         loose = _parser(paragraph_gap_multiplier=100.0)
-        (_, elements), *_ = await _parse("native_text_sample", loose)
+        elements = (await _parse("native_text_sample", loose))[0].elements
         assert len(elements) == 2
         assert elements[0].element_type is ElementType.HEADING
         assert elements[1].element_type is ElementType.PARAGRAPH
 
     async def test_short_fragments_are_discarded(self) -> None:
         strict = _parser(min_element_characters=10_000)
-        (_, elements), *_ = await _parse("native_text_sample", strict)
+        elements = (await _parse("native_text_sample", strict))[0].elements
         assert list(elements) == []
 
 
@@ -266,19 +271,19 @@ class TestParagraphGrouping:
 
 class TestElementTyping:
     async def test_a_larger_opening_line_is_typed_as_a_heading(self) -> None:
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         assert elements[0].element_type is ElementType.HEADING
         assert elements[0].text.value == "Results and Discussion"
 
     async def test_bulleted_lines_are_typed_as_a_list(self) -> None:
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         lists = [e for e in elements if e.element_type is ElementType.LIST]
         assert len(lists) == 1
 
     async def test_list_items_keep_their_own_lines(self) -> None:
         """Prose wraps mid-sentence and rejoins with a space; list items do not wrap,
         and joining them that way runs them into a sentence nobody wrote."""
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         items = next(e for e in elements if e.element_type is ElementType.LIST)
         assert items.text.value.splitlines() == [
             "- Accuracy improved on every run",
@@ -287,7 +292,7 @@ class TestElementTyping:
         ]
 
     async def test_labelled_lines_are_typed_as_captions(self) -> None:
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         captions = [e for e in elements if e.element_type is ElementType.CAPTION]
         assert len(captions) == 2
         assert captions[0].text.value.startswith("Table 1:")
@@ -298,7 +303,7 @@ class TestElementTyping:
         is only possible because the comparison is against the page rather than a fixed
         size."""
         strict = _parser(element_classifier=_element_classifier(heading_size_ratio=10.0))
-        (_, elements), *_ = await _parse("structured_sample", strict)
+        elements = (await _parse("structured_sample", strict))[0].elements
         assert elements[0].element_type is ElementType.PARAGRAPH
 
 
@@ -309,12 +314,12 @@ class TestElementTyping:
 
 class TestTableAndFigureRegions:
     async def test_a_ruled_table_is_found(self) -> None:
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         tables = [e for e in elements if e.element_type is ElementType.TABLE]
         assert len(tables) == 1
 
     async def test_the_table_carries_its_rows(self) -> None:
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         table = next(e for e in elements if e.element_type is ElementType.TABLE)
         assert table.text.value.splitlines() == [
             "Run | Accuracy",
@@ -323,7 +328,7 @@ class TestTableAndFigureRegions:
         ]
 
     async def test_the_table_carries_a_bounding_box(self) -> None:
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         table = next(e for e in elements if e.element_type is ElementType.TABLE)
         assert table.bounding_box is not None
         assert table.bounding_box.area > 0
@@ -331,7 +336,7 @@ class TestTableAndFigureRegions:
     async def test_table_text_is_not_also_read_as_prose(self) -> None:
         """Left in, the cells would appear twice, and the flattened copy is the one that
         mixes rows together and loses which column a number came from."""
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         prose = [
             e.text.value
             for e in elements
@@ -340,14 +345,14 @@ class TestTableAndFigureRegions:
         assert not any("0.91" in text for text in prose)
 
     async def test_an_embedded_image_is_found(self) -> None:
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         figures = [e for e in elements if e.element_type is ElementType.FIGURE]
         assert len(figures) == 1
 
     async def test_the_figure_carries_a_box_and_no_text(self) -> None:
         """A figure has nothing to say until something looks at it. Inventing a
         description here would put text into the document that is not in it."""
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         figure = next(e for e in elements if e.element_type is ElementType.FIGURE)
         assert figure.text.value == ""
         assert figure.bounding_box is not None
@@ -355,13 +360,13 @@ class TestTableAndFigureRegions:
     async def test_elements_are_ordered_down_the_page(self) -> None:
         """Tables and figures are found by different means from text and have to be
         interleaved with it, not appended after it."""
-        (_, elements), *_ = await _parse("structured_sample")
+        elements = (await _parse("structured_sample"))[0].elements
         tops = [e.bounding_box.y1 for e in elements if e.bounding_box is not None]
         assert tops == sorted(tops, reverse=True)
 
     async def test_a_page_without_either_yields_neither(self) -> None:
         parsed = await _parse("native_text_sample")
-        for _, elements in parsed:
+        for elements in (item.elements for item in parsed):
             assert not any(
                 e.element_type in {ElementType.TABLE, ElementType.FIGURE}
                 for e in elements
@@ -377,14 +382,14 @@ class TestBoundingBoxes:
     async def test_boxes_use_a_bottom_left_origin(self) -> None:
         """pdfplumber measures downwards from the top; a bounding box measures upwards
         from the bottom, so the first element on a page must sit higher, not lower."""
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         first, last = elements[0].bounding_box, elements[-1].bounding_box
         assert first is not None and last is not None
         assert first.y0 > last.y1
 
     async def test_boxes_stay_within_the_page(self) -> None:
         parsed = await _parse("native_text_sample")
-        for page, elements in parsed:
+        for page, elements in _pairs(parsed):
             for element in elements:
                 box = element.bounding_box
                 assert box is not None
@@ -392,7 +397,7 @@ class TestBoundingBoxes:
                 assert 0 <= box.y0 < box.y1 <= page.height
 
     async def test_a_paragraph_box_encloses_all_its_lines(self) -> None:
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         multi_line = elements[1].bounding_box
         assert multi_line is not None
         # Several lines at ten-point leading are taller than any single line.
@@ -408,14 +413,14 @@ class TestMultiColumnReadingOrder:
     async def test_the_left_column_is_read_before_the_right(self) -> None:
         """The failure this prevents is silent: ordering by height alone interleaves the
         columns line by line, and the text is concatenated before anyone can notice."""
-        (_, elements), *_ = await _parse("two_column_sample")
+        elements = (await _parse("two_column_sample"))[0].elements
         text = [e.text.value for e in elements]
         left = next(i for i, t in enumerate(text) if t.startswith("Left column line 1"))
         right = next(i for i, t in enumerate(text) if t.startswith("Right column line 1"))
         assert left < right
 
     async def test_a_column_is_not_broken_across_its_lines(self) -> None:
-        (_, elements), *_ = await _parse("two_column_sample")
+        elements = (await _parse("two_column_sample"))[0].elements
         upper_left = next(
             e for e in elements if e.text.value.startswith("Left column line 1")
         )
@@ -423,19 +428,19 @@ class TestMultiColumnReadingOrder:
         assert "Right column" not in upper_left.text.value
 
     async def test_column_text_is_never_woven_together(self) -> None:
-        (_, elements), *_ = await _parse("two_column_sample")
+        elements = (await _parse("two_column_sample"))[0].elements
         for element in elements:
             text = element.text.value
             assert not ("Left column" in text and "Right column" in text)
 
     async def test_a_spanning_heading_is_read_before_both_columns(self) -> None:
-        (_, elements), *_ = await _parse("two_column_sample")
+        elements = (await _parse("two_column_sample"))[0].elements
         assert elements[0].text.value == "A Heading Across Both Columns"
 
     async def test_a_spanning_figure_separates_the_bands(self) -> None:
         """Everything above the figure is read before it and everything below after,
         rather than the columns running straight past it."""
-        (_, elements), *_ = await _parse("two_column_sample")
+        elements = (await _parse("two_column_sample"))[0].elements
         text = [e.text.value for e in elements]
         figure = next(
             i for i, e in enumerate(elements) if e.element_type is ElementType.FIGURE
@@ -446,7 +451,7 @@ class TestMultiColumnReadingOrder:
 
     async def test_a_single_column_page_is_unaffected(self) -> None:
         """Column handling must not disturb the ordinary case, which is most pages."""
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         tops = [e.bounding_box.y1 for e in elements if e.bounding_box is not None]
         assert tops == sorted(tops, reverse=True)
 
@@ -458,16 +463,16 @@ class TestMultiColumnReadingOrder:
 
 class TestHeadingPaths:
     async def test_content_carries_the_heading_above_it(self) -> None:
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         body = elements[1]
         assert body.heading_path.segments == ("Introduction to Backpropagation",)
 
     async def test_a_heading_carries_its_own_path(self) -> None:
-        (_, elements), *_ = await _parse("native_text_sample")
+        elements = (await _parse("native_text_sample"))[0].elements
         assert elements[0].heading_path.leaf == "Introduction to Backpropagation"
 
     async def test_a_smaller_heading_nests_beneath_a_larger_one(self) -> None:
-        (_, elements), *_ = await _parse("section_across_pages_sample")
+        elements = (await _parse("section_across_pages_sample"))[0].elements
         section = elements[1]
         assert section.heading_path.segments == ("Chapter Three", "Gradient Descent")
 
@@ -476,7 +481,7 @@ class TestHeadingPaths:
         per page would show it as belonging to nothing, which is exactly where a chunk
         has the least context of its own to fall back on."""
         parsed = await _parse("section_across_pages_sample")
-        (_, second_page_elements) = parsed[1]
+        second_page_elements = parsed[1].elements
         assert second_page_elements[0].heading_path.segments == (
             "Chapter Three",
             "Gradient Descent",
@@ -484,13 +489,13 @@ class TestHeadingPaths:
 
     async def test_a_new_heading_replaces_the_previous_one(self) -> None:
         parsed = await _parse("native_text_sample")
-        (_, second) = parsed[1]
+        second = parsed[1].elements
         assert second[0].heading_path.segments == ("The Backward Pass in Detail",)
 
     async def test_two_headings_of_different_sizes_stay_separate(self) -> None:
         """A chapter title immediately above a section title sits at ordinary leading,
         and without a size break the two would be joined into one element."""
-        (_, elements), *_ = await _parse("section_across_pages_sample")
+        elements = (await _parse("section_across_pages_sample"))[0].elements
         assert elements[0].text.value == "Chapter Three"
         assert elements[1].text.value == "Gradient Descent"
 
@@ -506,14 +511,14 @@ class TestPagesLeftForRecognition:
             min_native_characters=10**9, image_coverage_threshold=0.0
         )
         parsed = await _parse("native_text_sample", _parser(always_scanned))
-        for page, elements in parsed:
+        for page, elements in _pairs(parsed):
             assert page.kind is PageKind.SCANNED
             assert list(elements) == []
 
     async def test_complex_pages_return_no_elements(self) -> None:
         always_complex = _classifier(complex_vector_drawing_threshold=0)
         parsed = await _parse("native_text_sample", _parser(always_complex))
-        for page, elements in parsed:
+        for page, elements in _pairs(parsed):
             assert page.kind is PageKind.COMPLEX
             assert list(elements) == []
 
@@ -523,7 +528,7 @@ class TestPagesLeftForRecognition:
             "native_text_sample",
             _parser(_classifier(min_native_characters=10**9, image_coverage_threshold=0.0)),
         )
-        assert [page.page_number for page, _ in parsed] == [1, 2]
+        assert [item.page.page_number for item in parsed] == [1, 2]
 
 
 # ---------------------------------------------------------------------------
@@ -577,3 +582,80 @@ class TestParsingDoesNotBlockTheLoop:
             ticker.cancel()
 
         assert ticks > 0
+
+
+# ---------------------------------------------------------------------------
+# Tables
+# ---------------------------------------------------------------------------
+
+
+class TestTables:
+    async def test_a_ruled_table_is_read_into_a_record(self) -> None:
+        tables = (await _parse("structured_sample"))[0].tables
+        assert len(tables) == 1
+
+    async def test_its_columns_are_named_from_the_header_row(self) -> None:
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.headers == ("Run", "Accuracy")
+
+    async def test_its_data_rows_survive_intact(self) -> None:
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.rows == (("1", "0.91"), ("2", "0.94"))
+
+    async def test_a_column_can_be_read_back_by_name(self) -> None:
+        # The whole point of the record: the joined element text cannot answer this.
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.column("Accuracy") == ("0.91", "0.94")
+
+    async def test_it_names_the_element_it_was_read_from(self) -> None:
+        parsed = (await _parse("structured_sample"))[0]
+        table = parsed.tables[0]
+        element_ids = {e.id for e in parsed.elements if e.element_type is ElementType.TABLE}
+        assert table.source_element_id in element_ids
+
+    async def test_it_is_scoped_to_the_caller(self) -> None:
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.scope == _SCOPE
+        assert table.document_id == _DOCUMENT_ID
+
+    async def test_it_carries_the_page_it_sits_on(self) -> None:
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.page_number == 1
+
+    async def test_it_carries_a_region_that_can_be_highlighted(self) -> None:
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.bounding_box.x1 > table.bounding_box.x0
+        assert table.bounding_box.y1 > table.bounding_box.y0
+
+    async def test_the_caption_below_it_is_attached(self) -> None:
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.caption is not None
+        assert "Accuracy by run" in table.caption.value
+
+    async def test_a_figures_caption_is_not_claimed_by_the_table(self) -> None:
+        # The same page carries "Figure 1: ...". Attaching it here would put a
+        # description of a loss curve onto a table of accuracies.
+        table = (await _parse("structured_sample"))[0].tables[0]
+        assert table.caption is not None
+        assert "Loss curve" not in table.caption.value
+
+    async def test_a_page_with_no_table_produces_none(self) -> None:
+        parsed = await _parse("native_text_sample")
+        assert all(item.tables == [] for item in parsed)
+
+    async def test_a_page_left_for_recognition_produces_no_tables(self) -> None:
+        always_scanned = _classifier(
+            min_native_characters=10**9, image_coverage_threshold=0.0
+        )
+        parsed = await _parse("structured_sample", _parser(always_scanned))
+        assert all(list(item.tables) == [] for item in parsed)
+
+    async def test_the_element_still_carries_the_joined_reading(self) -> None:
+        # The record and the element describe the same region for different purposes;
+        # adding one must not empty the other, which is what reading order matches on.
+        parsed = (await _parse("structured_sample"))[0]
+        table_elements = [
+            e for e in parsed.elements if e.element_type is ElementType.TABLE
+        ]
+        assert table_elements
+        assert "0.91" in table_elements[0].text.value

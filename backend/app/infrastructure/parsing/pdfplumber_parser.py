@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -33,18 +34,18 @@ import pdfplumber
 import structlog
 
 from app.domain.documents.element_classifier import ElementClassifier, ElementSignals
-from app.domain.documents.entities import DocumentElement, DocumentPage
+from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
 from app.domain.documents.heading_stack import HeadingStack
 from app.domain.documents.page_classifier import PageClassifier, PageSignals
 from app.domain.documents.reading_order import LayoutBox, ReadingOrderResolver
+from app.domain.documents.table_structure import TableStructure, resolve_table_structure
+from app.domain.documents.tables import DocumentTable
 from app.domain.enums import ElementType, PageKind, ProcessingMethod
 from app.domain.errors import UploadValidationError
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox, UntrustedText
 
 _log = structlog.get_logger(__name__)
-
-ParsedPage = tuple[DocumentPage, Sequence[DocumentElement]]
 
 # (x0, top, x1, bottom) in pdfplumber's downward-measured coordinates.
 _Region = tuple[float, float, float, float]
@@ -66,6 +67,12 @@ class _Draft:
     left: float
     right: float
     font_size: float = 0.0
+
+    # The cell grid, on table drafts only. Carried here rather than re-derived later
+    # because this is the one moment the page object is open and the cells are known;
+    # recovering them afterwards would mean reopening the file and detecting the same
+    # region a second time, with the chance of detecting it differently.
+    grid: tuple[tuple[str | None, ...], ...] | None = None
 
     @property
     def box(self) -> LayoutBox:
@@ -150,7 +157,8 @@ class PdfPlumberParser:
             "pdf_parsed",
             document_id=str(document_id),
             pages=len(parsed),
-            elements=sum(len(elements) for _, elements in parsed),
+            elements=sum(len(item.elements) for item in parsed),
+            tables=sum(len(item.tables) for item in parsed),
         )
         return parsed
 
@@ -182,13 +190,13 @@ class PdfPlumberParser:
         # The port's contract: pages needing recognition come back without elements, so
         # a caller cannot mistake a partial read for a complete one.
         if kind in {PageKind.SCANNED, PageKind.COMPLEX}:
-            return document_page, []
+            return ParsedPage(page=document_page, elements=[], tables=[])
 
-        elements = self._elements_for(
+        elements, tables = self._elements_for(
             page, page_number, document_id=document_id, scope=scope,
             now=now, headings=headings,
         )
-        return document_page, elements
+        return ParsedPage(page=document_page, elements=elements, tables=tables)
 
     def _elements_for(
         self,
@@ -199,8 +207,8 @@ class PdfPlumberParser:
         scope: ScopeContext,
         now: datetime,
         headings: HeadingStack,
-    ) -> list[DocumentElement]:
-        """Every element on the page, ordered down it.
+    ) -> tuple[list[DocumentElement], list[DocumentTable]]:
+        """Every element on the page, ordered down it, and every table read from it.
 
         Text runs, tables and figures are gathered separately because they are found in
         different ways, then interleaved by position. Sorting at the end rather than
@@ -224,6 +232,10 @@ class PdfPlumberParser:
         ]
 
         elements: list[DocumentElement] = []
+        # Kept beside the elements while both are built, because a table record needs
+        # the id of the element it came from and that id does not exist until here.
+        table_seeds: list[tuple[DocumentElement, _Draft]] = []
+
         for order, draft in enumerate(ordered):
             # Asked once per element, in reading order, so the answer reflects the
             # section the reader would be in at that point.
@@ -231,23 +243,40 @@ class PdfPlumberParser:
                 heading_path = headings.enter(draft.text, size=draft.font_size)
             else:
                 heading_path = headings.current
-            elements.append(
-                DocumentElement(
-                    id=uuid.uuid4(),
-                    user_id=scope.user_id,
-                    knowledge_base_id=scope.knowledge_base_id,
+            element = DocumentElement(
+                id=uuid.uuid4(),
+                user_id=scope.user_id,
+                knowledge_base_id=scope.knowledge_base_id,
+                document_id=document_id,
+                page_number=page_number,
+                element_type=draft.element_type,
+                text=UntrustedText(draft.text),
+                reading_order=order,
+                processing_method=ProcessingMethod.NATIVE_TEXT,
+                created_at=now,
+                bounding_box=_flip(draft, page_height),
+                heading_path=heading_path,
+            )
+            elements.append(element)
+            if draft.grid is not None:
+                table_seeds.append((element, draft))
+
+        tables = [
+            table
+            for element, draft in table_seeds
+            if (
+                table := _build_table(
+                    element,
+                    draft,
+                    elements=elements,
+                    scope=scope,
                     document_id=document_id,
-                    page_number=page_number,
-                    element_type=draft.element_type,
-                    text=UntrustedText(draft.text),
-                    reading_order=order,
-                    processing_method=ProcessingMethod.NATIVE_TEXT,
-                    created_at=now,
-                    bounding_box=_flip(draft, page_height),
-                    heading_path=heading_path,
+                    now=now,
                 )
             )
-        return elements
+            is not None
+        ]
+        return elements, tables
 
     def _text_drafts(
         self,
@@ -435,6 +464,115 @@ def _line_height(line: dict[str, Any]) -> float:
 # ---------------------------------------------------------------------------
 
 
+# A caption naming a table specifically. The element classifier already recognises
+# captions of every kind by their leading label; this narrows that to the ones a table
+# can claim, so a figure's caption directly above a table is not attached to the table.
+_TABLE_CAPTION = re.compile(r"^\s*(?:table|tbl\.?)\s*\.?\s*\d", re.IGNORECASE)
+
+# How far from a table's edge a caption may sit and still belong to it, as a multiple of
+# the caption's own height. Captions are set close to what they describe; a limit stated
+# in the caption's own terms travels between page sizes better than one in points.
+_CAPTION_REACH = 3.0
+
+
+def _caption_for(
+    table: DocumentElement,
+    elements: Sequence[DocumentElement],
+) -> UntrustedText | None:
+    """The nearest table caption above or below, if one sits close enough.
+
+    Both directions are searched because the convention is not settled — most style
+    guides put a table's caption above it and a figure's below, but plenty of textbooks
+    do the opposite, and a caption on the wrong side is still that table's caption.
+    Nearest wins, so a page with a caption on each side attaches the closer one.
+    """
+    if table.bounding_box is None:
+        return None
+
+    best: tuple[float, DocumentElement] | None = None
+
+    for candidate in elements:
+        if candidate.element_type is not ElementType.CAPTION:
+            continue
+        if candidate.bounding_box is None:
+            continue
+        if not _TABLE_CAPTION.match(candidate.text.value):
+            continue
+
+        height = candidate.bounding_box.y1 - candidate.bounding_box.y0
+        # Gap between the two boxes: positive when the caption sits clear of the table,
+        # zero when they touch or overlap.
+        gap = max(
+            table.bounding_box.y0 - candidate.bounding_box.y1,
+            candidate.bounding_box.y0 - table.bounding_box.y1,
+            0.0,
+        )
+        if gap > height * _CAPTION_REACH:
+            continue
+        if best is None or gap < best[0]:
+            best = (gap, candidate)
+
+    return best[1].text if best else None
+
+
+def _build_table(
+    element: DocumentElement,
+    draft: _Draft,
+    *,
+    elements: Sequence[DocumentElement],
+    scope: ScopeContext,
+    document_id: UUID,
+    now: datetime,
+) -> DocumentTable | None:
+    """Read one detected region into a table record, or nothing if it holds no text.
+
+    A region whose cells are all blank is a detection error rather than an empty table,
+    so it produces no record. The element stays either way — it still marks a place on
+    the page — but nothing claims to have read a table there.
+    """
+    if draft.grid is None or element.bounding_box is None:
+        return None
+
+    structure = resolve_table_structure(draft.grid)
+    if structure is None:
+        return None
+
+    return DocumentTable(
+        id=uuid.uuid4(),
+        user_id=scope.user_id,
+        knowledge_base_id=scope.knowledge_base_id,
+        document_id=document_id,
+        source_element_id=element.id,
+        page_number=element.page_number,
+        headers=structure.headers,
+        rows=structure.rows,
+        units=structure.units,
+        caption=_caption_for(element, elements),
+        bounding_box=element.bounding_box,
+        created_at=now,
+        # A grid that arrived ragged, or whose columns had to be named by position, was
+        # read less certainly than one that did neither. Stated as a score rather than a
+        # flag so a reader downstream can weigh it alongside everything else.
+        confidence=_table_confidence(structure),
+    )
+
+
+def _table_confidence(structure: TableStructure) -> float:
+    """How well the grid read, as a score between zero and one.
+
+    Deliberately coarse. There is no calibration behind these numbers yet — they encode
+    an ordering, that a clean read beats a ragged one and that both beat a table whose
+    columns nobody named, and that ordering is what a caller needs before any of it has
+    been measured against real documents.
+    """
+    score = 1.0
+    if structure.was_ragged:
+        score -= 0.3
+    if structure.header_assumed:
+        score -= 0.2
+    return max(score, 0.0)
+
+
 def _table_regions(page: Any) -> list[_Region]:
     try:
         return [tuple(float(value) for value in table.bbox) for table in page.find_tables()]  # type: ignore[misc]
@@ -446,11 +584,13 @@ def _table_regions(page: Any) -> list[_Region]:
 
 
 def _table_drafts(page: Any, regions: list[_Region]) -> Iterator[_Draft]:
-    """One element per detected table, carrying its cell text laid out in rows.
+    """One element per detected table, carrying both a joined reading and the raw grid.
 
-    The text is joined rather than structured. Headers, units and row grouping are a
-    later concern; what matters here is that the table exists, where it is, and that its
-    contents are not scattered through the surrounding prose.
+    The joined text is what puts the table into reading order among the paragraphs, and
+    is what a search over element text will match. The grid alongside it is what lets the
+    same region become a table record with named columns — a question about a particular
+    column cannot be answered from the joined form, because which value sat under which
+    heading is exactly what joining discards.
     """
     for region, table in zip(regions, page.find_tables(), strict=False):
         rows = table.extract()
@@ -465,6 +605,7 @@ def _table_drafts(page: Any, regions: list[_Region]) -> Iterator[_Draft]:
             bottom=bottom,
             left=x0,
             right=x1,
+            grid=tuple(tuple(row) for row in rows),
         )
 
 

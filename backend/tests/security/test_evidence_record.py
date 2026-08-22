@@ -38,6 +38,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
+from app.application.queries.retrieve_evidence import RetrievalResult
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import AnswerFidelity, ChunkType, RetrieverKind
 from app.domain.errors import ScopeViolationError
@@ -98,7 +99,13 @@ def _evidence(text: str, *, scope: ScopeContext = _SCOPE, rank: int = 0) -> Evid
 
 def _use_case(evidence: list[Evidence], repo: AsyncMock, gateway: MagicMock) -> AnswerUseCase:
     retrieve = AsyncMock()
-    retrieve.execute = AsyncMock(return_value=evidence)
+    retrieve.execute = AsyncMock(
+        return_value=RetrievalResult(
+            evidence=evidence,
+            standalone_query="What is backpropagation?",
+            was_rewritten=False,
+        )
+    )
 
     entailment = AsyncMock()
     entailment.check_claim = AsyncMock(return_value=())

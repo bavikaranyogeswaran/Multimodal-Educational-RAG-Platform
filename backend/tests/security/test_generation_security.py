@@ -34,6 +34,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
+from app.application.queries.retrieve_evidence import RetrievalResult
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import AnswerFidelity, ChunkType, ClaimStatus, RetrieverKind
 from app.domain.errors import GenerationRejectedError
@@ -129,7 +130,13 @@ def _use_case(
     faithfulness.check_answer = AsyncMock(return_value=AnswerFidelity.FAITHFUL)
 
     retrieve = AsyncMock()
-    retrieve.execute = AsyncMock(return_value=evidence)
+    retrieve.execute = AsyncMock(
+        return_value=RetrievalResult(
+            evidence=evidence,
+            standalone_query="What is backpropagation?",
+            was_rewritten=False,
+        )
+    )
 
     @asynccontextmanager
     async def _uow() -> AsyncIterator[AsyncMock]:
