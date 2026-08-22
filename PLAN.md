@@ -1454,7 +1454,10 @@ remaining stages — which is why the checkbox count reads lower than the percen
 
 - [x] Conversation and message persistence; user message stored **before** generation; statuses
       `RECEIVED`/`COMPLETED`/`FAILED`; active document, page, figure and table
-- [ ] `PROCESSING` status never used — a message goes `RECEIVED` → terminal
+- [x] `PROCESSING` status — before streaming begins, a placeholder assistant message with
+      `PROCESSING` status is committed; `_record_turn` merges the final state over it by
+      primary key. A server crash during generation leaves the row as `PROCESSING` rather
+      than absent, preventing the incomplete turn from being replayed as a completed one
 - [ ] **`rolling_summary`** — column exists, absent from the `Conversation` entity, never written.
       Deferrable: nothing reads it until Phase 14
 - [x] Query rewriting — follow-ups resolved to standalone queries before search

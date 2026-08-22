@@ -280,6 +280,27 @@ class AnswerUseCase:
 
         labeled = _labeled(evidence)
 
+        # Save a placeholder so the answer row exists in the DB before generation begins.
+        # If the server crashes during streaming the row stays as PROCESSING — a tombstone
+        # that prevents the incomplete turn from being replayed as a completed one.
+        assistant_id = uuid.uuid4()
+        assistant_created_at = datetime.now(UTC)
+        async with self._uow() as repo:
+            await repo.save_message(
+                command.scope,
+                Message(
+                    id=assistant_id,
+                    conversation_id=command.conversation_id,
+                    user_id=command.scope.user_id,
+                    knowledge_base_id=command.scope.knowledge_base_id,
+                    role=MessageRole.ASSISTANT,
+                    status=MessageStatus.PROCESSING,
+                    content=UntrustedText("(generating)"),
+                    created_at=assistant_created_at,
+                    updated_at=assistant_created_at,
+                ),
+            )
+
         request = self._context_builder.build(
             ContextInputs(
                 model_task=ModelTask.ANSWER_GENERATION,
@@ -376,6 +397,8 @@ class AnswerUseCase:
                     uow,
                     scope=scope,
                     conversation_id=conv_id,
+                    assistant_message_id=assistant_id,
+                    assistant_created_at=assistant_created_at,
                     status=_outcome(failed=failed, abandoned=abandoned),
                     answer_text=answer_text,
                     usage=usage,
@@ -406,6 +429,8 @@ async def _record_turn(
     *,
     scope: ScopeContext,
     conversation_id: uuid.UUID,
+    assistant_message_id: uuid.UUID,
+    assistant_created_at: datetime,
     status: MessageStatus,
     answer_text: str | None,
     usage: GenerationUsage | None,
@@ -417,17 +442,19 @@ async def _record_turn(
     Runs however the turn ended, because all three records are worth having when it ended
     badly. It opens a fresh unit of work: by now the response has been streamed and the
     request that started it is over, so there is no caller's transaction left to write to.
+    The merge upserts by primary key, replacing the PROCESSING placeholder written before
+    streaming began with the terminal-state record.
     """
     now = datetime.now(UTC)
     assistant_message = Message(
-        id=uuid.uuid4(),
+        id=assistant_message_id,
         conversation_id=conversation_id,
         user_id=scope.user_id,
         knowledge_base_id=scope.knowledge_base_id,
         role=MessageRole.ASSISTANT,
         status=status,
         content=UntrustedText(answer_text or _PLACEHOLDER[status]),
-        created_at=now,
+        created_at=assistant_created_at,
         updated_at=now,
         # Absent when the provider reported nothing, or when the turn ended before a
         # stream was drained. Left null in that case rather than written as zero, which

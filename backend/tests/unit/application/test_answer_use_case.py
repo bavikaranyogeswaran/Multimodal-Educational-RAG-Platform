@@ -465,21 +465,21 @@ class TestMessagePersistence:
         repo = _mock_repo()
         stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
-        # Two calls: user message + assistant message.
-        assert repo.save_message.await_count == 2
+        # Three calls: user message, PROCESSING placeholder, final assistant.
+        assert repo.save_message.await_count == 3
 
     async def test_assistant_message_content_is_validated_answer_text(self) -> None:
         repo = _mock_repo()
         stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert assistant.content.value == "Test answer."
 
     async def test_assistant_message_has_completed_status(self) -> None:
         repo = _mock_repo()
         stream = await _make_use_case(repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert assistant.role is MessageRole.ASSISTANT
         assert assistant.status is MessageStatus.COMPLETED
 
@@ -500,8 +500,8 @@ class TestMessagePersistence:
         except RuntimeError:
             pass
 
-        assert repo.save_message.await_count == 2
-        failed: Message = repo.save_message.call_args_list[1].args[1]
+        assert repo.save_message.await_count == 3
+        failed: Message = repo.save_message.call_args_list[-1].args[1]
         assert failed.role is MessageRole.ASSISTANT
         assert failed.status is MessageStatus.FAILED
 
@@ -521,8 +521,9 @@ class TestRewrittenQueryPersistence:
         await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
 
         # The rewrite update is the second save_message call — the first stores the
-        # original user message, the second patches in the standalone form.
-        assert repo.save_message.await_count == 2
+        # original user message, the second patches in the standalone form, the third
+        # writes the PROCESSING placeholder.
+        assert repo.save_message.await_count == 3
         rewrite_call: Message = repo.save_message.call_args_list[1].args[1]
         assert rewrite_call.role is MessageRole.USER
         assert rewrite_call.rewritten_query == "What is the role of ATP in aerobic respiration?"
@@ -531,8 +532,8 @@ class TestRewrittenQueryPersistence:
         repo = _mock_repo()
         await _make_use_case(repo=repo).execute(_BASE_CMD)
 
-        # Only the initial user message — no follow-up save for the rewrite.
-        assert repo.save_message.await_count == 1
+        # Two calls: the user message and the PROCESSING placeholder.
+        assert repo.save_message.await_count == 2
 
     async def test_rewritten_query_uses_user_message_id(self) -> None:
         repo = _mock_repo()
@@ -553,8 +554,8 @@ class TestRewrittenQueryPersistence:
         stream = await _make_use_case(retrieve=retrieve, repo=repo, opened=opened).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
-        # Three blocks: question, rewrite update, answer.
-        assert len(opened) == 3
+        # Four blocks: question, rewrite update, PROCESSING placeholder, answer.
+        assert len(opened) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -563,27 +564,26 @@ class TestRewrittenQueryPersistence:
 
 
 class TestTransactionBoundaries:
-    async def test_question_is_committed_before_the_stream_begins(self) -> None:
+    async def test_question_and_processing_placeholder_committed_before_stream_begins(self) -> None:
         opened: list[str] = []
         repo = _mock_repo()
         await _make_use_case(repo=repo, opened=opened).execute(_BASE_CMD)
 
-        # One block, opened and closed, holding the question — durable before a single
-        # token has been generated.
-        assert len(opened) == 1
-        assert repo.save_message.await_count == 1
+        # Two blocks before any token is produced: question (so it stays recorded even if
+        # generation fails) and the PROCESSING placeholder (so a crash leaves a tombstone).
+        assert len(opened) == 2
+        assert repo.save_message.await_count == 2
 
-    async def test_answer_is_written_in_a_second_transaction(self) -> None:
+    async def test_answer_is_written_in_a_third_transaction(self) -> None:
         opened: list[str] = []
         repo = _mock_repo()
         stream = await _make_use_case(repo=repo, opened=opened).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
-        # The first block closed while the handler was still running; this one opens
-        # after the response has been streamed, which is why it cannot be the same one.
-        assert len(opened) == 2
+        # Three blocks: question, PROCESSING placeholder, final answer.
+        assert len(opened) == 3
 
-    async def test_second_transaction_opens_even_when_generation_fails(self) -> None:
+    async def test_answer_transaction_opens_even_when_generation_fails(self) -> None:
         async def _failing() -> AsyncIterator[str]:
             yield "partial"
             raise RuntimeError("model error")
@@ -599,15 +599,16 @@ class TestTransactionBoundaries:
         except RuntimeError:
             pass
 
-        assert len(opened) == 2
+        assert len(opened) == 3
 
-    async def test_no_second_transaction_if_the_stream_is_never_consumed(self) -> None:
+    async def test_processing_placeholder_written_even_when_stream_not_consumed(self) -> None:
         opened: list[str] = []
         await _make_use_case(opened=opened).execute(_BASE_CMD)
 
-        # Nothing was generated, so there is no answer to store and no reason to open
-        # a transaction to store it in.
-        assert len(opened) == 1
+        # Two blocks even without a consumer: question and PROCESSING placeholder. The
+        # placeholder is the tombstone that shows generation was started but never
+        # finished — the answer block only opens when the stream is actually consumed.
+        assert len(opened) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +639,7 @@ class TestRetrievalChunkPersistence:
         stream = await _make_use_case(retrieve=retrieve, repo=repo).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert repo.save_retrieval_chunks.call_args.args[1] == assistant.id
 
     async def test_carries_every_evidence_item_that_reached_the_prompt(self) -> None:
@@ -678,8 +679,10 @@ class TestRetrievalChunkPersistence:
         ).execute(_BASE_CMD)
         _ = [t async for t in stream]
 
-        # The record carries a foreign key to the message, so the message is written first.
-        assert call_order == ["message", "message", "evidence"]
+        # Ordering: user message, PROCESSING placeholder, final assistant message, then
+        # evidence. The retrieval-chunk record has a FK to the assistant message, so
+        # the message must land before the chunks regardless of which write produced it.
+        assert call_order == ["message", "message", "message", "evidence"]
 
     async def test_still_written_when_generation_fails(self) -> None:
         async def _failing() -> AsyncIterator[str]:
@@ -885,8 +888,8 @@ class TestValidationPipeline:
         except GenerationRejectedError:
             pass
 
-        assert repo.save_message.await_count == 2
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assert repo.save_message.await_count == 3
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert assistant.status is MessageStatus.FAILED
 
 
@@ -911,7 +914,7 @@ class TestCitationPersistence:
         async for _ in stream:
             pass
 
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert repo.save_citations.await_count == 1
         assert repo.save_citations.call_args.args[1] == assistant.id
 
@@ -985,7 +988,7 @@ class TestModelMetadata:
         stream = await use_case.execute(_BASE_CMD)
         async for _ in stream:
             pass
-        result: Message = repo.save_message.call_args_list[1].args[1]
+        result: Message = repo.save_message.call_args_list[-1].args[1]
         return result
 
     async def test_records_the_model_that_answered(self) -> None:
@@ -1045,7 +1048,7 @@ class TestModelMetadata:
         except GenerationRejectedError:
             pass
 
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert assistant.status is MessageStatus.FAILED
         assert assistant.model_id == "gemma3:4b"
         assert assistant.prompt_tokens == 812
@@ -1104,7 +1107,7 @@ class TestPromptVersion:
         async for _ in stream:
             pass
 
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert assistant.prompt_version == PROMPT_VERSION
 
     async def test_is_not_recorded_on_the_question(self) -> None:
@@ -1130,7 +1133,7 @@ class TestPromptVersion:
         except GenerationRejectedError:
             pass
 
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert assistant.status is MessageStatus.FAILED
         assert assistant.prompt_version == PROMPT_VERSION
 
@@ -1179,7 +1182,7 @@ class TestAbandonedTurn:
 
     @staticmethod
     def _assistant(repo: AsyncMock) -> Message:
-        result: Message = repo.save_message.call_args_list[1].args[1]
+        result: Message = repo.save_message.call_args_list[-1].args[1]
         return result
 
     async def test_closing_the_stream_records_the_turn_as_cancelled(self) -> None:
@@ -1247,7 +1250,7 @@ class TestAbandonedTurn:
         await agen.asend(None)
         await agen.aclose()
 
-        assert repo.save_message.await_count == 2
+        assert repo.save_message.await_count == 3
         assert repo.save_retrieval_chunks.await_count == 1
         assert repo.save_citations.await_count == 1
 
@@ -1631,7 +1634,7 @@ class TestPartialAbstention:
         async for _ in stream:
             pass
 
-        assistant: Message = repo.save_message.call_args_list[1].args[1]
+        assistant: Message = repo.save_message.call_args_list[-1].args[1]
         assert assistant.status is MessageStatus.COMPLETED
 
     async def test_a_contradiction_is_still_refused(self) -> None:
