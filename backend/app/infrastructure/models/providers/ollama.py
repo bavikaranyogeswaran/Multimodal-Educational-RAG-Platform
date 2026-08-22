@@ -1,13 +1,14 @@
-"""Ollama model gateway — text generation via the /api/chat endpoint.
+"""Ollama model gateway — text generation and multimodal inference via /api/chat.
 
 Satisfies ModelGatewayPort for a locally-running Ollama server. Both
 non-streaming (generate) and token-streaming (generate_stream) are supported.
-Image inference is not yet implemented (generate_with_image raises
-UnsupportedCapabilityError).
+Image inference is implemented via Ollama's images field in chat messages;
+the image is base64-encoded and attached to the query message.
 """
 
 from __future__ import annotations
 
+import base64 as _base64
 import json as _json
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -16,7 +17,7 @@ from typing import Any
 import httpx
 
 from app.domain.enums import DataBoundary, ModelTask
-from app.domain.errors import ProviderError, UnsupportedCapabilityError
+from app.domain.errors import ProviderError
 from app.domain.models.entities import GenerationUsage, ModelRequest, ModelResponse
 from app.domain.ports.model_gateway import ModelProfile
 from app.domain.values import UntrustedText
@@ -26,11 +27,12 @@ from app.infrastructure.models.providers.prompt import (
     build_chat_messages,
 )
 
-_ALL_TEXT_TASKS: frozenset[ModelTask] = frozenset(
+_ALL_TASKS: frozenset[ModelTask] = frozenset(
     {
         ModelTask.QUERY_REWRITE,
         ModelTask.QUERY_EXPANSION,
         ModelTask.ANSWER_GENERATION,
+        ModelTask.VISUAL_QUESTION,
         ModelTask.MULTI_HOP_DECOMPOSITION,
         ModelTask.SUMMARIZATION,
         ModelTask.QUIZ_GENERATION,
@@ -98,12 +100,12 @@ class OllamaModelGateway:
         self._profile = ModelProfile(
             model_key=model_id,
             provider="ollama",
-            tasks=_ALL_TEXT_TASKS,
+            tasks=_ALL_TASKS,
             data_boundary=DataBoundary.LOCAL,
             # gemma3:4b supports 128 K tokens; callers see the real cap.
             context_tokens=131_072,
             max_output_tokens=8_192,
-            supports_images=False,
+            supports_images=True,
         )
 
     @property
@@ -202,7 +204,59 @@ class OllamaModelGateway:
 
     async def generate_with_image(
         self,
-        request: ModelRequest,  # noqa: ARG002
-        image: bytes,  # noqa: ARG002
+        request: ModelRequest,
+        image: bytes,
     ) -> ModelResponse:
-        raise UnsupportedCapabilityError(self._model_id, "image input")
+        """Multimodal inference via Ollama's /api/chat images field.
+
+        The image is base64-encoded and attached to the last user message, which
+        is always the query in our prompt structure. Ollama delivers it to the
+        vision-capable model alongside the text.
+        """
+        messages = build_chat_messages(request, self._prompt_profile)
+        image_b64 = _base64.b64encode(image).decode("ascii")
+
+        # Attach the image to the last user message (the query). The prompt
+        # builder always puts the query there, followed optionally by output
+        # schema and checklist messages that do not need the image.
+        for i in reversed(range(len(messages))):
+            if messages[i]["role"] == "user":
+                messages[i] = {**messages[i], "images": [image_b64]}
+                break
+
+        options: dict[str, object] = {}
+        if request.max_tokens is not None:
+            options["num_predict"] = request.max_tokens
+        if request.temperature is not None:
+            options["temperature"] = request.temperature
+
+        payload: dict[str, object] = {
+            "model": self._model_id,
+            "messages": messages,
+            "stream": False,
+        }
+        if options:
+            payload["options"] = options
+
+        t0 = time.monotonic()
+        try:
+            resp = await self._client.post("/api/chat", json=payload, timeout=self._timeout)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            retryable = exc.response.status_code >= 500
+            raise ProviderError("ollama", str(exc), retryable=retryable) from exc
+        except httpx.RequestError as exc:
+            raise ProviderError("ollama", str(exc), retryable=True) from exc
+
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        data = resp.json()
+
+        return ModelResponse(
+            model_task=request.model_task,
+            model_id=self._model_id,
+            content=UntrustedText(data["message"]["content"]),
+            prompt_tokens=data.get("prompt_eval_count", 0),
+            completion_tokens=data.get("eval_count", 0),
+            finish_reason=data.get("done_reason"),
+            latency_ms=latency_ms,
+        )

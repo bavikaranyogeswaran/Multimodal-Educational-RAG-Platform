@@ -27,7 +27,7 @@ from app.domain.enums import (
     ModelTask,
     RequirementLevel,
 )
-from app.domain.errors import ProviderError, UnsupportedCapabilityError
+from app.domain.errors import ProviderError
 from app.domain.models.entities import ConversationTurn, LabeledPassage, ModelRequest
 from app.domain.models.instructions import Instruction, NumberedRequirement
 from app.domain.values import UntrustedText
@@ -449,10 +449,49 @@ class TestErrorHandling:
 
 
 class TestCapabilities:
-    async def test_generate_with_image_raises_unsupported(self) -> None:
+    async def test_generate_with_image_posts_to_api_chat(self) -> None:
         client = _mock_client()
-        with pytest.raises(UnsupportedCapabilityError):
-            await _gateway(client).generate_with_image(_make_request(), b"\x89PNG")
+        await _gateway(client).generate_with_image(
+            _make_request(task=ModelTask.VISUAL_QUESTION), b"\x89PNG"
+        )
+        url = client.post.call_args.args[0]
+        assert url == "/api/chat"
+
+    async def test_generate_with_image_attaches_base64_to_last_user_message(self) -> None:
+        import base64
+
+        client = _mock_client()
+        image = b"\x89PNG fake image data"
+        await _gateway(client).generate_with_image(
+            _make_request(task=ModelTask.VISUAL_QUESTION), image
+        )
+        payload = client.post.call_args.kwargs["json"]
+        user_msgs_with_images = [
+            m for m in payload["messages"] if m.get("role") == "user" and "images" in m
+        ]
+        assert len(user_msgs_with_images) == 1
+        assert user_msgs_with_images[-1]["images"] == [base64.b64encode(image).decode()]
+
+    async def test_generate_with_image_returns_model_response(self) -> None:
+        client = _mock_client(_make_response_json(content='{"kind":"FIGURE","description":"A chart."}'))
+        response = await _gateway(client).generate_with_image(
+            _make_request(task=ModelTask.VISUAL_QUESTION), b"\x89PNG"
+        )
+        assert '{"kind":"FIGURE"' in response.content.value
+
+    async def test_generate_with_image_http_error_raises_provider_error(self) -> None:
+        from app.domain.errors import ProviderError
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock(status_code=500)
+        )
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.post = AsyncMock(return_value=mock_resp)
+        with pytest.raises(ProviderError):
+            await _gateway(client).generate_with_image(
+                _make_request(task=ModelTask.VISUAL_QUESTION), b"\x89PNG"
+            )
 
     def test_profile_for_returns_profile_for_text_task(self) -> None:
         client = _mock_client()
@@ -460,19 +499,19 @@ class TestCapabilities:
         profile = gw.profile_for(ModelTask.ANSWER_GENERATION)
         assert profile.model_key == "gemma3:4b"
 
-    def test_profile_for_raises_for_visual_task(self) -> None:
+    def test_profile_for_returns_profile_for_visual_task(self) -> None:
         client = _mock_client()
         gw = _gateway(client)
-        with pytest.raises(UnsupportedCapabilityError):
-            gw.profile_for(ModelTask.VISUAL_QUESTION)
+        profile = gw.profile_for(ModelTask.VISUAL_QUESTION)
+        assert profile.model_key == "gemma3:4b"
 
     def test_profile_data_boundary_is_local(self) -> None:
         client = _mock_client()
         assert _gateway(client).profile.data_boundary is DataBoundary.LOCAL
 
-    def test_profile_supports_images_is_false(self) -> None:
+    def test_profile_supports_images_is_true(self) -> None:
         client = _mock_client()
-        assert _gateway(client).profile.supports_images is False
+        assert _gateway(client).profile.supports_images is True
 
 
 # ---------------------------------------------------------------------------

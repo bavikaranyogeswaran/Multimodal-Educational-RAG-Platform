@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** — Phase 0, 1, 2, 3, 8 ✅ |
 | Effectively done | Phase 10 (~98%) · Phase 9 (~98%) · Phase 11 (~90%) · Phase 4 (~95%) — every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~70%, visual records schema done, crops and OCR descriptions remain) · Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~90%, all steps done) · Phase 17 (~20%, evaluation absent) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) · Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,686 unit and security — 2,599 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **6.7 — OCR and visual description** (needs Ollama) |
-| Last updated | 22 August 2026 (step 6.5 — crops to object store) |
+| Tests | 2,621 unit · 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **7.6 — Full ingestion against the real database and object store** (needs Ollama running) |
+| Last updated | 23 August 2026 (step 6.7 — figure OCR and visual descriptions) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order — work jumped to
@@ -1268,7 +1268,7 @@ than mocked (A-662).
 | 6.4 | Figure and table number extraction | S | ✅ |
 | 6.5 | Crops to the object store | S | ✅ |
 | 6.6 | Visual records: chart and diagram schema | M | ✅ |
-| 6.7 | Factual descriptions — **needs OCR and a multimodal model** | L | ☐ |
+| 6.7 | Factual descriptions — OCR text and visual descriptions via multimodal model | L | ✅ |
 
 ### 6.1 — Table structure ✅
 
@@ -1431,17 +1431,42 @@ work and is not done here (A-690).
       format (step 6.2) and the anchor repetition (step 6.3) covers the identity context
 - [x] Schema for figure, chart and diagram visual records — entity, ORM model, migration, parser
       wiring and ingestion — **fields filled in step 6.7**
-- [ ] Visual objects: crop → caption → surrounding paragraphs → OCR labels → factual description →
-      page and bbox → links to related chunks
-- [ ] Chart records: `chart_type`, `x_axis_label`, `y_axis_label`, `units`, `legend`,
-      `data_labels`, `visible_trend` — schema exists, values wait on step 6.7
-- [ ] Diagram records: labels, components, arrows, visible relationships — schema exists, values
-      wait on step 6.7
-- [ ] Descriptions flagged **derived, not authoritative** at schema level (§18) — `is_described`
-      property exists; `description` itself is filled in step 6.7
+- [x] Visual objects: crop → caption → OCR labels → factual description → page and bbox — done in
+      step 6.7; surrounding-paragraph linkage deferred (chunks do not yet reference figures)
+- [x] Chart records: `chart_type`, `x_axis_label`, `y_axis_label`, `units_label`, `legend`,
+      `data_labels`, `visible_trend` — populated by vision model in step 6.7
+- [x] Diagram records: labels, components, arrows, visible relationships — populated in step 6.7
+- [x] Descriptions flagged **derived, not authoritative** at schema level (§18) — `is_described`
+      property returns True once description is non-null
 - [x] Figure and table number extraction ("Figure 4.2") — **done for tables in 6.4 and figures
       in 6.6** via the same `parse_caption_label()` function
 - [ ] UC-06
+
+### 6.7 — Factual descriptions ✅
+
+- [x] `OllamaModelGateway.generate_with_image` implemented — base64-encodes the image and attaches
+      it to the last user message via Ollama's `images` field. `ModelTask.VISUAL_QUESTION` added to
+      the task set; `supports_images=True` on the profile. `generate_with_image` was previously a
+      stub raising `UnsupportedCapabilityError` (A-721)
+- [x] `_describe_figures` in `IngestDocumentUseCase` — for each figure with a `crop_key`: downloads
+      the PNG from R2, builds a `ModelRequest(model_task=VISUAL_QUESTION, ...)`, calls
+      `model_gateway.generate_with_image`, parses the JSON response, and returns the figure updated
+      with description, kind reclassification, and chart/diagram fields
+- [x] Structured JSON schema in the prompt — the model is asked to return a flat JSON object with
+      `kind` (FIGURE/CHART/DIAGRAM), `description`, `ocr_text`, chart axis/type/trend fields, and
+      diagram label/component/arrow arrays. Response is parsed with `_parse_vision_response`;
+      malformed JSON is handled by a regex fallback, then graceful skip on failure (A-722)
+- [x] Kind reclassification — `kind` in the JSON maps back to `ElementType`; a FIGURE can become
+      CHART or DIAGRAM based on what the model sees. The domain entity's `kind` field is mutable
+      via `dataclasses.replace`, which is already the pattern for `crop_key`
+- [x] Crop failure resilience — any exception from `storage.get` or `generate_with_image` is
+      logged and skipped; the figure is saved without a description rather than failing ingest
+- [x] `IngestDocumentUseCase` gains `model_gateway: ModelGatewayPort | None = None`. None means
+      skip description; wired to `container.model_gateway` in the worker (A-723)
+- [x] Figures without a `crop_key` are passed through unchanged — no model call is made
+- [x] 6 new tests in `TestFigureDescription`: description set; FIGURE→CHART reclassification with
+      chart fields; FIGURE→DIAGRAM reclassification with diagram fields; no crop_key → no model
+      call; model failure → figure unchanged; no gateway → description null. 2,621 unit tests pass
 
 ## Phase 7 — Chunking, embeddings & indexing
 

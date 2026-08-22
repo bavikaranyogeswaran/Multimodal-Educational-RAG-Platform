@@ -151,6 +151,7 @@ def _make_use_case(
     embedder: AsyncMock | None = None,
     parser: AsyncMock | None = None,
     figure_cropper: AsyncMock | None = None,
+    model_gateway: AsyncMock | None = None,
     target_tokens: int = 500,
     max_tokens: int = 900,
     parent_target_tokens: int = 1200,
@@ -186,6 +187,7 @@ def _make_use_case(
         index_version=1,
         figure_cropper=figure_cropper,
         crops_prefix="figures",
+        model_gateway=model_gateway,
     )
 
 
@@ -871,3 +873,186 @@ class TestFigureCropping:
         saved = document_repo.save_figures.await_args.args[1][0]
         assert saved.crop_key is None
         storage.put.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Figure description (step 6.7)
+# ---------------------------------------------------------------------------
+
+_FIGURE_JSON = '{"kind":"FIGURE","description":"A photograph of a cell.","ocr_text":null}'
+_CHART_JSON = (
+    '{"kind":"CHART","description":"Line chart of accuracy over epochs.",'
+    '"ocr_text":"Accuracy","chart_type":"line","x_axis_label":"Epoch",'
+    '"y_axis_label":"Accuracy","units_label":null,"legend":"Train,Val",'
+    '"data_labels":null,"visible_trend":"Accuracy rises then plateaus.",'
+    '"diagram_labels":[],"components":[],"arrows":[],"visible_relationships":[]}'
+)
+_DIAGRAM_JSON = (
+    '{"kind":"DIAGRAM","description":"Data flow between components.",'
+    '"ocr_text":"Input Output","chart_type":null,"x_axis_label":null,'
+    '"y_axis_label":null,"units_label":null,"legend":null,"data_labels":null,'
+    '"visible_trend":null,"diagram_labels":["Input","Output"],'
+    '"components":["Parser","Embedder"],"arrows":["Parser -> Embedder"],'
+    '"visible_relationships":["Parser feeds Embedder"]}'
+)
+
+
+def _make_vision_gateway(response_json: str = _FIGURE_JSON) -> AsyncMock:
+    from app.domain.enums import ModelTask
+    from app.domain.models.entities import ModelResponse
+    from app.domain.values import UntrustedText
+
+    mock_response = ModelResponse(
+        model_task=ModelTask.VISUAL_QUESTION,
+        model_id="gemma3:4b",
+        content=UntrustedText(response_json),
+        prompt_tokens=50,
+        completion_tokens=80,
+        finish_reason="stop",
+        latency_ms=200,
+    )
+    gateway = AsyncMock()
+    gateway.generate_with_image = AsyncMock(return_value=mock_response)
+    return gateway
+
+
+def _parser_with_cropped_figure() -> AsyncMock:
+    """Parser returning a figure that already has a crop_key set."""
+    from datetime import UTC, datetime
+
+    element = DocumentElement(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=1,
+        element_type=ElementType.FIGURE,
+        text=UntrustedText(""),
+        reading_order=0,
+        processing_method=ProcessingMethod.NATIVE_TEXT,
+        created_at=_NOW,
+        bounding_box=_FIGURE_BOX,
+    )
+    figure = DocumentFigure(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        source_element_id=element.id,
+        page_number=1,
+        kind=ElementType.FIGURE,
+        bounding_box=_FIGURE_BOX,
+        created_at=_NOW,
+        crop_key="figures/u/k/d/fig.png",
+    )
+    parser = AsyncMock()
+    parser.parse = AsyncMock(
+        return_value=[ParsedPage(page=_page(1), elements=[element], figures=[figure])]
+    )
+    return parser
+
+
+class TestFigureDescription:
+    async def test_description_is_set_on_figure(self) -> None:
+        document_repo = _make_document_repo()
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+
+        use_case = _make_use_case(
+            parser=_parser_with_cropped_figure(),
+            document_repo=document_repo,
+            storage=storage,
+            model_gateway=_make_vision_gateway(_FIGURE_JSON),
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.description == "A photograph of a cell."
+
+    async def test_kind_upgraded_from_figure_to_chart(self) -> None:
+        document_repo = _make_document_repo()
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+
+        use_case = _make_use_case(
+            parser=_parser_with_cropped_figure(),
+            document_repo=document_repo,
+            storage=storage,
+            model_gateway=_make_vision_gateway(_CHART_JSON),
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.kind is ElementType.CHART
+        assert saved.chart_type == "line"
+        assert saved.x_axis_label == "Epoch"
+        assert saved.y_axis_label == "Accuracy"
+        assert saved.visible_trend == "Accuracy rises then plateaus."
+
+    async def test_kind_upgraded_from_figure_to_diagram(self) -> None:
+        document_repo = _make_document_repo()
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+
+        use_case = _make_use_case(
+            parser=_parser_with_cropped_figure(),
+            document_repo=document_repo,
+            storage=storage,
+            model_gateway=_make_vision_gateway(_DIAGRAM_JSON),
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.kind is ElementType.DIAGRAM
+        assert "Input" in saved.diagram_labels
+        assert "Parser -> Embedder" in saved.arrows
+
+    async def test_figure_without_crop_key_is_not_sent_to_model(self) -> None:
+        document_repo = _make_document_repo()
+        gateway = _make_vision_gateway()
+
+        use_case = _make_use_case(
+            parser=_parser_with_a_figure(),  # no crop_key on this parser's figure
+            document_repo=document_repo,
+            model_gateway=gateway,
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        gateway.generate_with_image.assert_not_awaited()
+
+    async def test_description_failure_leaves_figure_unchanged(self) -> None:
+        document_repo = _make_document_repo()
+        storage = AsyncMock()
+        storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+        storage.put = AsyncMock()
+
+        gateway = AsyncMock()
+        gateway.generate_with_image = AsyncMock(side_effect=RuntimeError("model error"))
+
+        use_case = _make_use_case(
+            parser=_parser_with_cropped_figure(),
+            document_repo=document_repo,
+            storage=storage,
+            model_gateway=gateway,
+        )
+        result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        assert result.status.name == "COMPLETED"
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.description is None
+
+    async def test_no_gateway_leaves_description_null(self) -> None:
+        document_repo = _make_document_repo()
+
+        use_case = _make_use_case(
+            parser=_parser_with_cropped_figure(),
+            document_repo=document_repo,
+            model_gateway=None,
+        )
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_figures.await_args.args[1][0]
+        assert saved.description is None

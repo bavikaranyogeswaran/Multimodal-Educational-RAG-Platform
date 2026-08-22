@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re as _re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -36,7 +37,10 @@ from app.domain.documents.entities import Document, DocumentElement, ParsedPage
 from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.table_render import render as render_table
 from app.domain.documents.tables import DocumentTable
+from app.domain.enums import ElementType, ModelTask
+from app.domain.models.entities import ModelRequest
 from app.domain.ports.adapters import EmbeddingPort, FigureCropperPort, PdfParserPort, StoragePort
+from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -73,6 +77,7 @@ class IngestDocumentUseCase:
         index_version: int,
         figure_cropper: FigureCropperPort | None = None,
         crops_prefix: str = "figures",
+        model_gateway: ModelGatewayPort | None = None,
     ) -> None:
         self._chunk_repo = chunk_repo
         self._document_repo = document_repo
@@ -84,6 +89,7 @@ class IngestDocumentUseCase:
         self._index_version = index_version
         self._figure_cropper = figure_cropper
         self._crops_prefix = crops_prefix
+        self._model_gateway = model_gateway
 
     async def execute(self, command: IngestDocumentCommand) -> Document:
         scope = command.scope
@@ -122,6 +128,8 @@ class IngestDocumentUseCase:
                     scope,
                     self._crops_prefix,
                 )
+            if self._model_gateway is not None:
+                figures = await _describe_figures(figures, self._storage, self._model_gateway)
             await self._document_repo.save_figures(scope, figures)
 
         chunks = _to_chunks(
@@ -214,6 +222,147 @@ async def _crop_and_upload_figures(
         result.append(replace(figure, crop_key=key))
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Figure descriptions
+# ---------------------------------------------------------------------------
+
+_FIGURE_SYSTEM_PREAMBLE = (
+    "You are an expert at analyzing figures, charts, and diagrams from educational documents. "
+    "Your analysis is factual and concise. You output only valid JSON."
+)
+
+_FIGURE_TASK_INSTRUCTIONS = """\
+Examine the image. Classify it as exactly one of:
+  FIGURE   — a photograph, illustration, or image that is not a data chart or process diagram
+  CHART    — any data visualization: bar chart, line graph, scatter plot, pie chart, histogram, etc.
+  DIAGRAM  — a schematic, flowchart, architecture diagram, process flow, or structural illustration
+
+Extract every readable text label visible in the image.
+Write a 1–3 sentence factual description of what the image shows."""
+
+_FIGURE_OUTPUT_SCHEMA = """\
+Respond with exactly this JSON (no markdown fences, no extra text):
+{
+  "kind": "FIGURE | CHART | DIAGRAM",
+  "description": "<factual 1-3 sentence description>",
+  "ocr_text": "<all visible text labels, or null>",
+  "chart_type": "<bar|line|scatter|pie|histogram|box|heatmap|area|other — CHART only, else null>",
+  "x_axis_label": "<axis label text or null>",
+  "y_axis_label": "<axis label text or null>",
+  "units_label": "<units if visible or null>",
+  "legend": "<legend items as comma-separated text or null>",
+  "data_labels": "<data-point annotations if visible or null>",
+  "visible_trend": "<one sentence describing the trend — CHART only, else null>",
+  "diagram_labels": ["<label1>", "<label2>"],
+  "components": ["<component1>", "<component2>"],
+  "arrows": ["<A -> B>", "<C -> D>"],
+  "visible_relationships": ["<relationship>"]
+}
+Rules:
+  FIGURE  — chart fields null, diagram arrays empty
+  CHART   — populate chart fields, diagram arrays empty
+  DIAGRAM — chart fields null, populate diagram arrays"""
+
+_FIGURE_QUERY = "Analyze this image and return the JSON as specified."
+
+# Map from model response string to the domain enum value.
+_KIND_MAP: dict[str, ElementType] = {
+    "FIGURE": ElementType.FIGURE,
+    "CHART": ElementType.CHART,
+    "DIAGRAM": ElementType.DIAGRAM,
+}
+
+
+async def _describe_figures(
+    figures: Sequence[DocumentFigure],
+    storage: StoragePort,
+    model_gateway: ModelGatewayPort,
+) -> list[DocumentFigure]:
+    """Call the vision model on each figure crop and return updated figures.
+
+    Only figures that already have a crop_key are sent to the model; the rest
+    pass through unchanged. A failure on any individual figure is logged and
+    skipped — the figure record is kept without a description rather than
+    losing it entirely.
+    """
+    request = ModelRequest(
+        model_task=ModelTask.VISUAL_QUESTION,
+        system_preamble=_FIGURE_SYSTEM_PREAMBLE,
+        safety_rules=(),
+        task_instructions=_FIGURE_TASK_INSTRUCTIONS,
+        query=_FIGURE_QUERY,
+        output_schema=_FIGURE_OUTPUT_SCHEMA,
+    )
+
+    result: list[DocumentFigure] = []
+    for figure in figures:
+        if not figure.crop_key:
+            result.append(figure)
+            continue
+
+        try:
+            image_bytes = await storage.get(figure.crop_key)
+            response = await model_gateway.generate_with_image(request, image_bytes)
+            updates = _parse_vision_response(response.content.value)
+            result.append(replace(figure, **updates) if updates else figure)
+        except Exception:
+            _log.warning(
+                "figure_description_failed",
+                figure_id=str(figure.id),
+                page_number=figure.page_number,
+            )
+            result.append(figure)
+
+    return result
+
+
+def _parse_vision_response(text: str) -> dict[str, object]:
+    """Extract structured fields from a model response.
+
+    Returns a dict suitable for `replace(figure, ...)`. Returns an empty dict
+    if the response is unparseable, leaving the figure unchanged.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        # The model sometimes wraps JSON in markdown fences or adds commentary.
+        match = _re.search(r"\{.*\}", text, _re.DOTALL)
+        if not match:
+            return {}
+        try:
+            data = json.loads(match.group())
+        except ValueError:
+            return {}
+
+    updates: dict[str, object] = {}
+
+    kind = _KIND_MAP.get(str(data.get("kind", "")))
+    if kind is not None:
+        updates["kind"] = kind
+
+    for field in (
+        "description",
+        "ocr_text",
+        "chart_type",
+        "x_axis_label",
+        "y_axis_label",
+        "units_label",
+        "legend",
+        "data_labels",
+        "visible_trend",
+    ):
+        val = data.get(field)
+        if val is not None:
+            updates[field] = str(val) or None
+
+    for field in ("diagram_labels", "components", "arrows", "visible_relationships"):
+        val = data.get(field)
+        if isinstance(val, list):
+            updates[field] = tuple(str(item) for item in val if item)
+
+    return updates
 
 
 # ---------------------------------------------------------------------------
