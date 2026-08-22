@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** — Phase 0, 1, 2, 3, 8 ✅ |
 | Effectively done | Phase 10 (~98%) · Phase 9 (~98%) · Phase 11 (~90%) · Phase 4 (~95%) — every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~45%, tables referenceable) · Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~75%, milestone check unrun) · Phase 5 (~70%, OCR deferred) · Phase 6 (~60%, tables referenceable, large tables split safely) · Phase 17 (~20%, evaluation absent) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) · Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,622 unit and security — 2,535 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **6.3 — large-table row groups** (smaller than it looks; the headerless half is already met). 7.6/7.7 remain available once Ollama and R2 credentials exist |
-| Last updated | 22 August 2026 (step 6.4 — table number extraction) |
+| Tests | 2,626 unit and security — 2,539 unit, 87 security · 18 integration **passing against the live database**, 1 destructive round-trip skipped by design · 121 marked `security`, 87 `gate` · one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **6.5 — crops to object store** (needs R2 credentials) or **6.6 — visual records schema** (no credentials needed). 7.6/7.7 remain available once Ollama and R2 credentials exist |
+| Last updated | 22 August 2026 (step 6.3 — large-table row-group splitting) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order — work jumped to
@@ -1241,7 +1241,7 @@ much of this is worth building, and that number does not exist yet.
 
 Covers §17, §18.
 
-**Status: ~45% — steps 6.1, 6.2 and 6.4 done.** Tables are now first-class records and, as of 6.2,
+**Status: ~60% — steps 6.1, 6.2, 6.3 and 6.4 done.** Tables are now first-class records and, as of 6.2,
 retrievable ones. A detected region is read into named columns, per-column units, aligned rows
 and the caption the document gave it, then rendered to JSON, Markdown, HTML and the prose that
 gets embedded — and the table's chunk now holds that prose rather than its joined cells, so a
@@ -1264,7 +1264,7 @@ than mocked (A-662).
 |---|---|---|---|
 | 6.1 | Table structure — headers, units, aligned rows, caption association | M | ✅ |
 | 6.2 | Table serialisation — JSON, Markdown, optional HTML, retrieval-oriented prose | M | ✅ |
-| 6.3 | Large tables split by row group, repeating headers and units | M | ☐ |
+| 6.3 | Large tables split by row group, repeating headers and units | M | ✅ |
 | 6.4 | Figure and table number extraction | S | ✅ |
 | 6.5 | Crops to the object store — **needs R2 credentials** | S | ☐ |
 | 6.6 | Visual records: chart and diagram schema | M | ☐ |
@@ -1321,6 +1321,28 @@ than mocked (A-662).
 - [x] 44 tests: every form against wrapped, empty, ragged, unit-bearing and hostile input, plus
       the ingestion path end to end
 
+### 6.3 — Large-table row-group splitting ✅
+
+- [x] When a table's prose is too large to keep as one chunk, the chunker now repeats the
+      anchor line (caption or, when there is none, the first data row) at the start of every
+      group after the first. A split piece then carries enough context to identify which table
+      it came from and what each column holds, without needing to fetch its neighbour
+- [x] **The prose form already made each row self-describing** — step 6.2's decision that every
+      row names its own columns is what made the "headerless rows" half of this requirement
+      already met. What remained was attaching the table's identity to each group, which is
+      the anchor line (A-696)
+- [x] Only TABLE chunks get anchor repetition. Formulas, diagrams, charts and figures split
+      on line boundaries without it — nothing in those types has the semantic concept of
+      "this piece belongs to a named numbered object" the way a table row does (A-697)
+- [x] `_split_table_rows()` added to `Chunker`. `_standalone_drafts()` dispatches to it for
+      TABLE chunks and to the existing `_split_lines()` for every other standalone type
+- [x] The first split piece is unchanged from the current behaviour — the anchor is already
+      its first line because it came first in the original text. No duplicate is introduced
+      in piece 1; only pieces 2 onwards are modified
+- [x] 5 tests: table that fits unchanged; caption repeated in every group; first row as anchor
+      when there is no caption; split pieces keep TABLE chunk type; other standalone types do
+      not repeat their anchor. All 56 chunker tests pass
+
 ### 6.4 — Figure and table number extraction ✅
 
 - [x] One module now states what a caption label looks like, and both things that were already
@@ -1348,9 +1370,9 @@ work and is not done here (A-690).
 - [x] Tables: detect → title and caption → headers, rows, units → crop → JSON → Markdown →
       optional HTML → retrieval-oriented text → bbox, page, confidence — **all but the crop**,
       which needs the object store and waits for 6.5
-- [ ] Large tables split by row group, **repeating title, headers, units and row labels in every
-      group**; rows never embedded headerless — the headerless half is now met by the prose
-      format; what remains is repeating the title and caption into each group
+- [x] Large tables split by row group, **repeating the anchor line (caption or first row) in every
+      group**; rows never embedded headerless — the headerless half is met by the prose
+      format (step 6.2) and the anchor repetition (step 6.3) covers the identity context
 - [ ] Visual objects: crop → caption → surrounding paragraphs → OCR labels → factual description →
       page and bbox → links to related chunks
 - [ ] Chart records: `title`, `chart_type`, `x_axis_label`, `y_axis_label`, `units`, `legend`,

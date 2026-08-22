@@ -340,6 +340,66 @@ class TestStandaloneContent:
 
 
 # ---------------------------------------------------------------------------
+# Table row-group splitting
+# ---------------------------------------------------------------------------
+
+
+class TestTableRowGroupSplitting:
+    """Large table chunks repeat the anchor line in every group so no piece is
+    context-free after a split."""
+
+    def test_table_that_fits_is_unchanged(self) -> None:
+        """A table small enough for one chunk is returned as-is."""
+        text = "Table 4.2: Mechanical properties\nMetal Aluminium, Density 2.70."
+        drafts = _chunk([_element(text, element_type=ElementType.TABLE)])
+        assert len(drafts) == 1
+        assert drafts[0].text == text
+
+    def test_caption_repeated_in_every_group(self) -> None:
+        """When the table has a caption, every split piece starts with it."""
+        caption = "Table 1: Performance across runs"
+        rows = [f"Run {i}, Accuracy {0.9 + i * 0.001:.3f}." for i in range(30)]
+        text = "\n".join([caption] + rows)
+        drafts = _chunk([_element(text, element_type=ElementType.TABLE)], maximum=20)
+
+        assert len(drafts) > 1
+        for draft in drafts:
+            assert draft.text.startswith(caption)
+
+    def test_first_row_repeated_when_no_caption(self) -> None:
+        """Without a caption, the first data row is the anchor for subsequent groups."""
+        rows = [f"Run {i}, Accuracy {0.9 + i * 0.001:.3f}." for i in range(30)]
+        text = "\n".join(rows)
+        first_row = rows[0]
+        drafts = _chunk([_element(text, element_type=ElementType.TABLE)], maximum=20)
+
+        assert len(drafts) > 1
+        for draft in drafts:
+            assert draft.text.startswith(first_row)
+
+    def test_split_pieces_keep_table_chunk_type(self) -> None:
+        """Every group from a split table stays a TABLE chunk."""
+        caption = "Table 1: Data"
+        rows = [f"Col1 {i}, Col2 {i * 2}." for i in range(30)]
+        text = "\n".join([caption] + rows)
+        drafts = _chunk([_element(text, element_type=ElementType.TABLE)], maximum=20)
+
+        assert len(drafts) > 1
+        assert all(d.chunk_type is ChunkType.TABLE for d in drafts)
+
+    def test_other_standalone_types_do_not_repeat_anchor(self) -> None:
+        """Only tables get anchor repetition; formulas and diagrams split without it."""
+        lines = [f"f_{i} of x equals {i} x squared plus {i}" for i in range(30)]
+        text = "\n".join(lines)
+        drafts = _chunk([_element(text, element_type=ElementType.FORMULA)], maximum=20)
+
+        assert len(drafts) > 1
+        first_line = lines[0]
+        for draft in drafts[1:]:
+            assert not draft.text.startswith(first_line)
+
+
+# ---------------------------------------------------------------------------
 # Metadata
 # ---------------------------------------------------------------------------
 

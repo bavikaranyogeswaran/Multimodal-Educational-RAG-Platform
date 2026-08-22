@@ -248,10 +248,16 @@ class Chunker:
             yield _draft_from([element], text, tokens, chunk_type)
             return
 
-        # Too large to keep whole. Split on its own lines, which for a table are its
-        # rows — the one boundary that does not cut a row in half.
-        for piece in self._split_lines(text):
-            yield _draft_from([element], piece, self._count(piece), chunk_type)
+        # Too large to keep whole. Tables repeat the anchor line in every group so
+        # no piece is context-free; other standalones split on lines without
+        # repetition, since nothing in a formula or diagram has a natural anchor the
+        # way a table's caption or first row does.
+        if chunk_type is ChunkType.TABLE:
+            for piece in self._split_table_rows(text):
+                yield _draft_from([element], piece, self._count(piece), chunk_type)
+        else:
+            for piece in self._split_lines(text):
+                yield _draft_from([element], piece, self._count(piece), chunk_type)
 
     def _carry_over(self, buffer: Sequence[DocumentElement]) -> list[DocumentElement]:
         """What the next chunk begins with, so a boundary is reachable from both sides.
@@ -280,6 +286,29 @@ class Chunker:
     def _split_sentences(self, text: str) -> list[str]:
         """Group sentences into pieces that fit, never breaking one in half."""
         return self._pack(split_sentences(text), joiner=" ")
+
+    def _split_table_rows(self, text: str) -> list[str]:
+        """Split table prose by row lines, repeating the anchor in every group.
+
+        The first line is either the caption (when the document gave the table one)
+        or the first data row (when it had none). Either carries something a reader
+        needs to make sense of the rows that follow it — a caption names the table,
+        and a first data row is already self-describing because every row in the prose
+        form names its own columns. Repeating it means a reader of any split piece
+        can tell which table it came from and what each column holds.
+        """
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return []
+
+        pieces = self._pack(lines, joiner="\n")
+        if len(pieces) <= 1:
+            return pieces
+
+        # The first piece already starts with the anchor line, since _pack began
+        # from the same list. Every piece after it gets the anchor prepended.
+        anchor = lines[0]
+        return [pieces[0]] + [f"{anchor}\n{piece}" for piece in pieces[1:]]
 
     def _split_lines(self, text: str) -> list[str]:
         return self._pack(text.splitlines(), joiner="\n")
