@@ -34,7 +34,7 @@ import structlog
 from app.domain.documents.chunker import ChunkDraft, Chunker, ChunkFamily
 from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, ParsedPage
-from app.domain.documents.figures import DocumentFigure
+from app.domain.documents.figures import DocumentFigure, to_embedding_text
 from app.domain.documents.table_render import render as render_table
 from app.domain.documents.tables import DocumentTable
 from app.domain.enums import ElementType, ModelTask
@@ -133,7 +133,9 @@ class IngestDocumentUseCase:
             await self._document_repo.save_figures(scope, figures)
 
         chunks = _to_chunks(
-            self._chunker.chunk(_with_rendered_tables(elements, tables)),
+            self._chunker.chunk(
+                _with_described_figures(_with_rendered_tables(elements, tables), figures)
+            ),
             doc=doc,
             scope=scope,
             index_version=self._index_version,
@@ -401,6 +403,34 @@ def _with_rendered_tables(
         for table in tables
         if table.embedding_text
     }
+    return [
+        replace(element, text=UntrustedText(prose[element.id]))
+        if element.id in prose
+        else element
+        for element in elements
+    ]
+
+
+def _with_described_figures(
+    elements: Sequence[DocumentElement],
+    figures: Sequence[DocumentFigure],
+) -> list[DocumentElement]:
+    """Give each figure element the prose its figure record renders to.
+
+    A figure region is parsed with no text at all — the caption and everything the vision
+    model read live on the figure record, one table away from the elements the chunker
+    sees. Without this the chunker is handed an empty element, produces nothing for it,
+    and every figure in the document ends up unreachable no matter how well it was read.
+
+    Runs after the figures are described, so the text carries the description rather than
+    just the caption. As with tables, only the copy handed to the chunker changes; the
+    stored element still records what the region literally was.
+    """
+    prose: dict[UUID, str] = {}
+    for figure in figures:
+        rendered = to_embedding_text(figure)
+        if rendered:
+            prose[figure.source_element_id] = rendered
     return [
         replace(element, text=UntrustedText(prose[element.id]))
         if element.id in prose

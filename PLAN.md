@@ -1474,19 +1474,23 @@ work and is not done here (A-690).
 
 Covers Â§13 complete, Â§19, Â§20. **Milestone: ingestion works end to end.**
 
-**Status: ~75% â€” all three chunking steps done.** The fixed-width character window is gone.
-Chunking now consumes the typed elements Phase 5 produces, places boundaries on the structure
-they carry, counts sizes in real tokens, and writes two tiers: small children that retrieval
-searches and the section-bounded parents they expand into. That was the single largest
-constraint on retrieval quality in the system, and it is lifted.
+**Status: ~85% â€” the milestone is met.** The fixed-width character window is gone. Chunking now
+consumes the typed elements Phase 5 produces, places boundaries on the structure they carry,
+counts sizes in real tokens, and writes two tiers: small children that retrieval searches and
+the section-bounded parents they expand into. That was the single largest constraint on
+retrieval quality in the system, and it is lifted.
 
-What remains is not chunking. The reindex job has columns and no job, embedding still runs
-inline in the ingestion job rather than as its own, and the milestone check â€” a real textbook
-through every stage â€” has never been run. Step 7.5 installed the `ml` group and closed A-358, so
-the embedder and reranker are real adapters now; what still blocks 7.6 and 7.7 is not code but
-inputs, namely R2 credentials and a running Ollama. **No real model call has yet happened in
-this repository**, which is the single largest unverified claim in the plan: every gateway test
-uses a fake, so the adapters are correct against a contract rather than against a server.
+**Ingestion works end to end.** A real 62-page textbook goes upload â†’ queue â†’ worker â†’ pages,
+elements, chunks, embeddings â†’ `COMPLETED`, and real questions come back as streamed answers.
+Both inputs that blocked this arrived: R2 credentials in 6.5 and a running Ollama in 7.7. The
+plan's largest unverified claim is closed with them â€” every gateway test used a fake, so the
+adapters were correct against a contract and never against a server; now they are both.
+
+Running the milestone added more to this phase than it removed, and the largest of it is now
+closed: figures were built and then never chunked, so none of them could be retrieved. Fixed
+and re-verified on the same book, which took the searchable tier from 84 chunks to 184
+(A-729, A-737). What remains is not chunking either â€” the reindex job has columns and no job,
+and embedding still runs inline in the ingestion job rather than as its own.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
@@ -1495,9 +1499,9 @@ uses a fake, so the adapters are correct against a contract rather than against 
 | 7.3 | Parent chunks from sections, with `parent_chunk_id` linkage | M | âœ… |
 | 7.4 | Parse and chunk a real textbook offline, and report what it did | M | âœ… |
 | 7.5 | Install the `ml` group; prove the embedder runs | S | âœ… |
-| 7.6 | Full ingestion against the real database and object store | M | â˜ |
-| 7.7 | Query the ingested textbook end to end | M | â˜ |
-| 7.8 | Recalibrate the tuning numbers from what was found | S | â˜ |
+| 7.6 | Full ingestion against the real database and object store | M | âœ… |
+| 7.7 | Query the ingested textbook end to end | M | âœ… |
+| 7.8 | Recalibrate the tuning numbers from what was found | S | âœ… |
 
 Steps 7.4 to 7.8 are the milestone check, divided so that each one adds a single dependency
 rather than all of them at once. 7.4 needs nothing that is not already installed â€” no database,
@@ -1637,23 +1641,54 @@ failure that says nothing about the network (A-390).
 - [x] First opportunity to run the integration suite, unrun since it was written (A-283)
 - [x] **R2 credentials supplied** â€” `STORAGE_ACCOUNT_ID`, `STORAGE_ACCESS_KEY_ID` and
       `STORAGE_SECRET_ACCESS_KEY` are all set in `.env` as of step 6.5 (A-659 resolved)
-- [ ] **Blocked on a document:** no real textbook exists in the repository. The eight fixtures
-      under `tests/fixtures/pdfs/` are synthetic and were built to exercise specific parser
-      branches, so they cannot answer what D-22 needs them to
-- [ ] Upload â†’ job enqueued â†’ worker claims it â†’ pages, elements, chunks and embeddings persisted
-      â†’ document reaches `COMPLETED`
+- [x] **Document supplied** â€” *Data Science in the Cloud with Microsoft Azure Machine Learning
+      and Python*, 62 pages, 17.1 MB, ingested from outside the repository. The eight synthetic
+      fixtures under `tests/fixtures/pdfs/` remain what they were built for: parser branches,
+      not the question D-22 asks (A-725)
+- [x] **Upload â†’ job enqueued â†’ worker claims it â†’ pages, elements, chunks and embeddings
+      persisted â†’ document reaches `COMPLETED`.** 62 pages classified 28 NATIVE_TEXT / 27 MIXED /
+      7 SCANNED; 222 elements; 160 chunks (84 children all embedded, 76 parents unembedded by
+      design); 31,861 tokens spanning pages 1â€“62 (A-726)
 - [ ] Expect to iterate, and re-ingestion still duplicates rather than replaces (A-312) â€” delete
       and re-upload between attempts, which the deletion path built in 4.11 supports
 
 ### 7.7 â€” Query the ingested textbook end to end
 
-- [ ] **Blocked on Ollama**, which is not installed â€” nothing is listening on `127.0.0.1:11434`.
-      All four model keys resolve to `gemma3:4b`, so a single pull serves generation, query
-      rewriting, faithfulness checking and vision. **No real model call has ever happened in
-      this repository** (A-660)
-- [ ] Ask real questions of the real document: dense and keyword retrieval, fusion, reranking,
-      evidence assembly, a streamed answer with citations that open at the right page
-- [ ] The first observation of retrieval quality on anything other than fixtures
+- [x] **Ollama installed and serving `gemma3:4b`** â€” all four model keys resolve to it, so the
+      one pull serves generation, query rewriting, faithfulness checking and vision. A-660 is
+      resolved: real model calls now happen in this repository, warm at startup (A-727)
+- [x] **Real questions asked of the real document** â€” dense and keyword retrieval, fusion,
+      reranking, evidence assembly and a streamed answer all ran end to end against the
+      ingested textbook (A-728)
+- [x] **First observation of retrieval quality on something other than fixtures** â€” three
+      findings below, none of which the fixtures could have surfaced (A-729, A-730, A-731)
+- [ ] **Citations that open at the right page** â€” answers carry citation labels, but nothing
+      resolves a label to a page for a reader yet; that surface arrives with Phase 19
+
+**What the first real queries found.** All three were invisible to the fixtures, and none is a
+tuning problem:
+
+- [x] **Every figure was dark to retrieval, and now is not** â€” 52 figures, all with OCR text,
+      42 captioned, all cropped to R2, and not one reachable: no `FIGURE` chunk was ever built
+      and no figure OCR string appeared inside any chunk. Fixed and re-verified on the same
+      book: **52 `FIGURE` chunks, all embedded**, and the searchable tier went from 84 children
+      to 184 (A-729, A-737)
+- [ ] **`DIRECT` is the classifier's fallback and carries the tightest evidence budget of the
+      fourteen classes** â€” `CountRange(1, 2)`. Three of four natural questions matched no rule
+      and fell through to it, so an unrecognised question is answered from the least evidence.
+      *"What Python libraries are used in this book?"* is an aggregation question, but the
+      AGGREGATION rule wants "how many" or "list all", so it lands on DIRECT and gets two
+      passages (A-730)
+- [ ] **A mid-stream failure that is not a rejection still tears the SSE connection** â€” the
+      rejection path now reports itself on the stream and closes cleanly, confirmed live, but a
+      `ProviderError` mid-generation reaches the student as a bare read error (A-731)
+
+Two things ruled out by experiment rather than assumed, so neither is worth revisiting without
+new evidence: the evidence pool is **not** throttled by the diversity caps (raising
+`max_chunks_per_document` 4 â†’ 8 doubled what prune kept and changed the selected count not at
+all), and **not** by the score margin (widening `relative_score_margin` 0.35 â†’ 1.0 changed
+nothing). The binding limit is the per-class range in `selector.py`, which is deliberate
+(A-732)
 
 ### 7.8 â€” Recalibrate the tuning numbers from what was found
 
@@ -1681,7 +1716,10 @@ failure that says nothing about the network (A-390).
 - [x] **Split priority chapter â†’ section â†’ subsection â†’ paragraph â†’ sentence** â€” boundaries come
       from the parsed structure, and sentences only where one paragraph exceeds the ceiling alone
 - [x] **Chunk types** beyond `TEXT` â€” a table becomes a `TABLE` chunk holding its rows, a figure
-      region a `FIGURE` chunk, never dissolved into the prose around them
+      region a `FIGURE` chunk, never dissolved into the prose around them. `TABLE` was done and
+      `FIGURE` was not: the first run on the real textbook produced 159 `TEXT`, 1 `TABLE` and
+      **0 `FIGURE`** against 52 figure records that all carried OCR text and a crop. Now 207
+      `TEXT`, 1 `TABLE` and **52 `FIGURE`**, every one embedded (A-729, A-737)
 - [x] **Full Â§19 chunk metadata** â€” `heading_path`, `chapter`, `section`, `element_type`,
       `bounding_box` and the page range all written from the elements a chunk came from, and
       `parent_chunk_id` set on every child, so Phase 10 has something to expand to
@@ -1693,7 +1731,9 @@ failure that says nothing about the network (A-390).
 - [ ] Separate `GENERATE_EMBEDDINGS` job â€” embedding runs inline in the ingestion job instead
 - [x] Nothing with `processing_status != COMPLETED` is ever retrievable â€” enforced in SQL and
       covered by `tests/security/test_retrieval_security.py` as a release gate
-- [ ] **Check:** a real textbook PDF completes every stage and is queryable
+- [x] **Check:** a real textbook PDF completes every stage and is queryable â€” done end to end in
+      step 7.7. What that check could not tell us until it ran: the answers are thin, and the
+      three findings recorded under 7.7 say why (A-729, A-730, A-731)
 
 ## Phase 8 â€” Model Gateway
 

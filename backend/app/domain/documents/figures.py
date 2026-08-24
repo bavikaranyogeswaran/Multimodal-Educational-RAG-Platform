@@ -126,3 +126,97 @@ class DocumentFigure:
     def is_described(self) -> bool:
         """Whether Phase 6.7 has run on this figure and produced a description."""
         return self.description is not None
+
+
+def to_embedding_text(figure: DocumentFigure) -> str:
+    """The figure as prose a question can match against.
+
+    A figure region carries no text of its own — what a reader would call its content
+    lives in the caption the document gave it and in what a model saw when it looked at
+    the image. Gathered here into one passage so the figure is retrievable as itself,
+    rather than being reachable only through whatever paragraph happens to sit beside it.
+
+    Ordered by how a person would describe the figure aloud: what it is called, what it
+    shows, what is written on it, then the structure a chart or a diagram adds. Anything
+    absent is skipped rather than rendered as an empty heading, so a figure the vision
+    model never reached still returns its caption instead of a page of blank labels.
+    """
+    lines: list[str] = []
+
+    label = _label(figure)
+    if label:
+        lines.append(label)
+    if figure.title:
+        lines.append(figure.title)
+    if figure.description:
+        lines.append(figure.description)
+    if figure.ocr_text:
+        lines.append(figure.ocr_text)
+
+    lines.extend(_chart_lines(figure))
+    lines.extend(_diagram_lines(figure))
+
+    # The caption alone is worth retrieving. A student asking about a figure should find
+    # where it sits even when nothing could be read out of the image itself.
+    return "\n".join(line.strip() for line in lines if line.strip()).strip()
+
+
+def _caption_text(figure: DocumentFigure) -> str:
+    return figure.caption.value.strip() if figure.caption is not None else ""
+
+
+def _label(figure: DocumentFigure) -> str:
+    """What the figure is called, without saying its number twice.
+
+    A caption is usually read off the page complete with its own label, so "Figure 1" and
+    a caption of "Figure 1. Azure ML Studio" would otherwise render as "1 Figure 1. Azure
+    ML Studio". The number is prepended only when the caption does not already carry it.
+    """
+    caption = _caption_text(figure)
+    number = (figure.number or "").strip()
+    if not number:
+        return caption
+    if not caption:
+        return number
+    return caption if number.lower() in caption.lower() else f"{number} {caption}"
+
+
+def _chart_lines(figure: DocumentFigure) -> list[str]:
+    """What a chart adds: its axes, its units, and the shape the model read off it."""
+    lines: list[str] = []
+    if figure.chart_type:
+        lines.append(f"{figure.chart_type} chart.")
+
+    axes = [
+        f"{name} {value}"
+        for name, value in (
+            ("x axis", figure.x_axis_label),
+            ("y axis", figure.y_axis_label),
+            ("units", figure.units_label),
+        )
+        if value
+    ]
+    if axes:
+        lines.append(", ".join(axes) + ".")
+
+    for value in (figure.legend, figure.data_labels, figure.visible_trend):
+        if value:
+            lines.append(value)
+    return lines
+
+
+def _diagram_lines(figure: DocumentFigure) -> list[str]:
+    """What a diagram adds: the parts it names and the connections drawn between them."""
+    lines: list[str] = []
+    for label, items in (
+        ("", figure.diagram_labels),
+        ("Components", figure.components),
+        ("Connections", figure.arrows),
+        ("Relationships", figure.visible_relationships),
+    ):
+        if not items:
+            continue
+        joined = ", ".join(item.strip() for item in items if item.strip())
+        if joined:
+            lines.append(f"{label}: {joined}." if label else joined)
+    return lines

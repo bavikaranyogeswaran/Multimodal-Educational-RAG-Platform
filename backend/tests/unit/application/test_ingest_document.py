@@ -1056,3 +1056,98 @@ class TestFigureDescription:
 
         saved = document_repo.save_figures.await_args.args[1][0]
         assert saved.description is None
+
+
+def _parser_with_a_described_figure() -> AsyncMock:
+    """A figure that the vision stage has already read, as it is by the time chunking runs.
+
+    The element text stays empty, which is what the parser produces for an image region.
+    Everything a reader would call the figure's content sits on the figure record.
+    """
+    element = DocumentElement(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=1,
+        element_type=ElementType.FIGURE,
+        text=UntrustedText(""),
+        reading_order=0,
+        processing_method=ProcessingMethod.NATIVE_TEXT,
+        created_at=_NOW,
+        bounding_box=_FIGURE_BOX,
+    )
+    figure = DocumentFigure(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        source_element_id=element.id,
+        page_number=1,
+        kind=ElementType.FIGURE,
+        bounding_box=_FIGURE_BOX,
+        created_at=_NOW,
+        number="Figure 4",
+        caption=UntrustedText("Model training workflow"),
+        description="A four-stage pipeline from data input through to evaluation.",
+        ocr_text="Data input Transformations Model Definition Training",
+    )
+    parser = AsyncMock()
+    parser.parse = AsyncMock(
+        return_value=[ParsedPage(page=_page(1), elements=[element], figures=[figure])]
+    )
+    return parser
+
+
+class TestFigureChunks:
+    """A figure has to become a chunk, or it cannot be retrieved at all.
+
+    The element a figure is parsed from has no text — its content lives on the figure
+    record. Handing the chunker the bare element produces nothing, which leaves every
+    figure in a document unreachable however well the vision stage read it.
+    """
+
+    async def test_a_described_figure_becomes_a_figure_chunk(self) -> None:
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=_parser_with_a_described_figure(), chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        assert [c for c in written if c.chunk_type is ChunkType.FIGURE]
+
+    async def test_the_figure_chunk_carries_caption_description_and_ocr(self) -> None:
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=_parser_with_a_described_figure(), chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        text = next(c for c in written if c.chunk_type is ChunkType.FIGURE).text.value
+        assert "Model training workflow" in text
+        assert "four-stage pipeline" in text
+        assert "Model Definition" in text
+
+    async def test_the_stored_element_keeps_its_empty_text(self) -> None:
+        """Only the copy handed to the chunker changes; the element records the region."""
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(
+            parser=_parser_with_a_described_figure(), document_repo=document_repo
+        )
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        saved = document_repo.save_elements.await_args.args[1][0]
+        assert saved.text.value == ""
+
+    async def test_a_figure_nothing_is_known_about_produces_no_chunk(self) -> None:
+        """An unread figure has no prose to match on, so an empty chunk would be noise."""
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=_parser_with_a_figure(), chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = (
+            chunk_repo.save_batch.await_args.args[1] if chunk_repo.save_batch.await_args else []
+        )
+        assert not [c for c in written if c.chunk_type is ChunkType.FIGURE]
