@@ -176,9 +176,7 @@ def _parse_claim(i: int, raw_claim: object) -> Claim:
     labels: list[str] = []
     for j, label in enumerate(citations_raw):
         if not isinstance(label, str) or not label.strip():
-            raise GenerationParseError(
-                f"claim {i}, citation {j}: must be a non-empty string"
-            )
+            raise GenerationParseError(f"claim {i}, citation {j}: must be a non-empty string")
         labels.append(label.strip())
 
     try:

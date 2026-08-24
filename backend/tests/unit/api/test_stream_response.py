@@ -12,8 +12,10 @@ from fastapi.testclient import TestClient
 
 from app.api.dependencies.answer import get_answer_use_case
 from app.api.dependencies.scope import get_kb_scope
+from app.api.routers.conversations import _REJECTED_MESSAGE
 from app.api.routers.conversations import router as conversations_router
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
+from app.domain.errors import GenerationRejectedError
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import get_session
 from app.infrastructure.models.entailment import OllamaClaimEntailment
@@ -59,6 +61,19 @@ def _mock_use_case(tokens: list[str] | None = None) -> MagicMock:
     async def _gen():
         for t in tokens or []:
             yield t
+
+    uc = MagicMock()
+    uc.execute = AsyncMock(return_value=_gen())
+    return uc
+
+
+def _rejecting_use_case(tokens: list[str] | None = None) -> MagicMock:
+    """A use case whose stream raises the way validation does — after any tokens it sent."""
+
+    async def _gen():
+        for t in tokens or []:
+            yield t
+        raise GenerationRejectedError("answer rejected after validation: REJECTED")
 
     uc = MagicMock()
     uc.execute = AsyncMock(return_value=_gen())
@@ -202,6 +217,68 @@ class TestStreamResponse:
         ) as client:
             resp = client.post(_STREAM_URL, json={"query": "q"})
         assert resp.status_code == 404
+
+
+class TestRejectedAnswer:
+    """A rejected answer arrives after the 200, so it has to be reported on the stream.
+
+    Letting the error escape the generator tears the connection: the student's client
+    raises a read error and cannot tell a withheld answer from a crashed server.
+    """
+
+    def test_rejection_does_not_tear_the_connection(self) -> None:
+        session = _get_session(_conv_row(conv_id=_CONV_ID))
+        with TestClient(_make_app(session, use_case=_rejecting_use_case())) as client:
+            resp = client.post(_STREAM_URL, json={"query": "q"})
+        assert resp.status_code == 200
+
+    def test_rejection_is_sent_as_an_error_event(self) -> None:
+        session = _get_session(_conv_row(conv_id=_CONV_ID))
+        with TestClient(_make_app(session, use_case=_rejecting_use_case())) as client:
+            resp = client.post(_STREAM_URL, json={"query": "q"})
+        assert "event: error\n" in resp.text
+
+    def test_rejection_explains_why_no_answer_arrived(self) -> None:
+        session = _get_session(_conv_row(conv_id=_CONV_ID))
+        with TestClient(_make_app(session, use_case=_rejecting_use_case())) as client:
+            resp = client.post(_STREAM_URL, json={"query": "q"})
+        assert "could not be verified" in resp.text
+
+    def test_rejection_still_terminates_the_stream(self) -> None:
+        """A client waiting on the sentinel would otherwise read until it timed out."""
+        session = _get_session(_conv_row(conv_id=_CONV_ID))
+        with TestClient(_make_app(session, use_case=_rejecting_use_case())) as client:
+            resp = client.post(_STREAM_URL, json={"query": "q"})
+        assert resp.text.endswith("data: [DONE]\n\n")
+
+    def test_tokens_sent_before_the_rejection_are_kept(self) -> None:
+        """Whatever already reached the student stays; the error is appended after it."""
+        session = _get_session(_conv_row(conv_id=_CONV_ID))
+        with TestClient(_make_app(session, use_case=_rejecting_use_case(["A"]))) as client:
+            resp = client.post(_STREAM_URL, json={"query": "q"})
+        assert (
+            resp.text == f"data: A\n\nevent: error\ndata: {_REJECTED_MESSAGE}\n\ndata: [DONE]\n\n"
+        )
+
+    def test_the_answer_stream_is_still_closed(self) -> None:
+        """The turn is recorded in cleanup, so a rejected turn must record too."""
+        closed: list[str] = []
+
+        async def _gen() -> AsyncIterator[str]:
+            try:
+                raise GenerationRejectedError("rejected")
+                yield ""  # pragma: no cover — unreachable, marks this a generator
+            finally:
+                closed.append("closed")
+
+        use_case = MagicMock()
+        use_case.execute = AsyncMock(return_value=_gen())
+        session = _get_session(_conv_row(conv_id=_CONV_ID))
+
+        with TestClient(_make_app(session, use_case=use_case)) as client:
+            client.post(_STREAM_URL, json={"query": "q"})
+
+        assert closed == ["closed"]
 
 
 class TestStreamCleanup:

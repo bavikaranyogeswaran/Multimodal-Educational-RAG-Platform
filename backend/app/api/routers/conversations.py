@@ -21,6 +21,7 @@ from app.api.schemas.conversation import (
 )
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.conversations.entities import Conversation, Message
+from app.domain.errors import GenerationRejectedError
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
 from app.infrastructure.database.session import get_session
@@ -32,6 +33,14 @@ router = APIRouter(
 )
 
 _404_CONVERSATION = "Conversation not found"
+
+#: Shown when an answer fails its grounding checks. Rejection means a citation was
+#: invented or the evidence contradicts the claim, so withholding it is the system
+#: working — the student is told that, rather than being left with a silent stream.
+_REJECTED_MESSAGE = (
+    "That answer could not be verified against your material, so it was withheld. "
+    "Try rephrasing the question."
+)
 
 
 def _conv_response(conv: Conversation) -> ConversationResponse:
@@ -139,8 +148,15 @@ async def stream_response(
         # is not recorded until its cleanup runs, and a record that waits on the garbage
         # collector is a record with no guaranteed arrival time.
         try:
-            async for token in stream:
-                yield f"data: {token}\n\n"
+            try:
+                async for token in stream:
+                    yield f"data: {token}\n\n"
+            except GenerationRejectedError:
+                # Validation rejects an answer before its first token, by which point the
+                # 200 and its headers have already gone out — there is no status code left
+                # to fail with. Saying so on the open stream is the only way the student
+                # learns why nothing arrived, instead of the connection simply dropping.
+                yield f"event: error\ndata: {_REJECTED_MESSAGE}\n\n"
             yield "data: [DONE]\n\n"
         finally:
             await stream.aclose()
