@@ -172,7 +172,12 @@ class QueryClassifier:
     """Classify a natural-language query into one of thirteen QueryClass values.
 
     Rules run in priority order; the first matching rule determines the class.
-    Queries that match no rule are classified as DIRECT.
+
+    Queries matching no rule are classified as DIRECT, which makes DIRECT the unrecognised
+    case rather than a recognised simple one — no rule produces it positively. Its evidence
+    range is set for that in `selector.py`: what falls through is not reliably a one-passage
+    question, and treating it as one answered procedures and aggregations from two passages
+    because their phrasing happened to match nothing.
     """
 
     def classify(self, query: str) -> QueryClass:

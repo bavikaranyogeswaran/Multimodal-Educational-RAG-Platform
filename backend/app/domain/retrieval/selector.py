@@ -72,8 +72,14 @@ class CountRange:
 #: evaluation set. Any single range that later needs calibrating can be lifted out on its
 #: own.
 _DEFAULT_RANGES: Mapping[QueryClass, CountRange] = {
-    # Answered by the passage that states the fact. A second is a hedge; a fifth is noise.
-    QueryClass.DIRECT: CountRange(1, 2),
+    # Every question no rule recognised arrives here, so this is the budget for a question
+    # nobody has read rather than for a known simple one. A fact stated in one passage is
+    # still answered from one, because the minimum stays at one and the score margin stops
+    # as soon as the ranking falls away — the ceiling only decides how far it may read when
+    # the ranking keeps saying yes. It sits above the tightest classes because what lands
+    # here in practice is not simple: a procedure and a "what X are used" aggregation both
+    # fall through, and both were being answered from two passages.
+    QueryClass.DIRECT: CountRange(1, 4),
     # A definition, and where the term is actually used.
     QueryClass.EXACT_TERM: CountRange(1, 3),
     # The table, and whatever names its columns.

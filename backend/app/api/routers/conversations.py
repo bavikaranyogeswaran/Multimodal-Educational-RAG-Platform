@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +28,8 @@ from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
 from app.infrastructure.database.session import get_session
 
+_log = structlog.get_logger(__name__)
+
 router = APIRouter(
     prefix="/knowledge-bases/{kb_id}/conversations",
     tags=["conversations"],
@@ -41,6 +45,33 @@ _REJECTED_MESSAGE = (
     "That answer could not be verified against your material, so it was withheld. "
     "Try rephrasing the question."
 )
+
+#: Shown when generation failed outright. Deliberately different from a rejection: nothing
+#: was judged and found wanting, something broke, and telling a student their question was
+#: unanswerable would be a lie about their material. Says the attempt failed and stops
+#: there — what broke is in the log, and is nothing the student can act on.
+_FAILED_MESSAGE = (
+    "Something went wrong while answering, so this response is incomplete. "
+    "Try asking again."
+)
+
+
+def _log_stream_failure() -> None:
+    """Record a failed generation without letting the recording become the failure.
+
+    The response is already open and half-delivered by this point, so an exception raised
+    while logging would take the error event and the sentinel down with it and leave the
+    student holding exactly the torn connection this reports. Logging is best-effort here
+    for that reason alone; a sink that cannot write is its own problem, chased through the
+    fallback line rather than through a dropped stream.
+    """
+    try:
+        _log.error("answer_stream_failed", exc_info=True)
+    except Exception:
+        # The traceback itself could not be written. Say that much without it, and if even
+        # that fails the sink is gone entirely and there is nowhere left to say anything.
+        with contextlib.suppress(Exception):
+            _log.error("answer_stream_failed", detail="traceback unloggable")
 
 
 def _conv_response(conv: Conversation) -> ConversationResponse:
@@ -157,6 +188,16 @@ async def stream_response(
                 # to fail with. Saying so on the open stream is the only way the student
                 # learns why nothing arrived, instead of the connection simply dropping.
                 yield f"event: error\ndata: {_REJECTED_MESSAGE}\n\n"
+            except Exception:
+                # A generation that failed rather than one that was refused: the provider
+                # died, the connection dropped, something broke. Logged in full, because a
+                # failure the student is told about politely is still a failure somebody
+                # has to find — reporting it must not be what makes it invisible.
+                # Cancellation and generator close are deliberately not caught here: both
+                # mean the student stopped listening, which is not an error to report to
+                # a client that has already gone.
+                _log_stream_failure()
+                yield f"event: error\ndata: {_FAILED_MESSAGE}\n\n"
             yield "data: [DONE]\n\n"
         finally:
             await stream.aclose()

@@ -95,13 +95,33 @@ def _candidates(*scores: float, words: int = 5) -> list[Evidence]:
 
 
 class TestCountsByQueryClass:
-    def test_a_direct_question_is_not_answered_with_five_passages(self) -> None:
+    def test_an_unrecognised_question_is_not_answered_with_five_passages(self) -> None:
         """Given material, the model uses it, so the surplus drags the answer toward
         whatever those passages said."""
         selected = _selector().select(
             _candidates(1.0, 0.99, 0.98, 0.97, 0.96), query_class=QueryClass.DIRECT
         )
-        assert len(selected) == 2
+        assert len(selected) < 5
+
+    def test_an_unrecognised_question_is_not_held_to_two_passages(self) -> None:
+        """DIRECT is where every question no rule matched lands, not a known simple one.
+
+        Procedures and "what X are used" aggregations both fall through to it, and neither
+        is answerable from two passages. The ceiling only decides how far the selector may
+        read while the ranking keeps saying yes; a genuine one-passage fact still stops at
+        one, because the minimum and the score margin are what end it.
+        """
+        selected = _selector().select(
+            _candidates(1.0, 0.99, 0.98, 0.97, 0.96), query_class=QueryClass.DIRECT
+        )
+        assert len(selected) > 2
+
+    def test_a_clear_best_passage_still_ends_an_unrecognised_question_early(self) -> None:
+        """Widening the ceiling must not drag in candidates the ranking has dismissed."""
+        selected = _selector().select(
+            _candidates(1.0, 0.2, 0.1, 0.05, 0.01), query_class=QueryClass.DIRECT
+        )
+        assert len(selected) == 1
 
     def test_a_comparison_is_not_answered_from_one_source(self) -> None:
         selected = _selector().select(

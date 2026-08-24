@@ -16,8 +16,10 @@ Processors (in order):
 
 from __future__ import annotations
 
+import io
 import logging
-from typing import Any
+import sys
+from typing import Any, TextIO
 
 import structlog
 from structlog.types import EventDict, Processor
@@ -86,6 +88,33 @@ def configure_structlog(settings: Settings) -> None:
             renderer,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.PrintLoggerFactory(file=_utf8_stdout()),
         cache_logger_on_first_use=True,
     )
+
+
+def _utf8_stdout() -> TextIO:
+    """Standard output that can carry the text this application actually logs.
+
+    A Windows console hands Python a cp1252 stream, and almost everything logged here
+    comes off a real document: an em dash in a heading, an accent in an author's name, an
+    arrow in a diagram label. Writing one raises `UnicodeEncodeError` from inside the
+    logging call, which turns a line nobody would have read into a failure that takes its
+    caller down — this was first seen killing a response mid-stream, where the log was
+    reporting the very failure the student then never heard about.
+
+    Characters the stream still cannot represent are replaced rather than raised on. A
+    mangled character in a log line is a much smaller problem than an exception thrown
+    from the one code path whose job is to record problems.
+    """
+    stream = sys.stdout
+    if getattr(stream, "encoding", "").lower().replace("-", "") == "utf8":
+        return stream
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
+        return stream
+    buffer = getattr(stream, "buffer", None)
+    if buffer is None:
+        return stream
+    return io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)

@@ -1673,15 +1673,28 @@ tuning problem:
       and no figure OCR string appeared inside any chunk. Fixed and re-verified on the same
       book: **52 `FIGURE` chunks, all embedded**, and the searchable tier went from 84 children
       to 184 (A-729, A-737)
-- [ ] **`DIRECT` is the classifier's fallback and carries the tightest evidence budget of the
+- [x] **`DIRECT` was the classifier's fallback and carried the tightest evidence budget of the
       fourteen classes** â€” `CountRange(1, 2)`. Three of four natural questions matched no rule
-      and fell through to it, so an unrecognised question is answered from the least evidence.
+      and fell through to it, so an unrecognised question was answered from the least evidence.
       *"What Python libraries are used in this book?"* is an aggregation question, but the
-      AGGREGATION rule wants "how many" or "list all", so it lands on DIRECT and gets two
-      passages (A-730)
-- [ ] **A mid-stream failure that is not a rejection still tears the SSE connection** â€” the
-      rejection path now reports itself on the stream and closes cleanly, confirmed live, but a
-      `ProviderError` mid-generation reaches the student as a bare read error (A-731)
+      AGGREGATION rule wants "how many" or "list all", so it landed on DIRECT and saw two
+      passages. Widened to `CountRange(1, 4)`; **`selected` went 2 to 4** on every DIRECT query
+      and that question now names Spyder and IPython alongside Jupyter (A-730, A-741)
+- [ ] **The classifier's rules do not cover how people actually ask** â€” widening the fallback
+      budget treats the symptom. A procedure and an aggregation still classify as unrecognised,
+      and matching them properly would route them to ranges chosen for what they are. Left
+      alone deliberately: new regexes misfire in ways only an evaluation set would catch, and
+      D-22's gold pairs are what that needs (A-742)
+- [x] **A mid-stream failure that is not a rejection tore the SSE connection** â€” the rejection
+      path reported itself and closed cleanly, but a `ProviderError` mid-generation reached the
+      student as a bare read error. Both branches now close cleanly, with a message that keeps
+      them apart: a rejection was judged and withheld, a failure simply broke. Verified by
+      killing the model provider mid-generation (A-731, A-745)
+- [x] **The log sink could not write the text this application logs** â€” found while verifying
+      the above, and the reason the first attempt still delivered nothing. `PrintLoggerFactory`
+      wrote to a cp1252 console, so a traceback carrying an em dash raised `UnicodeEncodeError`
+      from inside the logging call and took the response down with it. Every log line drawn
+      from a real document was exposed to this, not just this one (A-746)
 
 Two things ruled out by experiment rather than assumed, so neither is worth revisiting without
 new evidence: the evidence pool is **not** throttled by the diversity caps (raising
