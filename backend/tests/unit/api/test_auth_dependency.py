@@ -59,7 +59,7 @@ class _StubJwksClient:
         self._public_key = private_key.public_key()
         self._valid_kid = valid_kid
 
-    async def get_rsa_key(self, kid: str) -> Any:
+    async def get_signing_key(self, kid: str) -> Any:
         if kid != self._valid_kid:
             raise AuthenticationError(f"No signing key found for kid={kid!r}")
         return self._public_key
@@ -119,7 +119,7 @@ class TestGetCurrentUser:
 
     def test_expired_token_returns_401(self) -> None:
         pk = _private_key()
-        token = _make_token(pk, exp_delta=-10)
+        token = _make_token(pk, exp_delta=-3600)
         app = _make_app(_StubJwksClient(pk))
 
         with (

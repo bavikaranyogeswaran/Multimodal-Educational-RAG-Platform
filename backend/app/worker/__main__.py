@@ -208,8 +208,15 @@ async def _main() -> None:
     shutdown = asyncio.Event()
 
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, shutdown.set)
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, shutdown.set)
+    except NotImplementedError:
+        # Windows: asyncio signal handlers are not implemented on this platform.
+        # Fall back to the synchronous interface, which handles Ctrl-C (SIGINT)
+        # but not SIGTERM, since Windows does not deliver SIGTERM to Python
+        # processes the same way POSIX does.
+        signal.signal(signal.SIGINT, lambda *_: shutdown.set())
 
     _log.info("worker_started", worker_id=worker_id)
 

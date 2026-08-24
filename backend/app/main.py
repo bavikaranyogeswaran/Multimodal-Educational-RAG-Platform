@@ -64,6 +64,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         url=settings.supabase.jwks_url,
         cache_seconds=settings.supabase.jwks_cache_seconds,
     )
+    # Fetch the signing keys now rather than on the first authenticated request. Building
+    # them inside a request handler makes that request fail, so the cost is paid here where
+    # nothing is waiting on it.
+    await _app.state.jwks_client.warm_up()
     if settings.model.warm_models_on_startup:
         await warm_up_models(_app.state.container.model_gateway)
     yield

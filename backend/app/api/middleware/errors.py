@@ -74,7 +74,7 @@ def _upload_validation_handler(_request: Request, exc: UploadValidationError) ->
 
 
 def _generic_handler(_request: Request, exc: Exception) -> JSONResponse:
-    _log.error("unhandled_exception", exc_type=type(exc).__name__)
+    _log.error("unhandled_exception", exc_type=type(exc).__name__, exc_info=True)
     return JSONResponse(status_code=500, content=_body("Internal server error"))
 
 

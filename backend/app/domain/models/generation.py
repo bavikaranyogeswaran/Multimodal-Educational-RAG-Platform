@@ -95,6 +95,25 @@ Respond with a single JSON object only — no text before or after it.
 - Do not add, rename, or remove keys."""
 
 
+def _strip_code_fence(raw: str) -> str:
+    """Return the JSON inside a markdown code fence, or the input unchanged.
+
+    Smaller instruction-tuned models wrap JSON in ```json fences however firmly the
+    schema asks for a bare object. The fence is a formatting habit, not a malformed
+    answer, so it is removed here rather than counted as a parse failure.
+    """
+    text = raw.strip()
+    if not text.startswith("```"):
+        return text
+    body = text[3:]
+    newline = body.find("\n")
+    if newline == -1:
+        return text
+    body = body[newline + 1 :]
+    closing = body.rfind("```")
+    return body[:closing].strip() if closing != -1 else text
+
+
 def parse_generated_answer(raw: str) -> GeneratedAnswer:
     """Parse the model's raw string into a GeneratedAnswer.
 
@@ -108,7 +127,7 @@ def parse_generated_answer(raw: str) -> GeneratedAnswer:
     adds explanatory annotations.
     """
     try:
-        data = json.loads(raw)
+        data = json.loads(_strip_code_fence(raw))
     except json.JSONDecodeError as exc:
         raise GenerationParseError(f"response is not valid JSON: {exc}") from exc
 

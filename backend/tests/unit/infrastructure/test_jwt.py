@@ -94,7 +94,7 @@ class TestJwksClient:
 
         with patch("app.infrastructure.auth.jwks.httpx.AsyncClient", return_value=mock_client):
             jwks = JwksClient(url="https://example.com/jwks.json", cache_seconds=600)
-            key = await jwks.get_rsa_key(_TEST_KID)
+            key = await jwks.get_signing_key(_TEST_KID)
 
         assert key is not None
 
@@ -104,8 +104,8 @@ class TestJwksClient:
 
         with patch("app.infrastructure.auth.jwks.httpx.AsyncClient", return_value=mock_client):
             jwks = JwksClient(url="https://example.com/jwks.json", cache_seconds=600)
-            await jwks.get_rsa_key(_TEST_KID)
-            await jwks.get_rsa_key(_TEST_KID)
+            await jwks.get_signing_key(_TEST_KID)
+            await jwks.get_signing_key(_TEST_KID)
 
         # Only one HTTP call despite two key lookups.
         assert mock_client.get.call_count == 1
@@ -117,7 +117,7 @@ class TestJwksClient:
         with patch("app.infrastructure.auth.jwks.httpx.AsyncClient", return_value=mock_client):
             jwks = JwksClient(url="https://example.com/jwks.json", cache_seconds=600)
             with pytest.raises(AuthenticationError, match="No signing key"):
-                await jwks.get_rsa_key("unknown-kid-xyz")
+                await jwks.get_signing_key("unknown-kid-xyz")
 
     async def test_raises_on_fetch_error(self) -> None:
         import httpx
@@ -130,7 +130,7 @@ class TestJwksClient:
         with patch("app.infrastructure.auth.jwks.httpx.AsyncClient", return_value=client):
             jwks = JwksClient(url="https://example.com/jwks.json", cache_seconds=600)
             with pytest.raises(AuthenticationError, match="Failed to fetch JWKS"):
-                await jwks.get_rsa_key(_TEST_KID)
+                await jwks.get_signing_key(_TEST_KID)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ class _StubJwksClient:
         self._public_key = private_key.public_key()
         self._valid_kid = valid_kid
 
-    async def get_rsa_key(self, kid: str) -> Any:
+    async def get_signing_key(self, kid: str) -> Any:
         if kid != self._valid_kid:
             raise AuthenticationError(f"No signing key found for kid={kid!r}")
         return self._public_key
@@ -168,7 +168,7 @@ class TestExtractUserId:
 
     async def test_expired_token_raises(self) -> None:
         pk = _private_key()
-        token = _make_token(pk, exp_delta=-10)
+        token = _make_token(pk, exp_delta=-3600)
 
         with pytest.raises(AuthenticationError, match="expired"):
             await extract_user_id(token, _StubJwksClient(pk), _settings())

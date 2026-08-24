@@ -1,4 +1,4 @@
-"""JWT verification for Supabase RS256 access tokens."""
+"""JWT verification for Supabase access tokens (RS256 and ES256)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,11 @@ import jwt as pyjwt
 from app.configuration.settings import SupabaseSettings
 from app.domain.errors import AuthenticationError
 from app.infrastructure.auth.jwks import JwksClient
+
+#: Tolerance for disagreement between this machine's clock and Supabase's when comparing
+#: the time claims. Without it a token minted a moment ago is rejected as not yet valid
+#: whenever the local clock trails the issuer's, which no amount of retrying resolves.
+_CLOCK_SKEW_LEEWAY_SECONDS = 60
 
 
 async def extract_user_id(
@@ -32,14 +37,15 @@ async def extract_user_id(
     if not kid:
         raise AuthenticationError("Token header is missing the kid field")
 
-    public_key: Any = await jwks_client.get_rsa_key(kid)
+    public_key: Any = await jwks_client.get_signing_key(kid)
 
     try:
         payload: dict[str, Any] = pyjwt.decode(
             token,
             public_key,
-            algorithms=["RS256"],
+            algorithms=["RS256", "ES256"],
             audience=settings.jwt_audience,
+            leeway=_CLOCK_SKEW_LEEWAY_SECONDS,
         )
     except pyjwt.ExpiredSignatureError as exc:
         raise AuthenticationError("Token has expired") from exc
