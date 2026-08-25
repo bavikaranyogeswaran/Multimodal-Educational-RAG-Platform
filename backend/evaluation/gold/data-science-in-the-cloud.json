@@ -1,0 +1,174 @@
+{
+  "source": "Data Science in the Cloud with Microsoft Azure Machine Learning and Python — Stephen F. Elston, O'Reilly, 62 PDF pages",
+  "page_numbering": "PDF pages, counting the cover as 1. The book also prints its own numbers, offset by six — printed page 3 is PDF page 9 — and the book's own cross-references use the printed ones. Every number here is a PDF page, because that is what a chunk records and what a reader is sent to.",
+  "labelling_notes": [
+    "Questions are written as a student would ask them, then the answer was located. Written the other way round — read a passage, paraphrase it into a question — the question inherits that passage's vocabulary and retrieval finds it for reasons that have nothing to do with being good at retrieval.",
+    "A figure is printed on the page after the text that introduces it. Figure 4 is announced on PDF page 13 and drawn on 14, so figure questions name both: the sentence saying what it shows and the figure itself are different chunks, and either can carry the answer.",
+    "expected_class records what the question is, not what the classifier currently returns. A disagreement is the finding, not a labelling error."
+  ],
+  "pairs": [
+    {
+      "id": "studio-what-is",
+      "question": "What is Azure ML Studio?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [9],
+      "must_contain": ["web-based"],
+      "note": "One sentence states it: models are built and tested in the web-based Azure ML Studio. A genuinely direct question, and the baseline for what an easy one scores."
+    },
+    {
+      "id": "python-distribution",
+      "question": "Which Python distribution should I install to match Azure ML?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [8],
+      "must_contain": ["Anaconda"],
+      "note": "Stated once, under Working Between Azure ML and Spyder. The version matters and is easy to retrieve the surrounding advice without."
+    },
+    {
+      "id": "dataset-used",
+      "question": "Which dataset does the worked example use?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [8, 15],
+      "must_contain": ["Bike Rental"],
+      "note": "Named under Downloads on page 8 and described again in Problem and Data Overview on 15. Either answers it; both together answer it well."
+    },
+    {
+      "id": "data-io-options",
+      "question": "What are all the ways data can get into and out of Azure ML?",
+      "expected_class": "AGGREGATION",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [11],
+      "must_contain": ["Blob", "Hive"],
+      "note": "A six-item list on one page, so page recall is easy and the phrase check is what shows whether the whole list survived into the prompt."
+    },
+    {
+      "id": "script-module-ports",
+      "question": "How many ports does the Execute Python Script module have?",
+      "expected_class": "AGGREGATION",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [13],
+      "must_contain": ["five ports"],
+      "note": "Phrased with 'how many', which is one of the forms the AGGREGATION rule actually matches — included to contrast with python-libraries, which is the same kind of question phrased in a way no rule catches."
+    },
+    {
+      "id": "python-libraries",
+      "question": "Which Python libraries does this report use?",
+      "expected_class": "AGGREGATION",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [12, 20, 21],
+      "must_contain": ["pandas", "numpy", "scikit"],
+      "note": "The question behind A-730. An aggregation by meaning that matches no AGGREGATION rule, so it falls through to DIRECT. The names are spread over many pages and concentrated on 21; phrase coverage measures this far better than page recall does, since a complete answer names the libraries rather than reaching every page that mentions one."
+    },
+    {
+      "id": "training-workflow-steps",
+      "question": "What are the steps for training a model in Azure ML?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [13, 14],
+      "must_contain": ["scoring"],
+      "note": "A procedure, and there is no class for one. Labelled DIRECT because that is what a question no rule recognises truthfully is — this pair exists to measure the fallback, not to endorse it."
+    },
+    {
+      "id": "publish-web-service",
+      "question": "How do I publish a trained model as a web service?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [54],
+      "must_contain": ["Setup Web Service"],
+      "note": "Another procedure falling through to DIRECT. The button name is the actionable part and the easiest thing to lose."
+    },
+    {
+      "id": "cross-validation",
+      "question": "What does the Cross Validation module do?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [51],
+      "must_contain": ["folds"],
+      "note": "Defined in place on one page."
+    },
+    {
+      "id": "reader-vs-writer",
+      "question": "What is the difference between the Reader module and the Writer module?",
+      "expected_class": "COMPARISON",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [11, 12],
+      "must_contain": [],
+      "note": "The contrast is split across a page break — Reader is described on 11 and Writer on 12 — so an answer built from one page alone is half an answer that will not say so."
+    },
+    {
+      "id": "why-spyder",
+      "question": "Why would I write code in Spyder rather than directly in Azure ML?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [8],
+      "must_contain": ["development"],
+      "note": "A reason question. No class covers those either; recorded as DIRECT for the same reason as the procedures."
+    },
+    {
+      "id": "figure-4-workflow",
+      "question": "What does Figure 4 show?",
+      "expected_class": "VISUAL",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [13, 14],
+      "must_contain": [],
+      "note": "Announced on 13, drawn on 14. Unreachable at all before figures were chunked, so this pair is the regression test for that as much as a measure."
+    },
+    {
+      "id": "figure-1-studio",
+      "question": "What does Figure 1 show?",
+      "expected_class": "VISUAL",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [9, 10],
+      "must_contain": [],
+      "note": "Same shape as figure-4-workflow: sentence on 9, image on 10."
+    },
+    {
+      "id": "sql-filtering",
+      "question": "How can I filter rows with SQL inside an experiment?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [44],
+      "must_contain": ["Apply SQL"],
+      "note": "The module name is what makes the answer usable, and the question does not contain it — deliberately, since a question carrying the answer's own vocabulary measures nothing."
+    },
+    {
+      "id": "jupyter-support",
+      "question": "Can I use Jupyter notebooks with Azure ML?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [59],
+      "must_contain": [],
+      "note": "Mentioned in passing on page 9 with a forward reference, and answered properly on 59. Page 9 alone would look like a hit and give a much worse answer, which is what makes this pair worth having."
+    },
+    {
+      "id": "avoid-overfitting",
+      "question": "What does the report suggest doing about overfitting?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [54],
+      "must_contain": ["Prune"],
+      "note": "Sits immediately before the web service section on the same page, so it shares a page with publish-web-service and the two must not be confused for each other."
+    },
+    {
+      "id": "report-conclusions",
+      "question": "What are the main conclusions of this report?",
+      "expected_class": "SUMMARY",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [61],
+      "must_contain": [],
+      "note": "The Summary section states them as a list. The only genuine SUMMARY pair the material supports."
+    },
+    {
+      "id": "sagemaker-absent",
+      "question": "What does this report say about deploying models on AWS SageMaker?",
+      "expected_class": "DIRECT",
+      "document": "Data Science in the Cloud.pdf",
+      "gold_pages": [],
+      "must_contain": [],
+      "unanswerable": true,
+      "note": "The report is about Azure and never mentions SageMaker. Finding nothing is the right answer. Without a pair like this the set cannot tell a system that abstains properly from one that never abstains, and every retrieval change would look like an improvement."
+    }
+  ]
+}

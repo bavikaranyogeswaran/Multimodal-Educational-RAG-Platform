@@ -17,7 +17,7 @@ from app.api.dependencies.container import get_container
 from app.api.dependencies.scope import get_kb_scope
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator
 from app.configuration.container import Container
-from app.configuration.settings import get_settings
+from app.configuration.settings import Settings, get_settings
 from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.compression import EvidenceCompressor
 from app.domain.retrieval.expander import QueryExpander
@@ -38,7 +38,21 @@ async def get_retrieval_orchestrator(
     session: Annotated[AsyncSession, Depends(get_session)],
     container: Annotated[Container, Depends(get_container)],
 ) -> RetrievalOrchestrator:
-    settings = get_settings()
+    return build_retrieval_orchestrator(container, get_settings(), scope, session)
+
+
+def build_retrieval_orchestrator(
+    container: Container,
+    settings: Settings,
+    scope: ScopeContext,
+    session: AsyncSession,
+) -> RetrievalOrchestrator:
+    """Assemble the retrieval pipeline for one scope and session.
+
+    Separate from the dependency so that anything measuring retrieval is measuring the
+    pipeline the API actually runs. An evaluation that assembled its own would score a
+    system nobody uses, and would go on scoring it after this one changed.
+    """
     return RetrievalOrchestrator(
         classifier=QueryClassifier(),
         rewriter=QueryRewriter(gateway=container.model_gateway),

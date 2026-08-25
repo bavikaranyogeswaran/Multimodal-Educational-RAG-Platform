@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~35%, retrieval measured, generation and memory not) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) Â· Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,709 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **Phase 17 â€” the gold evaluation set (D-22)**, which A-742, A-744 and the threshold calibration all name as what they are waiting for |
-| Last updated | 25 August 2026 (step 7.14 â€” closing the window where a document could be stored and never found) |
+| Tests | 2,761 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **Extend the gold set** â€” 18 pairs cover 5 of 13 query classes, and three of the eight uncovered need a second document (D-22) |
+| Last updated | 25 August 2026 (step 17.1 â€” the gold set and the retrieval metric harness) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1688,7 +1688,7 @@ tuning problem:
       book: **52 `FIGURE` chunks, all embedded**, and the searchable tier went from 84 children
       to 184 (A-729, A-737)
 - [x] **`DIRECT` was the classifier's fallback and carried the tightest evidence budget of the
-      fourteen classes** â€” `CountRange(1, 2)`. Three of four natural questions matched no rule
+      thirteen classes** â€” `CountRange(1, 2)`. Three of four natural questions matched no rule
       and fell through to it, so an unrecognised question was answered from the least evidence.
       *"What Python libraries are used in this book?"* is an aggregation question, but the
       AGGREGATION rule wants "how many" or "list all", so it landed on DIRECT and saw two
@@ -2327,9 +2327,16 @@ replace the derived latency budgets with measured p95 is unmet.
 - [x] **Logs never contain full private documents or prompts by default** (Â§62) â€” redaction
       processor strips `prompt`, `document_text` and `model_output` unless
       `DEBUG_ALLOW_CONTENT_LOGGING` is set
-- [ ] Gold dataset: 40â€“60 labelled pairs from user-supplied PDFs across every query class (D-22)
-- [ ] Retrieval evaluation: Recall@k, Precision@k, MRR, NDCG, document and page coverage, table,
-      visual and graph-edge accuracy
+- [~] **Gold dataset** â€” 18 pairs against the real textbook, in
+      `evaluation/gold/data-science-in-the-cloud.json`, each carrying the reasoning for its
+      labelling. Short of D-22's 40â€“60 and covering 5 of 13 classes: the material has no
+      real tables and only one document, so TABLE and MULTI_DOCUMENT cannot be asked at all
+      from here (A-764, A-767)
+- [~] **Retrieval evaluation** â€” page recall, precision, reciprocal rank, NDCG and phrase
+      coverage, as pure functions over page numbers with the arithmetic checked by hand.
+      `scripts/evaluate_retrieval.py` runs the real pipeline over a gold set and reports
+      them per question and per class. Table and graph-edge accuracy wait on material and
+      on Phase 12 respectively (A-765)
 - [ ] Reranking evaluation: recall before and after, MRR delta, pool size, latency
 - [ ] Generation evaluation: all ten Â§63 metrics
 - [ ] Multi-hop evaluation: all seven Â§63 metrics
