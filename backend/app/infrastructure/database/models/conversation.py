@@ -124,9 +124,14 @@ class MessageCitationModel(Base):
     # outside the answer that issued it, and kept for exactly that reason: it is how the
     # stored record lines up with the text of the answer.
     label: Mapped[str] = mapped_column(String(16))
-    chunk_id: Mapped[uuid.UUID] = mapped_column(
+    # SET NULL rather than CASCADE, for the same reason the columns below are copies
+    # rather than lookups: reprocessing deletes every chunk of a document and writes new
+    # ones, and under CASCADE that silently erased the sources of every answer already
+    # given about it. Null here means the passage this rested on is no longer stored, not
+    # that the claim was never attributed — where to look is still recorded beside it.
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("chunks.id", ondelete="CASCADE"),
+        ForeignKey("chunks.id", ondelete="SET NULL"),
     )
     document_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),

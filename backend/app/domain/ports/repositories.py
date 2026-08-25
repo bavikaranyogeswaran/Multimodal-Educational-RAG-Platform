@@ -129,6 +129,20 @@ class DocumentRepository(Protocol):
         """Figures for a document, optionally narrowed to a single page."""
         ...
 
+    async def delete_parse(self, scope: ScopeContext, document_id: UUID) -> None:
+        """Remove the pages, elements, tables and figures of an earlier reading.
+
+        The document row itself stays, along with the file it was uploaded from. What
+        goes is everything derived from reading that file, so a second reading can
+        write its own without landing beside the first.
+
+        This exists because the parser mints new identifiers on every run, so saving
+        again inserts a parallel copy rather than replacing what is there. Callers
+        pair it with `ChunkRepository.delete_for_document`, which covers what the
+        chunker derived in turn.
+        """
+        ...
+
 
 class ChunkRepository(Protocol):
     """Persistence for retrievable Chunks."""

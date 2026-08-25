@@ -11,6 +11,8 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.application.commands.ingest_document import (
     IngestDocumentCommand,
     IngestDocumentUseCase,
@@ -140,6 +142,9 @@ def _make_document_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.save_pages = AsyncMock()
     repo.save_elements = AsyncMock()
+    # An empty list, not a mock: this is read to find the crops an earlier ingestion
+    # left in storage, and the default document under test has never been read before.
+    repo.get_figures = AsyncMock(return_value=[])
     return repo
 
 
@@ -1151,3 +1156,163 @@ class TestFigureChunks:
             chunk_repo.save_batch.await_args.args[1] if chunk_repo.save_batch.await_args else []
         )
         assert not [c for c in written if c.chunk_type is ChunkType.FIGURE]
+
+
+# ---------------------------------------------------------------------------
+# Replacing an earlier reading
+# ---------------------------------------------------------------------------
+
+
+def _previous_figure(*, crop_key: str | None = "figures/u/kb/doc/fig.png") -> DocumentFigure:
+    """A figure record an earlier ingestion of this same document left behind."""
+    return DocumentFigure(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        source_element_id=uuid.uuid4(),
+        page_number=1,
+        kind=ElementType.FIGURE,
+        bounding_box=_FIGURE_BOX,
+        created_at=_NOW,
+        crop_key=crop_key,
+    )
+
+
+def _repo_holding(figures: list[DocumentFigure]) -> AsyncMock:
+    repo = _make_document_repo()
+    repo.get_figures = AsyncMock(return_value=figures)
+    return repo
+
+
+def _storage_with_a_pdf() -> AsyncMock:
+    storage = AsyncMock()
+    storage.get = AsyncMock(return_value=b"%PDF fake bytes")
+    return storage
+
+
+class TestReplacingAnEarlierReading:
+    """Reading a document twice must leave one copy of it, not two.
+
+    Nothing written here carries an identity a previous run would recognise, so saving
+    again inserts rather than overwrites. Without the sweep the same passage sits in the
+    index under two ids and competes with itself for the slots an answer has to spend.
+    """
+
+    async def test_the_chunks_of_the_earlier_reading_are_removed(self) -> None:
+        chunk_repo = AsyncMock()
+        use_case = _make_use_case(chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        chunk_repo.delete_for_document.assert_awaited_once_with(_SCOPE, _DOC_ID)
+
+    async def test_the_pages_and_elements_of_the_earlier_reading_are_removed(self) -> None:
+        document_repo = _make_document_repo()
+        use_case = _make_use_case(document_repo=document_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        document_repo.delete_parse.assert_awaited_once_with(_SCOPE, _DOC_ID)
+
+    async def test_nothing_new_is_written_until_the_old_is_gone(self) -> None:
+        """Overlap would put both readings in the tables at once, and a search running
+        during the window would rank a passage against itself."""
+        document_repo = _make_document_repo()
+        chunk_repo = AsyncMock()
+        order: list[str] = []
+        document_repo.delete_parse.side_effect = lambda *_a, **_k: order.append("clear parse")
+        chunk_repo.delete_for_document.side_effect = lambda *_a, **_k: order.append("clear chunks")
+        document_repo.save_pages.side_effect = lambda *_a, **_k: order.append("write pages")
+        chunk_repo.save_batch.side_effect = lambda *_a, **_k: order.append("write chunks")
+        use_case = _make_use_case(document_repo=document_repo, chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        assert order.index("clear parse") < order.index("write pages")
+        assert order.index("clear chunks") < order.index("write chunks")
+
+    async def test_a_parse_that_fails_leaves_the_earlier_reading_untouched(self) -> None:
+        """Sweeping first would mean a corrupt upload, a crashed parser or a dropped
+        connection took away the copy the student already had and put nothing back."""
+        document_repo = _make_document_repo()
+        chunk_repo = AsyncMock()
+        parser = AsyncMock()
+        parser.parse = AsyncMock(side_effect=RuntimeError("this file is not a PDF"))
+        use_case = _make_use_case(
+            parser=parser, document_repo=document_repo, chunk_repo=chunk_repo
+        )
+
+        with pytest.raises(RuntimeError):
+            await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        document_repo.delete_parse.assert_not_awaited()
+        chunk_repo.delete_for_document.assert_not_awaited()
+
+    async def test_a_first_reading_finds_nothing_and_carries_on(self) -> None:
+        use_case = _make_use_case(document_repo=_repo_holding([]))
+
+        result = await use_case.execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+
+        assert result.status == DocumentStatus.COMPLETED
+
+    async def test_the_crops_of_the_earlier_reading_are_removed_from_storage(self) -> None:
+        """A new reading mints new figure ids and so writes to new keys. Skipping this
+        does not overwrite the old images, it strands them."""
+        figure = _previous_figure()
+        storage = _storage_with_a_pdf()
+        use_case = _make_use_case(document_repo=_repo_holding([figure]), storage=storage)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        storage.delete.assert_awaited_once_with(figure.crop_key)
+
+    async def test_crops_are_removed_before_the_rows_that_name_them(self) -> None:
+        """Those rows hold the only record that the objects exist."""
+        document_repo = _repo_holding([_previous_figure()])
+        storage = _storage_with_a_pdf()
+        order: list[str] = []
+        storage.delete.side_effect = lambda *_a, **_k: order.append("crops")
+        document_repo.delete_parse.side_effect = lambda *_a, **_k: order.append("rows")
+        use_case = _make_use_case(document_repo=document_repo, storage=storage)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        assert order.index("crops") < order.index("rows")
+
+    async def test_a_figure_that_was_never_cropped_is_passed_over(self) -> None:
+        storage = _storage_with_a_pdf()
+        use_case = _make_use_case(
+            document_repo=_repo_holding([_previous_figure(crop_key=None)]), storage=storage
+        )
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        storage.delete.assert_not_awaited()
+
+    async def test_a_crop_that_cannot_be_deleted_does_not_stop_the_reading(self) -> None:
+        """The object it could not remove costs storage and nothing else — the row
+        naming it is about to go either way. Failing here would cost the document."""
+        storage = _storage_with_a_pdf()
+        storage.delete = AsyncMock(side_effect=RuntimeError("bucket unreachable"))
+        use_case = _make_use_case(
+            document_repo=_repo_holding([_previous_figure()]), storage=storage
+        )
+
+        result = await use_case.execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+
+        assert result.status == DocumentStatus.COMPLETED
+
+    async def test_one_failed_crop_delete_does_not_strand_the_rest(self) -> None:
+        first, second = _previous_figure(), _previous_figure(crop_key="figures/u/kb/doc/b.png")
+        storage = _storage_with_a_pdf()
+        storage.delete = AsyncMock(side_effect=[RuntimeError("gone"), None])
+        use_case = _make_use_case(document_repo=_repo_holding([first, second]), storage=storage)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        assert storage.delete.await_args_list[-1].args[0] == second.crop_key

@@ -468,6 +468,74 @@ class TestDocumentScopeGuard:
 
         session.execute.assert_not_called()
 
+    async def test_delete_parse_rejects_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _doc_repo(_make_scope(), session)
+
+        with pytest.raises(ScopeViolationError):
+            await repo.delete_parse(_make_scope(), uuid.uuid4())
+
+        session.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Clearing an earlier reading
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteParse:
+    """What a re-reading has to clear before it writes.
+
+    Checked against the statements rather than their effect: three of the four tables
+    carry ARRAY and JSONB columns that SQLite cannot create, so there is no in-memory
+    database to delete rows from. The live behaviour is covered against Postgres.
+    """
+
+    @staticmethod
+    async def _sweep() -> list[object]:
+        session = AsyncMock()
+        scope = _make_scope()
+        await _doc_repo(scope, session).delete_parse(scope, uuid.uuid4())
+        return [call.args[0] for call in session.execute.call_args_list]
+
+    async def test_every_table_the_parser_writes_is_swept(self) -> None:
+        """A table left out is one whose rows survive into the next reading unnoticed,
+        because nothing about a row says which run wrote it."""
+        swept = {stmt.table.name for stmt in await self._sweep()}
+
+        assert swept == {
+            "document_figures",
+            "document_tables",
+            "document_elements",
+            "document_pages",
+        }
+
+    async def test_the_document_row_itself_is_left_alone(self) -> None:
+        """The file was uploaded once and is only being read again. Taking the row would
+        take the upload, the status and the student's place in the library with it."""
+        swept = {stmt.table.name for stmt in await self._sweep()}
+
+        assert "documents" not in swept
+
+    async def test_rows_go_before_the_elements_they_name(self) -> None:
+        """A figure or a table names the element it was read from."""
+        order = [stmt.table.name for stmt in await self._sweep()]
+
+        assert order.index("document_figures") < order.index("document_elements")
+        assert order.index("document_tables") < order.index("document_elements")
+
+    async def test_no_statement_deletes_beyond_one_document(self) -> None:
+        for stmt in await self._sweep():
+            assert "document_id" in str(stmt), stmt.table.name
+
+    async def test_no_statement_deletes_beyond_the_bound_scope(self) -> None:
+        """A document id is not authority to delete. An unscoped sweep here would reach
+        rows belonging to whoever else happened to hold that id."""
+        for stmt in await self._sweep():
+            sql = str(stmt)
+            assert "user_id" in sql, stmt.table.name
+            assert "knowledge_base_id" in sql, stmt.table.name
+
 
 # ---------------------------------------------------------------------------
 # Mapping helpers — pure unit tests, no DB needed

@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~75%, milestone check unrun) Â· Phase 5 (~70%, OCR unblocked) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~90%, reindex and embedding jobs outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~20%, evaluation absent) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) Â· Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,621 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **7.6 â€” Full ingestion against the real database and object store** (needs Ollama running) |
-| Last updated | 23 August 2026 (step 6.7 â€” figure OCR and visual descriptions) |
+| Tests | 2,668 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **Phase 17 â€” the gold evaluation set (D-22)**, which A-742, A-744 and the threshold calibration all name as what they are waiting for |
+| Last updated | 25 August 2026 (step 7.12 â€” reading a document again replaces the earlier reading) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1380,8 +1380,12 @@ work and is not done here (A-690).
       `page_render_dpi`, converts bounding box from PDF pts (origin bottom-left) to pixel
       coordinates (origin top-left), crops with PIL, returns PNG. Runs on a thread via
       `asyncio.to_thread`, same approach as `PageRenderer`
-- [x] Crop key format: `{crops_prefix}/{user_id}/{kb_id}/{doc_id}/{figure_id}.png` â€” scoped and
-      deterministic so a re-ingestion overwrites rather than accumulating beside the old file
+- [x] Crop key format: `{crops_prefix}/{user_id}/{kb_id}/{doc_id}/{figure_id}.png` â€” scoped, so
+      no cross-tenant access is possible even through a presigned URL that outlived its scope
+- [x] It does **not** overwrite on a re-ingestion, against what this line first claimed: the
+      key ends in a figure id and a second reading mints new ones, so the old images were
+      stranded rather than replaced. They are now deleted explicitly, before the rows that
+      name them go (A-750)
 - [x] `crops_prefix: str = "figures"` added to `StorageSettings` â€” separate from
       `page_render_prefix` because crops are permanent (re-sent to the model on every visual
       question) while renders are cached with a TTL
@@ -1489,8 +1493,11 @@ adapters were correct against a contract and never against a server; now they ar
 Running the milestone added more to this phase than it removed, and the largest of it is now
 closed: figures were built and then never chunked, so none of them could be retrieved. Fixed
 and re-verified on the same book, which took the searchable tier from 84 chunks to 184
-(A-729, A-737). What remains is not chunking either â€” the reindex job has columns and no job,
-and embedding still runs inline in the ingestion job rather than as its own.
+(A-729, A-737). Reading a document twice then stopped meaning two copies of it: the parser
+gives everything a new identity on each run, so a second reading used to land beside the
+first rather than replace it, and each run now clears what the last one wrote before it
+writes (A-312, A-749). What remains is not chunking either â€” the reindex job has columns
+and no job, and embedding still runs inline in the ingestion job rather than as its own.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
@@ -1577,8 +1584,11 @@ queue and a 2.5 GB download.
 *Pages.* 45% NATIVE_TEXT, 44% MIXED, 11% SCANNED. The 54.8% of pages that defeat the text
 layer is correct: the book is screenshot- and diagram-heavy, and pdfplumber cannot read Azure
 ML studio screenshots. `complex_vector_drawing_threshold = 400` is calibrated correctly â€”
-raising it would misclassify pages that genuinely need OCR. The OCR finding answers the 7.8
-question: 55% of pages are unreadable without it, so phases 5.7â€“5.9 are worth building.
+raising it would misclassify pages that genuinely need OCR. This read as an answer to the
+7.8 question â€” 55% of pages unreadable without page OCR â€” and it was overtaken before that
+question was acted on. What defeats the text layer on those pages is mostly figures, and
+6.7 sends every figure through OCR and a vision model, so the ingested book covers 61 of
+its 62 pages (A-726).
 
 *Headings.* The 75 HEADING elements (27%) match real O'Reilly section titles: "Introduction",
 "Downloads", "Working Between Azure ML and Spyder", "Overview of Azure ML", "A Regression
@@ -1649,8 +1659,9 @@ failure that says nothing about the network (A-390).
       persisted â†’ document reaches `COMPLETED`.** 62 pages classified 28 NATIVE_TEXT / 27 MIXED /
       7 SCANNED; 222 elements; 160 chunks (84 children all embedded, 76 parents unembedded by
       design); 31,861 tokens spanning pages 1â€“62 (A-726)
-- [ ] Expect to iterate, and re-ingestion still duplicates rather than replaces (A-312) â€” delete
-      and re-upload between attempts, which the deletion path built in 4.11 supports
+- [x] Expect to iterate â€” as of 7.12 a re-reading replaces the earlier reading instead of
+      landing beside it, so iterating no longer means deleting and re-uploading between
+      attempts (A-312, A-749)
 
 ### 7.7 â€” Query the ingested textbook end to end
 
@@ -1707,8 +1718,12 @@ nothing). The binding limit is the per-class range in `selector.py`, which is de
 
 - [x] **Settled `complex_vector_drawing_threshold = 400`** â€” 54.8% of real-book pages are
       MIXED/SCANNED, confirming the threshold is not over-triggering. No change needed (A-712)
-- [x] **OCR decision made on evidence** â€” 55% of pages in the real textbook defeat the text
-      layer. Phases 5.7â€“5.9 (OCR pipeline) are worth building (A-713)
+- [~] **OCR decision made on evidence, then overtaken by the evidence** â€” 55% of pages in
+      the real textbook defeat the text layer, which was read as 55% of the book being
+      unreachable. It is not: those pages are screenshot- and diagram-heavy, and figure OCR
+      from 6.7 reads them, so the ingested book covers 61 of its 62 pages. Page-level OCR in
+      5.7â€“5.9 would still recover text outside figure regions, and is no longer the
+      bottleneck this line made it (A-713, A-726, A-748)
 - [x] **No configuration numbers need to change** â€” `heading_size_ratio = 1.15`,
       `paragraph_gap_multiplier`, and all chunking targets are correctly calibrated for
       real-book output; the 7.4 assessment confirmed this
@@ -1739,7 +1754,9 @@ nothing). The binding limit is the per-class range in `selector.py`, which is de
 - [x] `bge-small-en-v1.5` on GPU, batched
 - [x] pgvector writes with HNSW; `tsvector` population with `rum` indexes
 - [x] Index versioning columns written on every chunk (`index_version`, `embedding_version`)
-- [ ] Reindex job (Â§20) â€” the columns support it, no job exists
+- [ ] Reindex job (Â§20) â€” the columns support it, no job exists. What stopped one being
+      written is gone: re-reading a document now replaces the earlier reading rather than
+      landing beside it, which is the thing a reindex has to be able to do (A-749)
 - [x] Embeddings generated during `DOCUMENT_INGESTION`; document flips to `COMPLETED`
 - [ ] Separate `GENERATE_EMBEDDINGS` job â€” embedding runs inline in the ingestion job instead
 - [x] Nothing with `processing_status != COMPLETED` is ever retrievable â€” enforced in SQL and

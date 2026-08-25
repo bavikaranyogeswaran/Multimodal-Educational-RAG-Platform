@@ -5,6 +5,10 @@ object storage, parses them into pages and layout elements, persists both, split
 elements into overlapping chunks, generates dense embeddings, and persists those. Returns
 the document in COMPLETED state — the caller is responsible for saving it and committing.
 
+Reading a document again replaces the earlier reading rather than joining it. Nothing
+here is written under an identity a previous run would recognise, so without an explicit
+sweep the two readings would sit side by side and retrieval would find both.
+
 Pages and elements are written before chunking begins. They are what the parse actually
 established, and they stay useful whether or not the stages after them succeed: a page
 recorded as needing recognition is a fact worth keeping even if this run then fails.
@@ -103,6 +107,12 @@ class IngestDocumentUseCase:
         # trusted come back with no elements rather than with a partial reading.
         parsed = await self._parser.parse(data, document_id=doc.id, scope=scope)
 
+        # Clear whatever an earlier reading of this document left behind, now that there
+        # is a new reading to put in its place. Deliberately after the parse and not
+        # before it: a parse that fails should leave the student with the copy they
+        # already had rather than with nothing at all.
+        await self._discard_previous_ingestion(scope, doc.id)
+
         # Persisted before chunking, because they are what the parse established and
         # they remain true regardless of what the later stages do.
         await self._document_repo.save_pages(scope, [item.page for item in parsed])
@@ -168,6 +178,50 @@ class IngestDocumentUseCase:
         # The parse counted the pages, so the count is known rather than inferred from
         # whichever page happened to yield text last.
         return doc.mark_completed(page_count=len(parsed), now=now)
+
+    async def _discard_previous_ingestion(self, scope: ScopeContext, document_id: UUID) -> None:
+        """Remove everything an earlier ingestion of this document produced.
+
+        Reading the same file twice does not overwrite the first reading. Every page,
+        element, table, figure and chunk is given a fresh identity on each run, so a
+        second pass inserts a parallel copy alongside the first instead of replacing it.
+        Both copies are then searchable, and retrieval starts returning one passage twice
+        under two identities — the same text competing with itself for the slots an
+        answer has to spend.
+
+        The crops go before the figure rows that name them, because those rows hold the
+        only record that the images exist. After they are gone the objects are still in
+        the bucket with nothing left pointing at them, and no later run would know to
+        look: a new reading mints new figure identities and so writes to new keys.
+
+        A first ingestion reaches all of this too and finds nothing, which is the
+        intended outcome rather than a case to guard against.
+        """
+        figures = await self._document_repo.get_figures(scope, document_id)
+        await _discard_figure_crops(figures, self._storage)
+        await self._chunk_repo.delete_for_document(scope, document_id)
+        await self._document_repo.delete_parse(scope, document_id)
+
+
+async def _discard_figure_crops(figures: Sequence[DocumentFigure], storage: StoragePort) -> None:
+    """Delete the crop images a previous run uploaded.
+
+    A delete that fails is logged and stepped over. The object it could not remove costs
+    storage and nothing else — it is unreachable either way, since the row naming it is
+    about to go. Failing the ingest over it would cost the student their document to
+    save a file that is already garbage.
+    """
+    for figure in figures:
+        if not figure.crop_key:
+            continue
+        try:
+            await storage.delete(figure.crop_key)
+        except Exception:
+            _log.warning(
+                "figure_crop_delete_failed",
+                figure_id=str(figure.id),
+                crop_key=figure.crop_key,
+            )
 
 
 # ---------------------------------------------------------------------------

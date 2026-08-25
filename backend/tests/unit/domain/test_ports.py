@@ -71,7 +71,7 @@ class TestKnowledgeBaseRepositorySignatures:
 
 class TestDocumentRepositorySignatures:
     @pytest.mark.parametrize("method_name", [
-        "get", "save", "list", "delete",
+        "get", "save", "list", "delete", "delete_parse",
         "save_pages", "get_pages", "save_elements", "get_elements",
     ])
     def test_method_has_scope_first(self, method_name: str) -> None:
@@ -212,6 +212,9 @@ class _StubDocumentRepository:
         *,
         page_number: int | None = None,
     ) -> Sequence[DocumentElement]:
+        raise NotImplementedError
+
+    async def delete_parse(self, scope: ScopeContext, document_id: UUID) -> None:
         raise NotImplementedError
 
 

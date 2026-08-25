@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
@@ -163,6 +164,27 @@ class SqlDocumentRepository(ScopedRepository):
             stmt = stmt.where(DocumentFigureModel.page_number == page_number)
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_figure_to_entity(row) for row in rows]
+
+    async def delete_parse(self, scope: ScopeContext, document_id: UUID) -> None:
+        self._require_scope(scope)
+        # Figures and tables first: each one names the element it was read from, so
+        # they go before the elements do. Every one of these tables cascades from the
+        # document anyway, but nothing here is deleting the document — and naming each
+        # table keeps what a re-reading clears readable in this method, rather than
+        # inferred from foreign keys declared in four other files.
+        await self._delete_document_rows(DocumentFigureModel, document_id)
+        await self._delete_document_rows(DocumentTableModel, document_id)
+        await self._delete_document_rows(DocumentElementModel, document_id)
+        await self._delete_document_rows(DocumentPageModel, document_id)
+
+    async def _delete_document_rows(self, model: type[Any], document_id: UUID) -> None:
+        """Delete one table's rows for one document, within the bound scope."""
+        await self._session.execute(
+            sa_delete(model).where(
+                model.document_id == document_id,
+                self._scope_filter(model),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
