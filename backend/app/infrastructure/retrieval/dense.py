@@ -41,6 +41,10 @@ class SqlDenseRetriever(ScopedRepository):
             # would return the same content twice — once as the paragraph, once as
             # the section containing it — for two slots in the same ranking.
             ChunkModel.parent_chunk_id.isnot(None),
+            # One index version at a time. Distances between vectors from two different
+            # embedding models are arithmetic rather than meaning, and a rebuild is
+            # precisely when both are present.
+            self._active_index_filter(ChunkModel),
         ]
 
         if filters.document_ids:

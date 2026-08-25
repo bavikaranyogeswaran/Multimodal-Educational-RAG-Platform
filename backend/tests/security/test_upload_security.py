@@ -29,10 +29,15 @@ from app.api.middleware.errors import register_exception_handlers
 from app.api.routers.documents import router as documents_router
 from app.configuration.settings import get_settings
 from app.domain.errors import AuthenticationError
+from app.domain.knowledge_base.entities import KnowledgeBase
 from app.infrastructure.database.session import get_session
 
 _KID = "test-key-1"
 _AUDIENCE = "authenticated"
+
+#: The index version these tests' configuration writes; the Knowledge Bases they
+#: build answer from the same one, so nothing is refused for being out of date.
+_WRITTEN_INDEX_VERSION = 1
 
 
 # ---------------------------------------------------------------------------
@@ -69,13 +74,37 @@ class _StubJwksClient:
 
 
 def _session_returning(owner_id: uuid.UUID | None) -> AsyncMock:
-    """Mock session whose scope check returns a row with the given user_id."""
+    """Mock session answering both reads an upload makes.
+
+    The scope check reads a row through one_or_none; the upload then reads the Knowledge
+    Base itself through scalar_one_or_none, because a document written under a version
+    retrieval is not reading would be stored and never found. Both come off the same
+    result object, since both go through the same mocked execute.
+    """
     row = None if owner_id is None else MagicMock(user_id=owner_id)
     result = MagicMock()
     result.one_or_none.return_value = row
+    result.scalar_one_or_none.return_value = None if owner_id is None else _kb_owned_by(owner_id)
     session = AsyncMock()
     session.execute = AsyncMock(return_value=result)
     return session
+
+
+def _kb_owned_by(owner_id: uuid.UUID) -> KnowledgeBase:
+    """A Knowledge Base reading from the same index version an upload would write to.
+
+    Anything else is refused before the ownership checks these tests are about, which
+    would make every one of them pass for the wrong reason.
+    """
+    now = datetime.now(UTC)
+    return KnowledgeBase(
+        id=uuid.uuid4(),
+        user_id=owner_id,
+        name="Knowledge base",
+        created_at=now,
+        updated_at=now,
+        active_index_version=_WRITTEN_INDEX_VERSION,
+    )
 
 
 def _session_override(session: AsyncMock):
@@ -90,6 +119,7 @@ def _mock_settings() -> MagicMock:
     s.supabase.jwt_audience = _AUDIENCE
     s.storage.max_upload_bytes = 200 * 1024 * 1024
     s.storage.max_upload_pages = 1500
+    s.embedding.index_version = _WRITTEN_INDEX_VERSION
     return s
 
 

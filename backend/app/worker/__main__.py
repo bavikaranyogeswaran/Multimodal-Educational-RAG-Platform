@@ -3,7 +3,9 @@
 One worker process claims jobs one at a time and runs whichever kind of work each one
 describes. Ingestion downloads a document, parses it into pages and elements, chunks and
 embeds it, and holds its lease open with a heartbeat throughout because that can take
-minutes. Deletion removes a file, its cached renders and its row, which does not.
+minutes. A reindex does the same for every document in a Knowledge Base in turn, so it
+takes that many times longer and holds its lease the same way. Deletion removes a file,
+its cached renders and its row, which does not.
 
 Before looking for work the worker returns anything a dead worker was holding, so a job
 whose owner crashed does not sit as RUNNING for ever. On SIGTERM or SIGINT it finishes
@@ -19,6 +21,8 @@ import asyncio
 import contextlib
 import signal
 import uuid
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -29,6 +33,11 @@ from app.application.commands.delete_document import (
     DeleteDocumentUseCase,
 )
 from app.application.commands.ingest_document import IngestDocumentCommand, IngestDocumentUseCase
+from app.application.commands.reindex import (
+    RebuildUnit,
+    ReindexKnowledgeBaseCommand,
+    ReindexKnowledgeBaseUseCase,
+)
 from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
 from app.configuration.wire import build_container
@@ -39,6 +48,9 @@ from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
+from app.infrastructure.database.repositories.knowledge_base import (
+    SqlKnowledgeBaseRepository,
+)
 from app.runtime import loop_factory
 
 _log = structlog.get_logger(__name__)
@@ -82,6 +94,9 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
     if job.job_type is JobType.DELETE_DOCUMENT:
         await _run_deletion(container, job)
         return
+    if job.job_type is JobType.REINDEX_KNOWLEDGE_BASE:
+        await _run_reindex(container, settings, job)
+        return
     await _run_ingestion(container, settings, job)
 
 
@@ -113,6 +128,129 @@ async def _run_deletion(container: Container, job: ProcessingJob) -> None:
         await session.commit()
 
     log.info("document_deletion_completed")
+
+
+@contextlib.asynccontextmanager
+async def _leased(
+    container: Container, settings: Settings, job: ProcessingJob
+) -> AsyncIterator[None]:
+    """Hold a job's lease open for as long as the work inside runs.
+
+    A lease is a promise to keep going, and the reclaim pass hands a job back to the
+    queue when one lapses. Work that runs for minutes has to keep saying so, or a second
+    worker picks up what the first is still doing.
+
+    The heartbeat is a task on this same event loop, which is why the parser and the
+    renderer both hand their work to threads rather than doing it here.
+    """
+    stop = asyncio.Event()
+    beat = asyncio.create_task(
+        _heartbeat_loop(
+            container.session_factory,
+            job,
+            interval_seconds=settings.job.heartbeat_interval_seconds,
+            lease_seconds=settings.job.lease_seconds,
+            stop=stop,
+        )
+    )
+    try:
+        yield
+    finally:
+        stop.set()
+        beat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await beat
+
+
+def _build_ingest(
+    container: Container, settings: Settings, scope: ScopeContext, session: AsyncSession
+) -> IngestDocumentUseCase:
+    """The ingestion pipeline, wired from the container.
+
+    Built here rather than in the container because it is bound to a scope and a session,
+    and both change per job. A reindex builds one of these per document for the same
+    reason.
+    """
+    return IngestDocumentUseCase(
+        chunk_repo=SqlChunkRepository(scope, session),
+        document_repo=SqlDocumentRepository(scope, session),
+        storage=container.storage,
+        embedder=container.embedder,
+        parser=container.pdf_parser,
+        chunker=Chunker(
+            container.token_counter.count,
+            target_tokens=settings.chunking.child_target_tokens,
+            max_tokens=settings.chunking.child_max_tokens,
+            overlap_tokens=settings.chunking.child_overlap_tokens,
+            parent_target_tokens=settings.chunking.parent_target_tokens,
+            parent_max_tokens=settings.chunking.parent_max_tokens,
+        ),
+        embedding_model_id=settings.embedding.model_id,
+        index_version=settings.embedding.index_version,
+        figure_cropper=container.figure_cropper,
+        crops_prefix=settings.storage.crops_prefix,
+        model_gateway=container.model_gateway,
+    )
+
+
+def _rebuild_unit_of_work(
+    container: Container, settings: Settings, scope: ScopeContext
+) -> Callable[[], AbstractAsyncContextManager[RebuildUnit]]:
+    """Open one committed transaction per step of a rebuild.
+
+    A rebuild is not one change but a document read, committed, and then the next. Giving
+    it a single session would hold a transaction open for as long as it takes to read a
+    library, and lose every document in it to one failure at the end.
+    """
+
+    @contextlib.asynccontextmanager
+    async def _unit() -> AsyncIterator[RebuildUnit]:
+        async with container.session_factory() as session:
+            yield RebuildUnit(
+                knowledge_bases=SqlKnowledgeBaseRepository(scope, session),
+                documents=SqlDocumentRepository(scope, session),
+                ingest=_build_ingest(container, settings, scope, session),
+            )
+            # Reached only when the block completed. An exception propagates through the
+            # yield instead, and the session closes without committing.
+            await session.commit()
+
+    return _unit
+
+
+async def _run_reindex(container: Container, settings: Settings, job: ProcessingJob) -> None:
+    """Read every document in a Knowledge Base again, then point retrieval at the result.
+
+    Runs under the same lease as an ingestion and for the same reason, only longer: this
+    is one ingestion per document, in sequence.
+
+    The job is completed in a transaction of its own, after the rebuild rather than
+    around it, for the same reason the rebuild does not hold one open: by the time there
+    is a result to record, the session that started the work would have been open for
+    hours.
+    """
+    scope = _scope_from(job)
+    log = _log.bind(job_id=str(job.id), knowledge_base_id=str(scope.knowledge_base_id))
+    log.info("reindex_job_started")
+
+    async with _leased(container, settings, job):
+        use_case = ReindexKnowledgeBaseUseCase(
+            _rebuild_unit_of_work(container, settings, scope),
+            index_version=settings.embedding.index_version,
+        )
+        result = await use_case.execute(ReindexKnowledgeBaseCommand(scope=scope))
+
+        async with container.session_factory() as session:
+            await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+            await session.commit()
+
+    log.info(
+        "reindex_job_finished",
+        rebuilt=result.rebuilt,
+        failed=result.failed,
+        activated=result.activated,
+        index_version=result.index_version,
+    )
 
 
 def _scope_from(job: ProcessingJob) -> ScopeContext:
@@ -148,50 +286,14 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
 
     log.info("document_ingestion_started")
 
-    # Phase 2: run the pipeline with a parallel heartbeat task
-    heartbeat_stop = asyncio.Event()
-    heartbeat = asyncio.create_task(
-        _heartbeat_loop(
-            container.session_factory,
-            job,
-            interval_seconds=settings.job.heartbeat_interval_seconds,
-            lease_seconds=settings.job.lease_seconds,
-            stop=heartbeat_stop,
+    # Phase 2: run the pipeline while the lease is held open
+    async with _leased(container, settings, job), container.session_factory() as session:
+        completed_doc = await _build_ingest(container, settings, scope, session).execute(
+            IngestDocumentCommand(scope=scope, document=processing_doc)
         )
-    )
-    try:
-        async with container.session_factory() as session:
-            use_case = IngestDocumentUseCase(
-                chunk_repo=SqlChunkRepository(scope, session),
-                document_repo=SqlDocumentRepository(scope, session),
-                storage=container.storage,
-                embedder=container.embedder,
-                parser=container.pdf_parser,
-                chunker=Chunker(
-                    container.token_counter.count,
-                    target_tokens=settings.chunking.child_target_tokens,
-                    max_tokens=settings.chunking.child_max_tokens,
-                    overlap_tokens=settings.chunking.child_overlap_tokens,
-                    parent_target_tokens=settings.chunking.parent_target_tokens,
-                    parent_max_tokens=settings.chunking.parent_max_tokens,
-                ),
-                embedding_model_id=settings.embedding.model_id,
-                index_version=settings.embedding.index_version,
-                figure_cropper=container.figure_cropper,
-                crops_prefix=settings.storage.crops_prefix,
-                model_gateway=container.model_gateway,
-            )
-            completed_doc = await use_case.execute(
-                IngestDocumentCommand(scope=scope, document=processing_doc)
-            )
-            await SqlDocumentRepository(scope, session).save(scope, completed_doc)
-            await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
-            await session.commit()
-    finally:
-        heartbeat_stop.set()
-        heartbeat.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat
+        await SqlDocumentRepository(scope, session).save(scope, completed_doc)
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
 
     log.info("document_ingestion_completed")
 
@@ -220,7 +322,13 @@ async def _main() -> None:
 
     _log.info("worker_started", worker_id=worker_id)
 
-    claimable = frozenset({JobType.DOCUMENT_INGESTION, JobType.DELETE_DOCUMENT})
+    claimable = frozenset(
+        {
+            JobType.DOCUMENT_INGESTION,
+            JobType.DELETE_DOCUMENT,
+            JobType.REINDEX_KNOWLEDGE_BASE,
+        }
+    )
 
     while not shutdown.is_set():
         # Before looking for work, return anything a dead worker was holding. A lease is

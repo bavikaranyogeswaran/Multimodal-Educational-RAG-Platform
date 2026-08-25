@@ -19,7 +19,8 @@ from fastapi.testclient import TestClient
 from app.api.dependencies.auth import get_current_user
 from app.api.dependencies.scope import get_kb_scope
 from app.api.routers.knowledge_bases import router
-from app.domain.enums import ExplanationLevel
+from app.domain.documents.entities import Document
+from app.domain.enums import DocumentStatus, ExplanationLevel, JobType
 from app.domain.knowledge_base.entities import KnowledgeBase
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import get_session
@@ -340,3 +341,115 @@ class TestDeleteKnowledgeBase:
             url = f"/api/v1/knowledge-bases{path_suffix}"
             response = client.request(method, url, json=payload)
         assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/knowledge-bases/{kb_id}/reindex
+# ---------------------------------------------------------------------------
+
+
+def _session_for_reindex(kb, documents: list) -> AsyncMock:
+    """One session serving both reads the endpoint makes.
+
+    The Knowledge Base comes back through scalar_one_or_none and the documents through
+    scalars().all(), so a single result mock answers both.
+    """
+    scalars = MagicMock()
+    scalars.all.return_value = documents
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = kb
+    result.scalars.return_value = scalars
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
+def _doc(user_id: UUID, kb_id: UUID, *, status: DocumentStatus) -> Document:
+    doc_id = uuid.uuid4()
+    return Document(
+        id=doc_id,
+        user_id=user_id,
+        knowledge_base_id=kb_id,
+        filename="lecture.pdf",
+        content_type="application/pdf",
+        byte_size=2048,
+        storage_key=f"{user_id}/{kb_id}/{doc_id}/original.pdf",
+        created_at=_NOW,
+        updated_at=_NOW,
+        status=status,
+        page_count=10,
+        failure_reason="an earlier read did not finish"
+        if status is DocumentStatus.FAILED
+        else None,
+    )
+
+
+class TestReindexKnowledgeBase:
+    def test_returns_202_and_the_queued_job(self) -> None:
+        """Reading a library again takes minutes per document, so the answer says only
+        that the work was accepted."""
+        user_id, kb_id = uuid.uuid4(), uuid.uuid4()
+        scope = ScopeContext(user_id=user_id, knowledge_base_id=kb_id)
+        session = _session_for_reindex(_kb(user_id), [])
+
+        with TestClient(_make_app(user_id, session, scope=scope)) as client:
+            response = client.post(f"/api/v1/knowledge-bases/{kb_id}/reindex")
+
+        assert response.status_code == 202
+        assert response.json()["job_id"]
+
+    def test_the_job_carries_the_scope_a_worker_will_need(self) -> None:
+        """A worker runs jobs across all users and has no other way to know whose
+        Knowledge Base this is."""
+        user_id, kb_id = uuid.uuid4(), uuid.uuid4()
+        scope = ScopeContext(user_id=user_id, knowledge_base_id=kb_id)
+        session = _session_for_reindex(_kb(user_id), [])
+
+        with TestClient(_make_app(user_id, session, scope=scope)) as client:
+            client.post(f"/api/v1/knowledge-bases/{kb_id}/reindex")
+
+        job = session.merge.await_args.args[0]
+        assert job.job_type == JobType.REINDEX_KNOWLEDGE_BASE.value
+        assert job.payload == {
+            "user_id": str(user_id),
+            "knowledge_base_id": str(kb_id),
+        }
+
+    def test_retrieval_has_not_moved_yet(self) -> None:
+        """The rebuild has not run. Watching this number change is how a caller knows
+        the new index went live."""
+        user_id, kb_id = uuid.uuid4(), uuid.uuid4()
+        scope = ScopeContext(user_id=user_id, knowledge_base_id=kb_id)
+        session = _session_for_reindex(_kb(user_id), [])
+
+        with TestClient(_make_app(user_id, session, scope=scope)) as client:
+            response = client.post(f"/api/v1/knowledge-bases/{kb_id}/reindex")
+
+        body = response.json()
+        assert body["active_index_version"] == 1
+        assert body["target_index_version"] >= body["active_index_version"]
+
+    def test_only_documents_that_finished_reading_are_counted(self) -> None:
+        user_id, kb_id = uuid.uuid4(), uuid.uuid4()
+        scope = ScopeContext(user_id=user_id, knowledge_base_id=kb_id)
+        documents = [
+            _doc(user_id, kb_id, status=DocumentStatus.COMPLETED),
+            _doc(user_id, kb_id, status=DocumentStatus.COMPLETED),
+            _doc(user_id, kb_id, status=DocumentStatus.FAILED),
+            _doc(user_id, kb_id, status=DocumentStatus.PROCESSING),
+        ]
+        session = _session_for_reindex(_kb(user_id), documents)
+
+        with TestClient(_make_app(user_id, session, scope=scope)) as client:
+            response = client.post(f"/api/v1/knowledge-bases/{kb_id}/reindex")
+
+        assert response.json()["documents"] == 2
+
+    def test_returns_404_for_foreign_kb(self) -> None:
+        user_id, kb_id = uuid.uuid4(), uuid.uuid4()
+        session = _session_for_write()
+
+        with TestClient(_make_app(user_id, session, scope_raises_404=True)) as client:
+            response = client.post(f"/api/v1/knowledge-bases/{kb_id}/reindex")
+
+        assert response.status_code == 404

@@ -99,17 +99,39 @@ class KnowledgeBase:
         """
         return replace(self, graph_enabled=enabled, updated_at=now)
 
-    def with_next_index_version(self, *, now: datetime) -> KnowledgeBase:
-        """Point retrieval at a newly built embedding index.
+    def with_active_index_version(self, version: int, *, now: datetime) -> KnowledgeBase:
+        """Point retrieval at a rebuilt embedding index.
 
         Called after a reindex has finished, not when it starts — the old version stays
-        active for the whole rebuild.
+        active for the whole rebuild, so retrieval keeps answering out of the index that
+        is still complete while the new one is only partly built.
+
+        The version is given rather than derived, because the number the chunks were
+        actually written under is the one retrieval has to ask for. A rebuild that
+        counted for itself could name a version no chunk carries and take the whole
+        Knowledge Base dark.
         """
-        return replace(
-            self,
-            active_index_version=self.active_index_version + 1,
-            updated_at=now,
-        )
+        require_positive(version, "KnowledgeBase.active_index_version")
+        return replace(self, active_index_version=version, updated_at=now)
+
+    def with_next_index_version(self, *, now: datetime) -> KnowledgeBase:
+        """Move to the version after this one, for a rebuild that chooses its own number."""
+        return self.with_active_index_version(self.active_index_version + 1, now=now)
+
+    def index_is_stale(self, *, written_version: int) -> bool:
+        """Whether new chunks would land somewhere retrieval is not reading.
+
+        `written_version` is the version an ingestion writes now, which comes from the
+        embedding configuration; `active_index_version` is where retrieval looks. They
+        agree in the ordinary case and disagree in exactly two: a rebuild is running, or
+        the embedding model was changed and no rebuild has been run yet.
+
+        Both mean the same thing for anything arriving in the meantime. A document read
+        now would be written under a version nothing searches, so it would finish
+        successfully, report itself complete, and answer nothing — the kind of failure
+        that is only discovered by a student wondering why their textbook says nothing.
+        """
+        return self.active_index_version != written_version
 
     def with_next_graph_version(self, *, now: datetime) -> KnowledgeBase:
         return replace(

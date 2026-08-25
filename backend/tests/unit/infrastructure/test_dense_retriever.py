@@ -126,6 +126,36 @@ class TestSqlStructure:
         assert "embedding" in compiled
         assert "NULL" in compiled.upper()
 
+    async def test_pins_the_active_index_version(self) -> None:
+        """Vectors from two embedding models are not comparable, and a rebuild is
+        exactly when both are in the table. Distances across them are still numbers,
+        so a search that mixed them would rank badly and report nothing wrong."""
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result([]))
+
+        await _retriever(scope, session).search(
+            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+        )
+
+        compiled = str(session.execute.call_args[0][0].compile())
+        assert "index_version" in compiled
+        assert "active_index_version" in compiled
+
+    async def test_reads_the_active_version_from_this_knowledge_base(self) -> None:
+        """Taken from the row rather than passed in, so a caller cannot leave it out."""
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result([]))
+
+        await _retriever(scope, session).search(
+            scope, _QUERY_VECTOR, top_k=5, filters=RetrievalFilters()
+        )
+
+        compiled = session.execute.call_args[0][0].compile()
+        assert "knowledge_bases" in str(compiled)
+        assert scope.knowledge_base_id in compiled.params.values()
+
     async def test_excludes_parent_chunks(self) -> None:
         """Only the small chunks are searched. Their parents are loaded around a hit,
         and matching those as well would return the same content twice — once as the

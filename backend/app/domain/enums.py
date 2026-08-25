@@ -157,6 +157,15 @@ class JobType(StrEnum):
     DOCUMENT_INGESTION = "DOCUMENT_INGESTION"
     OCR_PAGE = "OCR_PAGE"
     GENERATE_EMBEDDINGS = "GENERATE_EMBEDDINGS"
+
+    REINDEX_KNOWLEDGE_BASE = "REINDEX_KNOWLEDGE_BASE"
+    """Read every document in a Knowledge Base again, under the current embedding model.
+
+    One job for the whole Knowledge Base rather than one per document, because the
+    version only becomes the active one when every document carries it, and something
+    has to be able to say when that is true.
+    """
+
     BUILD_GRAPH = "BUILD_GRAPH"
     COMPACT_MEMORY = "COMPACT_MEMORY"
     REBUILD_SUMMARY = "REBUILD_SUMMARY"

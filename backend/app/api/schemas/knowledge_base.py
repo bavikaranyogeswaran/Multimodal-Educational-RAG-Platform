@@ -47,3 +47,16 @@ class KnowledgeBaseResponse(BaseModel):
     active_graph_version: int
     created_at: datetime
     updated_at: datetime
+
+
+class ReindexResponse(BaseModel):
+    """What was queued, and what retrieval is answering from until it finishes."""
+
+    knowledge_base_id: UUID
+    job_id: UUID
+    documents: int
+    #: The version retrieval still answers from. It stays this until every document has
+    #: been read again, so a caller polling the Knowledge Base can see when the rebuild
+    #: landed by watching this number change.
+    active_index_version: int
+    target_index_version: int

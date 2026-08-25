@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.errors import InvariantViolationError
 from app.domain.scope import ScopeContext
+from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 
 
 class ScopedRepository:
@@ -68,6 +69,26 @@ class ScopedRepository:
             model.user_id == self._scope.user_id,
             model.knowledge_base_id == self._scope.knowledge_base_id,
         )
+
+    def _active_index_filter(self, model: type[Any]) -> ColumnElement[bool]:
+        """Restrict a search to the index version this Knowledge Base is answering from.
+
+        Embeddings from two models are not comparable. Cosine distance between them is
+        still a number, so a search spanning a rebuild does not fail — it ranks, badly,
+        and says nothing about having done so. That window is exactly what a reindex
+        opens, and this is what keeps the two apart.
+
+        Read from the Knowledge Base row rather than passed in, so a caller cannot leave
+        it out. The version a rebuild is writing becomes the active one only once every
+        document carries it; until then this filter is what keeps the half-built index
+        out of results.
+        """
+        active = (
+            sa.select(KnowledgeBaseModel.active_index_version)
+            .where(KnowledgeBaseModel.id == self._scope.knowledge_base_id)
+            .scalar_subquery()
+        )
+        return model.index_version == active  # type: ignore[no-any-return]
 
     def _user_filter(self, model: type[Any]) -> ColumnElement[bool]:
         """Filter for tables with only a user_id column.

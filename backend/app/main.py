@@ -17,8 +17,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import sqlalchemy as sa
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.middleware.errors import register_exception_handlers
 from app.api.middleware.logging import RequestLoggingMiddleware
@@ -29,15 +32,17 @@ from app.api.routers.graph import router as graph_router
 from app.api.routers.knowledge_bases import router as knowledge_bases_router
 from app.api.routers.memory import router as memory_router
 from app.api.routers.study_content import router as study_content_router
-from app.configuration.settings import get_settings
+from app.configuration.settings import Settings, get_settings
 from app.configuration.wire import build_container
 from app.infrastructure.auth.jwks import JwksClient
+from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 from app.infrastructure.models.warmup import warm_up_models
 from app.infrastructure.observability.structlog_setup import configure_structlog
 from app.runtime import explain_unusable_loop, running_loop_reaches_postgres
 
 API_PREFIX = "/api/v1"
 _settings = get_settings()
+_log = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
@@ -70,7 +75,49 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await _app.state.jwks_client.warm_up()
     if settings.model.warm_models_on_startup:
         await warm_up_models(_app.state.container.model_gateway)
+    await _report_stale_indexes(_app.state.container.session_factory, settings)
     yield
+
+
+async def _report_stale_indexes(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """Say which Knowledge Bases are not reading from the version this build writes.
+
+    A mismatch is what happens when the embedding model is reconfigured and no rebuild is
+    run, and it has no symptom of its own: everything keeps working, and documents added
+    afterwards are simply never found. Uploads are refused while it lasts, but a refusal
+    only reaches whoever tries next. Saying it at startup reaches whoever restarted the
+    server, which is usually the same person who changed the setting.
+
+    Best-effort. This is a diagnostic, and a diagnostic that can stop the server from
+    starting is worse than the condition it reports.
+    """
+    try:
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    sa.select(KnowledgeBaseModel.id, KnowledgeBaseModel.active_index_version)
+                    .where(
+                        KnowledgeBaseModel.active_index_version != settings.embedding.index_version
+                    )
+                    .order_by(KnowledgeBaseModel.created_at)
+                )
+            ).all()
+    except Exception:
+        _log.warning("stale_index_check_failed", exc_info=True)
+        return
+
+    if not rows:
+        return
+    _log.warning(
+        "knowledge_bases_need_reindexing",
+        written_version=settings.embedding.index_version,
+        count=len(rows),
+        knowledge_bases=[
+            {"id": str(kb_id), "active_index_version": active} for kb_id, active in rows
+        ],
+    )
 
 
 app = FastAPI(

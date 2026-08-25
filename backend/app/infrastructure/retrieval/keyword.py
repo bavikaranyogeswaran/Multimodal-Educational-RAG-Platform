@@ -55,6 +55,12 @@ class SqlKeywordRetriever(ScopedRepository):
             # from would match too, returning the same content twice — once as the
             # paragraph, once as the section containing it.
             ChunkModel.parent_chunk_id.isnot(None),
+            # The same single index version the dense side is held to. Lexical ranking
+            # would survive a mixed index where cosine distance does not, but the two
+            # retrievers feeding fusion from different corpora is its own problem: a
+            # passage present in one and absent from the other reads as disagreement
+            # between the retrievers rather than as an index half rebuilt.
+            self._active_index_filter(ChunkModel),
         ]
 
         if filters.document_ids:

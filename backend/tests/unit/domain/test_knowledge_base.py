@@ -116,6 +116,44 @@ class TestTransitions:
         kb = make_knowledge_base(active_index_version=3)
         assert kb.with_next_index_version(now=LATER).active_index_version == 4
 
+    def test_the_index_can_be_moved_to_a_stated_version(
+        self, make_knowledge_base: Builder[KnowledgeBase]
+    ) -> None:
+        """A rebuild writes chunks under a version chosen by configuration, and that is
+        the number retrieval has to ask for. Counting up from here could name a version
+        no chunk carries and take the whole Knowledge Base dark."""
+        kb = make_knowledge_base(active_index_version=1)
+        assert kb.with_active_index_version(5, now=LATER).active_index_version == 5
+
+    def test_the_index_version_cannot_be_moved_to_zero(
+        self, make_knowledge_base: Builder[KnowledgeBase]
+    ) -> None:
+        kb = make_knowledge_base(active_index_version=3)
+        with pytest.raises(InvariantViolationError):
+            kb.with_active_index_version(0, now=LATER)
+
+    def test_an_index_matching_what_is_written_is_not_stale(
+        self, make_knowledge_base: Builder[KnowledgeBase]
+    ) -> None:
+        kb = make_knowledge_base(active_index_version=3)
+        assert not kb.index_is_stale(written_version=3)
+
+    def test_an_index_behind_what_is_written_is_stale(
+        self, make_knowledge_base: Builder[KnowledgeBase]
+    ) -> None:
+        """The embedding model was changed and nothing has been rebuilt yet, or a rebuild
+        is running. Either way a document read now lands where nothing searches."""
+        kb = make_knowledge_base(active_index_version=1)
+        assert kb.index_is_stale(written_version=2)
+
+    def test_an_index_ahead_of_what_is_written_is_stale_too(
+        self, make_knowledge_base: Builder[KnowledgeBase]
+    ) -> None:
+        """Disagreement in either direction means new chunks miss the index being read.
+        A configuration rolled back leaves the same hole as one moved forward."""
+        kb = make_knowledge_base(active_index_version=2)
+        assert kb.index_is_stale(written_version=1)
+
     def test_advancing_the_index_leaves_the_graph_version_alone(
         self,
         make_knowledge_base: Builder[KnowledgeBase],

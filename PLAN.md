@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~90%, reindex and embedding jobs outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~20%, evaluation absent) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~20%, evaluation absent) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) Â· Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,668 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Tests | 2,709 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
 | Next step | **Phase 17 â€” the gold evaluation set (D-22)**, which A-742, A-744 and the threshold calibration all name as what they are waiting for |
-| Last updated | 25 August 2026 (step 7.12 â€” reading a document again replaces the earlier reading) |
+| Last updated | 25 August 2026 (step 7.14 â€” closing the window where a document could be stored and never found) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1496,8 +1496,11 @@ and re-verified on the same book, which took the searchable tier from 84 chunks 
 (A-729, A-737). Reading a document twice then stopped meaning two copies of it: the parser
 gives everything a new identity on each run, so a second reading used to land beside the
 first rather than replace it, and each run now clears what the last one wrote before it
-writes (A-312, A-749). What remains is not chunking either â€” the reindex job has columns
-and no job, and embedding still runs inline in the ingestion job rather than as its own.
+writes (A-312, A-749). The reindex job followed from that, and brought with it the
+filter that made it safe: retrieval had never pinned an index version, so a rebuild
+would have ranked two embedding models' vectors against each other and reported nothing
+wrong (A-754, A-755). What remains in this phase is one optimisation â€” embedding still
+runs inline in the ingestion job rather than as its own.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
@@ -1754,9 +1757,24 @@ nothing). The binding limit is the per-class range in `selector.py`, which is de
 - [x] `bge-small-en-v1.5` on GPU, batched
 - [x] pgvector writes with HNSW; `tsvector` population with `rum` indexes
 - [x] Index versioning columns written on every chunk (`index_version`, `embedding_version`)
-- [ ] Reindex job (Â§20) â€” the columns support it, no job exists. What stopped one being
-      written is gone: re-reading a document now replaces the earlier reading rather than
-      landing beside it, which is the thing a reindex has to be able to do (A-749)
+- [x] **Reindex job (Â§20)** â€” `REINDEX_KNOWLEDGE_BASE` reads every completed document in a
+      Knowledge Base again under the current embedding model, then points retrieval at the
+      result. Queued from `POST /knowledge-bases/{kb_id}/reindex`, run by the worker under
+      the same lease as an ingestion. Verified end to end on the real textbook (A-755)
+- [x] **Retrieval pins one index version** â€” neither retriever had ever filtered on it,
+      which was invisible while every chunk in a Knowledge Base shared a version and
+      became wrong the moment a rebuild started. Distances between vectors from two
+      different models are arithmetic rather than meaning, and nothing would have said so
+      (A-754)
+- [x] **The old version stays active for the whole rebuild** â€” `active_index_version` moves
+      only once every document carries the new one, so a half-built index is never the one
+      being answered from. The cost is accepted rather than avoided: a document already
+      rebuilt is not searchable until the flip (A-756)
+- [x] **Nothing can be stored into an index nothing is reading** â€” while the version a read
+      writes and the version retrieval answers from disagree, uploads are refused with a 409
+      naming the rebuild, and startup names every Knowledge Base in that state. Without it a
+      document uploaded during the window succeeded at every step, reported itself
+      complete, and answered nothing (A-760, A-761)
 - [x] Embeddings generated during `DOCUMENT_INGESTION`; document flips to `COMPLETED`
 - [ ] Separate `GENERATE_EMBEDDINGS` job â€” embedding runs inline in the ingestion job instead
 - [x] Nothing with `processing_status != COMPLETED` is ever retrievable â€” enforced in SQL and

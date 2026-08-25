@@ -31,6 +31,9 @@ from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
+from app.infrastructure.database.repositories.knowledge_base import (
+    SqlKnowledgeBaseRepository,
+)
 from app.infrastructure.database.session import get_session
 
 _404_DOCUMENT = "Document not found"
@@ -49,6 +52,36 @@ router = APIRouter(
     dependencies=[Depends(get_kb_scope)],
 )
 
+#: Returned when a Knowledge Base is not reading from the version an ingestion would
+#: write. Named for what the caller has to do about it, since nothing else here will.
+_409_STALE_INDEX = (
+    "This knowledge base is not reading from the index new documents would be written "
+    "to, so a document uploaded now would be stored and then never found. Rebuild it "
+    "first: POST /knowledge-bases/{kb_id}/reindex."
+)
+
+
+async def _refuse_while_the_index_is_stale(
+    scope: ScopeContext, session: AsyncSession, settings: Settings
+) -> None:
+    """Reject an upload that would produce a document nothing can retrieve.
+
+    The alternative is worse than a refusal. An upload accepted here succeeds at every
+    step, reaches COMPLETED, and is invisible — there is no failure anywhere to look at,
+    only a textbook that answers nothing. Refusing puts the problem where somebody can
+    see it, and names the one operation that resolves it.
+
+    The window is real but narrow: it opens when the embedding model is reconfigured, and
+    while a rebuild is running. Both are maintenance, and declining writes during
+    maintenance is the ordinary thing to do.
+    """
+    kb = await SqlKnowledgeBaseRepository(scope, session).get(scope)
+    if kb is None:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    if kb.index_is_stale(written_version=settings.embedding.index_version):
+        raise HTTPException(status_code=409, detail=_409_STALE_INDEX)
+
+
 @router.post("", status_code=201)
 async def upload_document(
     file: UploadFile,
@@ -57,6 +90,7 @@ async def upload_document(
     container: Annotated[Container, Depends(get_container)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> DocumentUploadResponse:
+    await _refuse_while_the_index_is_stale(scope, session, settings)
     data = await file.read()
     use_case = UploadDocumentUseCase(
         document_repo=SqlDocumentRepository(scope, session),
