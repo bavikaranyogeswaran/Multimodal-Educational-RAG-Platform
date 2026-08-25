@@ -219,6 +219,26 @@ class TestDiversityCaps:
         assert len(kept) == 3
 
     def test_chunks_from_one_document_are_capped(self) -> None:
+        """The room the cap holds back is room for another document, so one has to exist."""
+        other_doc = uuid.uuid4()
+        kept = _pruner(per_document=4, per_page=99).prune(
+            [
+                _evidence(f"passage number {i} about a distinct matter entirely", position=i,
+                          page=i + 1)
+                for i in range(9)
+            ]
+            + [
+                _evidence("a passage from somewhere else entirely, saying other things",
+                          position=9, document_id=other_doc)
+            ],
+            query_class=QueryClass.SUMMARY,
+        )
+        assert len([e for e in kept if e.chunk.document_id == _DOC_ID]) == 4
+        assert len(kept) == 5
+
+    def test_one_document_on_its_own_is_not_capped_against_itself(self) -> None:
+        """Nothing is being held back for, so the cap would only be a truncation — and one
+        applied before the count is chosen, so the selector never sees what it lost."""
         kept = _pruner(per_document=4, per_page=99).prune(
             [
                 _evidence(f"passage number {i} about a distinct matter entirely", position=i,
@@ -227,7 +247,7 @@ class TestDiversityCaps:
             ],
             query_class=QueryClass.SUMMARY,
         )
-        assert len(kept) == 4
+        assert len(kept) == 9
 
     def test_a_second_document_is_not_affected_by_the_first_cap(self) -> None:
         other_doc = uuid.uuid4()
@@ -247,6 +267,26 @@ class TestDiversityCaps:
     def test_a_comparison_may_not_be_filled_from_one_document(self) -> None:
         """A comparison answered out of one book compares what that book says against
         what it says elsewhere, which is not the question."""
+        other_doc = uuid.uuid4()
+        kept = _pruner(per_document=4, per_page=99).prune(
+            [
+                _evidence(f"passage number {i} about a distinct matter entirely", position=i,
+                          page=i + 1)
+                for i in range(6)
+            ]
+            + [
+                _evidence("a passage from somewhere else entirely, saying other things",
+                          position=6, document_id=other_doc)
+            ],
+            query_class=QueryClass.COMPARISON,
+        )
+        assert len([e for e in kept if e.chunk.document_id == _DOC_ID]) == 2
+        assert len(kept) == 3
+
+    def test_a_comparison_with_only_one_document_is_not_halved(self) -> None:
+        """Halving here reserves half the list for a document that does not exist, and
+        what survives is then exactly the class minimum — so the two passages sent are
+        the two the minimum requires rather than the two the ranking argued for."""
         kept = _pruner(per_document=4, per_page=99).prune(
             [
                 _evidence(f"passage number {i} about a distinct matter entirely", position=i,
@@ -255,18 +295,24 @@ class TestDiversityCaps:
             ],
             query_class=QueryClass.COMPARISON,
         )
-        assert len(kept) == 2
+        assert len(kept) == 6
 
     def test_an_ordinary_query_keeps_the_full_document_allowance(self) -> None:
+        other_doc = uuid.uuid4()
         kept = _pruner(per_document=4, per_page=99).prune(
             [
                 _evidence(f"passage number {i} about a distinct matter entirely", position=i,
                           page=i + 1)
                 for i in range(6)
+            ]
+            + [
+                _evidence("a passage from somewhere else entirely, saying other things",
+                          position=6, document_id=other_doc)
             ],
             query_class=QueryClass.DIRECT,
         )
-        assert len(kept) == 4
+        assert len([e for e in kept if e.chunk.document_id == _DOC_ID]) == 4
+        assert len(kept) == 5
 
 
 # ---------------------------------------------------------------------------

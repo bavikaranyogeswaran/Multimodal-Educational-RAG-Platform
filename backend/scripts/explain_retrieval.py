@@ -94,6 +94,11 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # Passages are printed as the PDF wrote them, and the console encoding inherited
+    # here cannot always represent that. Substituting the character it cannot write is
+    # the mild failure; without this the run stops at that passage, and what it printed
+    # before stopping still reads like the whole report.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(main())

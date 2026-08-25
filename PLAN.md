@@ -31,9 +31,9 @@ system design specification.
 | Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~35%, retrieval measured, generation and memory not) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) Â· Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,761 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **The evidence budget's minimums**, which the classifier measurement pointed at: a class minimum overrides the score margin, so correct routing can buy noise |
-| Last updated | 25 August 2026 (step 17.2 â€” a classifier change measured and rejected) |
+| Tests | 2,767 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **The score margin cannot tell a flat-bad ranking from a flat-good one**, so a question the book does not answer fills its whole budget with passages the reranker scored alike and disliked equally |
+| Last updated | 25 August 2026 (step 17.3 â€” the evidence budget made reachable) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1711,12 +1711,15 @@ tuning problem:
       from inside the logging call and took the response down with it. Every log line drawn
       from a real document was exposed to this, not just this one (A-746)
 
-Two things ruled out by experiment rather than assumed, so neither is worth revisiting without
-new evidence: the evidence pool is **not** throttled by the diversity caps (raising
-`max_chunks_per_document` 4 â†’ 8 doubled what prune kept and changed the selected count not at
-all), and **not** by the score margin (widening `relative_score_margin` 0.35 â†’ 1.0 changed
-nothing). The binding limit is the per-class range in `selector.py`, which is deliberate
-(A-732)
+Two things were ruled out by experiment here, and one of them has since been overturned. The
+evidence pool was said not to be throttled by the diversity caps, on the strength of raising
+`max_chunks_per_document` 4 â†’ 8 and watching the selected count not move. That held for the
+questions it was run on, which all fell through to DIRECT and were capped by that class's own
+range long before the pruner could matter. For a class budgeted wider it is false, and a
+library of one document met the per-document cap on every question asked of it. The margin
+finding stands and now has a reason: widening `relative_score_margin` 0.35 â†’ 1.0 changed
+nothing because the reranker's scores cluster far tighter than either value (A-732, A-778,
+A-780)
 
 ### 7.8 â€” Recalibrate the tuning numbers from what was found
 

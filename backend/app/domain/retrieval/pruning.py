@@ -12,6 +12,11 @@ Both are worse than they look. A repeated passage does not merely waste a slot �
 to the model as corroboration, so a claim supported once is presented as supported three
 times. And an answer drawn wholly from one document cannot notice that another disagrees.
 
+That second rule is about libraries rather than about answers, so it holds its fire where
+the library is one book. With nothing else to make room for, a limit on what one document
+may supply is not diversity — it is a truncation, applied before the count is chosen and
+therefore invisible to the component whose job that is.
+
 So this runs before the count is chosen rather than after. Selecting five passages and then
 discovering three were duplicates would leave two, having spent the budget on the copies;
 pruning first means the count is chosen over passages that are all still saying something.
@@ -100,7 +105,7 @@ class EvidencePruner:
         if not candidates:
             return []
 
-        per_document = self._document_cap(query_class)
+        per_document = self._document_cap(query_class, candidates)
         counts = _Counts()
 
         # The best passage the pipeline found is admitted outright, before any rule is
@@ -118,7 +123,10 @@ class EvidencePruner:
                 continue
             if counts.pages.get(_page_of(chunk), 0) >= self._max_per_page:
                 continue
-            if counts.documents.get(chunk.document_id, 0) >= per_document:
+            if (
+                per_document is not None
+                and counts.documents.get(chunk.document_id, 0) >= per_document
+            ):
                 continue
 
             kept.append(_entry(candidate))
@@ -128,14 +136,28 @@ class EvidencePruner:
 
     # -----------------------------------------------------------------------
 
-    def _document_cap(self, query_class: QueryClass) -> int:
-        """How much of the evidence one document may supply.
+    def _document_cap(
+        self, query_class: QueryClass, candidates: Sequence[Evidence]
+    ) -> int | None:
+        """How much of the evidence one document may supply, or None for no limit.
 
-        Halved for comparisons. A comparison answered entirely out of one book compares
-        what that book says against what it says elsewhere, which is not the question —
-        so no single document may fill more than half the list, and where a second
-        document has anything relevant it gets in.
+        The cap is a share of the list held back for other documents, so where every
+        candidate came from the same one there is nothing to hold it back for and it does
+        not apply. Left applying, it would decide the size of the evidence list for every
+        single-document library — silently, and one stage before the component that is
+        supposed to decide it, which is why a summary of one book was answered from four
+        passages however many its class was budgeted for.
+
+        Halved for comparisons, and withdrawn under the same condition. A comparison
+        answered entirely out of one book compares what that book says against what it
+        says elsewhere, which is not the question, so where a second document has anything
+        relevant it gets in. But halving a cap that is already the only source leaves room
+        for a document that does not exist, and the two passages that survive are then
+        exactly the class minimum — so the ranking's opinion of the second one is never
+        consulted at all.
         """
+        if len({evidence.chunk.document_id for evidence in candidates}) < 2:
+            return None
         if query_class is QueryClass.COMPARISON:
             return max(1, self._max_per_document // 2)
         return self._max_per_document

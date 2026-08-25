@@ -200,6 +200,11 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # Questions and source lines are printed as the gold set wrote them, and the console
+    # encoding inherited here cannot always represent that. Substituting the character it
+    # cannot write is the mild failure; without this the run stops at that row, and a
+    # table of scores that ends early still reads like the whole set.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(main())

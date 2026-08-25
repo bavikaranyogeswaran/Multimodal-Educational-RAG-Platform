@@ -5,11 +5,17 @@ Requires the ml dependency group: uv sync --group ml
 The model is loaded once at construction and held for the process lifetime.
 `predict` is synchronous, so each call is offloaded to the default thread
 executor to avoid blocking the event loop during batch scoring.
+
+Held for the process lifetime means shared by every request in it, so scoring is
+serialised: the tokeniser underneath is reconfigured on entry, and a second caller
+arriving mid-call aborts the scoring outright rather than returning anything wrong.
+One question at a time reaches the model, and the queue costs latency only.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Sequence
 
 
@@ -31,6 +37,7 @@ class CrossEncoderReranker:
             ) from exc
         self._model = CrossEncoder(model_id, device=device)
         self._batch_size = batch_size
+        self._scoring = threading.Lock()
 
     async def rerank(
         self,
@@ -46,16 +53,22 @@ class CrossEncoderReranker:
             return []
 
         pairs = [[query, c] for c in candidates]
-        batch = self._batch_size
         loop = asyncio.get_running_loop()
 
-        scores: list[float] = await loop.run_in_executor(
-            None,
-            lambda: self._model.predict(
-                pairs,
-                batch_size=batch,
-                show_progress_bar=False,
-            ).tolist(),
-        )
+        scores: list[float] = await loop.run_in_executor(None, self._predict, pairs)
 
         return scores
+
+    def _predict(self, pairs: list[list[str]]) -> list[float]:
+        """Score on the executor thread, one caller at a time.
+
+        Waiting happens on the executor thread rather than the event loop, so a queue
+        here delays the scoring and nothing else.
+        """
+        with self._scoring:
+            scored = self._model.predict(
+                pairs,
+                batch_size=self._batch_size,
+                show_progress_bar=False,
+            )
+        return scored.tolist()  # type: ignore[no-any-return]
