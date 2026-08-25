@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~25%, the contract layer built, no screen yet) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~45%, sign-in and routing work; Knowledge Base screens next) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 39 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **18.2 â€” Supabase session, token refresh and protected routing**, which is the first thing a person can see. Retrieval's open thread is unchanged and recorded: the score margin cannot tell a flat-bad ranking from a flat-good one |
-| Last updated | 25 August 2026 (step 18.1 â€” the typed API layer) |
+| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 65 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **18.3 â€” the Knowledge Base screens**, the first place the contract layer is actually used. Retrieval's open thread is unchanged and recorded: the score margin cannot tell a flat-bad ranking from a flat-good one |
+| Last updated | 25 August 2026 (step 18.2 â€” sign-in, sessions and protected routing) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2364,26 +2364,35 @@ to replace the derived latency budgets with measured p95 is unmet.
 
 Covers Â§7 authentication, Knowledge Base management and uploads.
 
-**Status: ~25% â€” the scaffold, and the contract everything else sits on.** `App.tsx`, `main.tsx`,
+**Status: ~45% â€” a person can sign in, and the application knows who they are.** `App.tsx`, `main.tsx`,
 `AppProviders.tsx`, `queryClient.ts` and `global.css` exist with its design tokens. Step 18.1
 filled `src/schemas/` with a Zod mirror of every backend response model and `src/api/` with the
 one client each request passes through, checked against responses captured from the backend
-itself. **No screen calls the backend yet** â€” the client exists and nothing consumes it â€” and
-every directory under `src/features/` is still a bare `.gitkeep`, as are `src/pages/`,
-`src/hooks/`, `src/components/` and `src/state/`. D-01 put the backend first deliberately, so
-this is on plan rather than behind it.
+itself. Step 18.2 added the sign-in service behind an interface of its own, a session store,
+protected routing and the two screens somebody signed out can reach. **No screen reads data
+from the backend yet** â€” the client is wired to the session and nothing calls it â€” and
+`src/components/`, `src/hooks/` and `src/state/` are still bare `.gitkeep` files, as is every
+feature directory but `authentication/`. D-01 put the backend first deliberately, so this is
+on plan rather than behind it.
 
-- [ ] App shell, routing, layout, CSS Modules design tokens, light and dark
+- [x] **App shell, routing, layout, CSS Modules design tokens, light and dark** â€” `react-router`,
+      with the guard wrapping each protected element rather than sitting once around a layout
+      route, so a route added later is unprotected only if somebody writes it that way (A-795)
 - [x] **TanStack Query client, typed API layer, Zod schemas mirroring every backend Pydantic
       model** â€” every response model mirrored and checked against real captured output, one
       client that parses what it receives rather than casting it, and three failure kinds kept
       apart: a refusal, a contract that has moved, and a request that never arrived (A-784, A-785)
-- [ ] Supabase Auth screens, session handling, protected routes, token refresh
+- [x] **Supabase Auth screens, session handling, protected routes, token refresh** â€” the service
+      sits behind a five-operation interface, so the SDK is imported in one file and every test
+      runs against a stand-in. The session has three states and the third carries the weight;
+      the cache is emptied whenever the signed-in person changes; the token is read at the
+      moment of each request rather than captured (A-790, A-791, A-792, A-793)
 - [ ] KB list, create, edit, delete; settings including `graph_enabled`, explanation level, exam date
 - [ ] Upload with drag-drop, client-side validation, progress, **live per-stage processing status**,
       failure display with retry
 - [ ] Document list, metadata, delete with confirmation
-- [ ] Vitest setup and component tests
+- [~] **Vitest setup and component tests** â€” 65 tests covering the contract, the client, the
+      session store, the guard and both screens. Grows with each screen rather than closing here
 
 ## Phase 19 â€” Frontend chat, streaming, PDF viewer & citations
 

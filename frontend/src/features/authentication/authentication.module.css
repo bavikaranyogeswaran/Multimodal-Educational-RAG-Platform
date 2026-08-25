@@ -1,0 +1,107 @@
+.screen {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: var(--space-8);
+}
+
+.card {
+  width: 100%;
+  max-width: 24rem;
+  padding: var(--space-8);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.35rem;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  margin: 0 0 var(--space-6);
+  color: var(--color-text-muted);
+  font-size: 0.95rem;
+}
+
+.form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.input {
+  padding: var(--space-3);
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.submit {
+  padding: var(--space-3);
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-surface);
+  background: var(--color-accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.submit:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* A refusal is not decoration: it uses the conflict tokens so it cannot be mistaken for
+   ordinary supporting text. */
+.error {
+  padding: var(--space-3);
+  color: var(--color-conflict);
+  background: var(--color-conflict-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+}
+
+/* Registration accepted, with something still to do. Distinct from both an error and a
+   completed sign-in, because it is neither. */
+.pending {
+  padding: var(--space-3);
+  color: var(--color-abstain);
+  background: var(--color-abstain-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+}
+
+.switch {
+  margin: var(--space-6) 0 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.waiting {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: var(--space-8);
+  color: var(--color-text-muted);
+}

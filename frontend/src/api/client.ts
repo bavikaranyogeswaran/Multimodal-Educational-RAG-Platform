@@ -28,6 +28,13 @@ export type AccessTokenProvider = () => string | null | Promise<string | null>;
 export interface ApiClientOptions {
   /** Returns the current access token, or null when nobody is signed in. */
   getAccessToken?: AccessTokenProvider;
+  /**
+   * Where the API lives, when it is not this origin. Empty is the normal case: requests
+   * stay origin-relative, which is what the development proxy and a single-origin
+   * deployment both want. Setting it is what makes the trace header cross an origin
+   * boundary, and therefore what the server has to expose it for.
+   */
+  baseUrl?: string;
   /** Overridden in tests; defaults to the global fetch. */
   fetch?: typeof globalThis.fetch;
 }
@@ -42,10 +49,14 @@ export interface RequestOptions {
 
 export class ApiClient {
   readonly #getAccessToken: AccessTokenProvider;
+  readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
 
   constructor(options: ApiClientOptions = {}) {
     this.#getAccessToken = options.getAccessToken ?? (() => null);
+    // A trailing slash here and a leading one on the prefix would produce a double
+    // slash, which some servers route differently and others reject outright.
+    this.#baseUrl = (options.baseUrl ?? '').replace(/\/+$/, '');
     // Bound to globalThis: an unbound window.fetch throws an illegal invocation error.
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
@@ -98,7 +109,10 @@ export class ApiClient {
 
     let response: Response;
     try {
-      response = await this.#fetch(`${API_PREFIX}${path}${buildQuery(options.query)}`, init);
+      response = await this.#fetch(
+        `${this.#baseUrl}${API_PREFIX}${path}${buildQuery(options.query)}`,
+        init,
+      );
     } catch (cause) {
       throw new NetworkError(path, cause);
     }

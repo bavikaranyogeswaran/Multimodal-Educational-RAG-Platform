@@ -1,22 +1,33 @@
-import styles from '@/app/App.module.css';
+import { Route, Routes } from 'react-router';
+
+import { RequireAuth } from '@/features/authentication/RequireAuth';
+import { SignInPage } from '@/features/authentication/SignInPage';
+import { SignUpPage } from '@/features/authentication/SignUpPage';
+import { HomePage } from '@/pages/HomePage';
+import { NotFoundPage } from '@/pages/NotFoundPage';
 
 /**
- * Application shell.
+ * Every address this application answers.
  *
- * Routing, the authenticated layout and the Knowledge Base screens replace this later.
- * It exists now so the scaffold has something real to render and test.
+ * The guard wraps each protected element rather than sitting once around a layout route,
+ * so a route added later is unprotected only if somebody writes it that way. A single
+ * wrapper higher up reads as safer and is the opposite: everything nested under it is
+ * protected by where it happens to sit in the file.
  */
 export function App() {
   return (
-    <main className={styles.shell}>
-      <div className={styles.card}>
-        <h1 className={styles.title}>Multimodal Educational Tutor</h1>
-        <p className={styles.body}>
-          Ask questions about your own study material and get answers grounded in it, with
-          citations you can follow back to the page.
-        </p>
-        <p className={styles.status}>foundation</p>
-      </div>
-    </main>
+    <Routes>
+      <Route path="/sign-in" element={<SignInPage />} />
+      <Route path="/sign-up" element={<SignUpPage />} />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <HomePage />
+          </RequireAuth>
+        }
+      />
+      <Route path="*" element={<NotFoundPage />} />
+    </Routes>
   );
 }
