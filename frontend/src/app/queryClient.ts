@@ -1,5 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 
+import { ApiError, ContractViolationError } from '@/api/errors';
+
 /**
  * Shared server-state client.
  *
@@ -17,11 +19,19 @@ export function createQueryClient(): QueryClient {
         staleTime: 30_000,
         refetchOnWindowFocus: false,
         retry: (failureCount, error) => {
-          // Never retry an authorization failure. A Knowledge Base the user does not own
-          // returns 404 by design, so it will never succeed and retrying is pure latency.
-          if (error instanceof Response && (error.status === 401 || error.status === 404)) {
+          // A response the schemas reject is a deployment problem: the two sides of the
+          // contract have moved apart, so the same request produces the same unreadable
+          // answer. Retrying turns one loud failure into three quiet ones.
+          if (error instanceof ContractViolationError) {
             return false;
           }
+          // A refusal is worth repeating only where the server suggested it might answer
+          // differently. A Knowledge Base somebody else owns answers 404 by design and
+          // always will, so retrying it is pure latency.
+          if (error instanceof ApiError) {
+            return error.isRetryable && failureCount < 2;
+          }
+          // Anything left never reached a server. Those are worth another go.
           return failureCount < 2;
         },
       },

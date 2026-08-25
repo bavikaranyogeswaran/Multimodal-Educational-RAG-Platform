@@ -1,0 +1,62 @@
+import { z } from 'zod';
+
+import { messageRole, messageStatus } from '@/schemas/enums';
+import { instant, uuid } from '@/schemas/primitives';
+
+/**
+ * Conversation and message responses.
+ *
+ * Mirrored now rather than when the chat screens are built. The contract is small, it is
+ * read from the backend schema as it stands today, and a mirror written later is written
+ * from whatever the API happens to return at that moment — which is the same thing only
+ * as long as nobody changed it in between.
+ */
+
+export const conversation = z.object({
+  id: uuid,
+  knowledge_base_id: uuid,
+  title: z.string(),
+  created_at: instant,
+  updated_at: instant,
+  /** What the student is looking at, which narrows what a question is asked against. */
+  active_document_id: uuid.nullable(),
+  active_page_number: z.number().int().nullable(),
+  active_figure_id: uuid.nullable(),
+  active_table_id: uuid.nullable(),
+});
+export type Conversation = z.infer<typeof conversation>;
+
+export const conversationList = z.array(conversation);
+
+export const createConversationRequest = z.object({
+  title: z.string().min(1).max(200),
+  active_document_id: uuid.nullable().optional(),
+  active_page_number: z.number().int().nullable().optional(),
+  active_figure_id: uuid.nullable().optional(),
+  active_table_id: uuid.nullable().optional(),
+});
+export type CreateConversationRequest = z.input<typeof createConversationRequest>;
+
+export const streamRequest = z.object({
+  query: z.string().min(1).max(4000),
+});
+export type StreamRequest = z.input<typeof streamRequest>;
+
+export const message = z.object({
+  id: uuid,
+  conversation_id: uuid,
+  role: messageRole,
+  status: messageStatus,
+  content: z.string(),
+  created_at: instant,
+  updated_at: instant,
+  /** What retrieval actually searched for, which is not always what was typed. */
+  rewritten_query: z.string().nullable(),
+  model_id: z.string().nullable(),
+  prompt_tokens: z.number().int().nullable(),
+  completion_tokens: z.number().int().nullable(),
+  finish_reason: z.string().nullable(),
+});
+export type Message = z.infer<typeof message>;
+
+export const messageList = z.array(message);

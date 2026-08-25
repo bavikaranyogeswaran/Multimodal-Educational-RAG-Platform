@@ -175,3 +175,42 @@ class TestCORSMiddleware:
         with TestClient(self._cors_app()) as client:
             response = client.get("/ping", headers={"Origin": "http://evil.example.com"})
         assert response.headers.get("access-control-allow-origin") != "http://evil.example.com"
+
+    def test_a_browser_on_another_origin_can_read_the_trace_header(self) -> None:
+        """Setting a header and exposing it are separate things.
+
+        A browser hands script only a few headers by default, so a trace id echoed on
+        every response is still unreadable from another origin unless it is named here.
+        A frontend served through a development proxy is same-origin and never notices,
+        which means the failure appears first in production and takes the identifier out
+        of the errors somebody is trying to trace.
+        """
+        cors_app = FastAPI()
+        cors_app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://localhost:5173"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["X-Trace-ID"],
+        )
+        cors_app.add_middleware(TraceIDMiddleware)
+
+        @cors_app.get("/ping")
+        async def ping() -> dict[str, bool]:
+            return {"pong": True}
+
+        with TestClient(cors_app) as client:
+            response = client.get("/ping", headers={"Origin": "http://localhost:5173"})
+
+        exposed = response.headers.get("access-control-expose-headers", "")
+        assert "X-Trace-ID" in exposed
+        assert response.headers.get("X-Trace-ID")
+
+    def test_the_application_itself_exposes_the_trace_header(self) -> None:
+        """The check above proves the setting works; this proves the real app carries it."""
+        from app.main import app as real_app  # noqa: PLC0415
+
+        cors = next(m for m in real_app.user_middleware if m.cls is CORSMiddleware)
+
+        assert "X-Trace-ID" in (cors.kwargs.get("expose_headers") or [])

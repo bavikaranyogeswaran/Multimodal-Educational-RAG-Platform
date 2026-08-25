@@ -140,6 +140,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Without this the trace header is set on every response and readable on none of
+    # them: a browser hands script only the handful of headers it considers simple
+    # unless the server names the rest. It survives a same-origin setup, so the gap
+    # stays invisible in development and takes the identifier out of exactly the
+    # production errors somebody would want to look up.
+    expose_headers=["X-Trace-ID"],
 )
 
 register_exception_handlers(app)

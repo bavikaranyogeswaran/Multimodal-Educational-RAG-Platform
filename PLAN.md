@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) |
-| Scaffold only | Phase 18 (~10%, step 0.5 shell) Â· Phase 16 (~5%, table and adapter but no `CacheStore`) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~25%, the contract layer built, no screen yet) |
+| Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,767 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **The score margin cannot tell a flat-bad ranking from a flat-good one**, so a question the book does not answer fills its whole budget with passages the reranker scored alike and disliked equally |
-| Last updated | 25 August 2026 (step 17.3 â€” the evidence budget made reachable) |
+| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 39 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **18.2 â€” Supabase session, token refresh and protected routing**, which is the first thing a person can see. Retrieval's open thread is unchanged and recorded: the score margin cannot tell a flat-bad ranking from a flat-good one |
+| Last updated | 25 August 2026 (step 18.1 â€” the typed API layer) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2364,14 +2364,20 @@ to replace the derived latency budgets with measured p95 is unmet.
 
 Covers Â§7 authentication, Knowledge Base management and uploads.
 
-**Status: ~10% â€” the step 0.5 scaffold and nothing since.** `App.tsx`, `main.tsx`,
-`AppProviders.tsx`, `queryClient.ts` and `global.css` exist with its design tokens; every
-directory under `src/features/` is a bare `.gitkeep`, as are `src/api/`, `src/schemas/`,
-`src/pages/`, `src/hooks/`, `src/components/` and `src/state/`. **Nothing in the frontend calls
-the backend.** D-01 put the backend first deliberately, so this is on plan rather than behind it.
+**Status: ~25% â€” the scaffold, and the contract everything else sits on.** `App.tsx`, `main.tsx`,
+`AppProviders.tsx`, `queryClient.ts` and `global.css` exist with its design tokens. Step 18.1
+filled `src/schemas/` with a Zod mirror of every backend response model and `src/api/` with the
+one client each request passes through, checked against responses captured from the backend
+itself. **No screen calls the backend yet** â€” the client exists and nothing consumes it â€” and
+every directory under `src/features/` is still a bare `.gitkeep`, as are `src/pages/`,
+`src/hooks/`, `src/components/` and `src/state/`. D-01 put the backend first deliberately, so
+this is on plan rather than behind it.
 
 - [ ] App shell, routing, layout, CSS Modules design tokens, light and dark
-- [ ] TanStack Query client, typed API layer, **Zod schemas mirroring every backend Pydantic model**
+- [x] **TanStack Query client, typed API layer, Zod schemas mirroring every backend Pydantic
+      model** â€” every response model mirrored and checked against real captured output, one
+      client that parses what it receives rather than casting it, and three failure kinds kept
+      apart: a refusal, a contract that has moved, and a request that never arrived (A-784, A-785)
 - [ ] Supabase Auth screens, session handling, protected routes, token refresh
 - [ ] KB list, create, edit, delete; settings including `graph_enabled`, explanation level, exam date
 - [ ] Upload with drag-drop, client-side validation, progress, **live per-stage processing status**,
