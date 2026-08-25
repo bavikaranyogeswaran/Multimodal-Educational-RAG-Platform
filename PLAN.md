@@ -32,8 +32,8 @@ system design specification.
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) Â· Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
 | Tests | 2,761 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **Extend the gold set** â€” 18 pairs cover 5 of 13 query classes, and three of the eight uncovered need a second document (D-22) |
-| Last updated | 25 August 2026 (step 17.1 â€” the gold set and the retrieval metric harness) |
+| Next step | **The evidence budget's minimums**, which the classifier measurement pointed at: a class minimum overrides the score margin, so correct routing can buy noise |
+| Last updated | 25 August 2026 (step 17.2 â€” a classifier change measured and rejected) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1694,11 +1694,12 @@ tuning problem:
       AGGREGATION rule wants "how many" or "list all", so it landed on DIRECT and saw two
       passages. Widened to `CountRange(1, 4)`; **`selected` went 2 to 4** on every DIRECT query
       and that question now names Spyder and IPython alongside Jupyter (A-730, A-741)
-- [ ] **The classifier's rules do not cover how people actually ask** â€” widening the fallback
-      budget treats the symptom. A procedure and an aggregation still classify as unrecognised,
-      and matching them properly would route them to ranges chosen for what they are. Left
-      alone deliberately: new regexes misfire in ways only an evaluation set would catch, and
-      D-22's gold pairs are what that needs (A-742)
+- [x] **The classifier's rules do not cover how people actually ask â€” and fixing that did
+      not help** â€” rules were written, measured against the gold set, and reverted. They
+      classified all 18 pairs as labelled and left page recall, reciprocal rank, NDCG and
+      phrase coverage unchanged while costing selection precision. What the measurement
+      found instead is that a class minimum overrides the score margin, so routing a
+      question correctly can force noise into the prompt (A-742, A-772, A-773)
 - [x] **A mid-stream failure that is not a rejection tore the SSE connection** â€” the rejection
       path reported itself and closed cleanly, but a `ProviderError` mid-generation reached the
       student as a bare read error. Both branches now close cleanly, with a message that keeps
