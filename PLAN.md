@@ -28,7 +28,7 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~35%, retrieval measured, generation and memory not) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) |
 | Scaffold only | Phase 18 (~10%, step 0.5 shell) Â· Phase 16 (~5%, table and adapter but no `CacheStore`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
 | Tests | 2,767 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
@@ -1116,7 +1116,7 @@ so it is not mistaken for done.
 
 Covers Â§13, Â§14, Â§15, Â§16.
 
-**Status: ~70% â€” first pass complete, 6 of 6 steps. OCR unblocked: step 7.4 measured 55% of real-book pages defeating the text layer (A-713), so steps 5.7â€“5.9 are the justified next priority here.**
+**Status: ~70% â€” first pass complete, 6 of 6 steps. Page OCR is still absent, and no longer the priority this line once made it: step 7.4 read 55% of real-book pages as defeating the text layer (A-713), but those pages are screenshot-heavy and the figure OCR built in 6.7 reads them, so the ingested book covers 61 of its 62 pages without 5.7â€“5.9. What page OCR would still recover is the text outside figure regions (A-748).**
 `app/infrastructure/parsing/` now holds `pdfplumber_parser.py`, and the placeholder it replaced â€”
 `_extract_pdf_pages` in `app/worker/__main__.py`, which read native text with `pypdf` and silently
 skipped pages that returned none â€” was deleted in step 5.3. A page whose text layer cannot be
@@ -1478,7 +1478,7 @@ work and is not done here (A-690).
 
 Covers Â§13 complete, Â§19, Â§20. **Milestone: ingestion works end to end.**
 
-**Status: ~85% â€” the milestone is met.** The fixed-width character window is gone. Chunking now
+**Status: ~95% â€” the milestone is met.** The fixed-width character window is gone. Chunking now
 consumes the typed elements Phase 5 produces, places boundaries on the structure they carry,
 counts sizes in real tokens, and writes two tiers: small children that retrieval searches and
 the section-bounded parents they expand into. That was the single largest constraint on
@@ -2318,12 +2318,14 @@ relies on cascades and leaves every document's stored object orphaned in R2.
 
 Covers Â§62, Â§63, Â§64, and closes Â§30's calibration debt.
 
-**Status: ~20%.** The observability baseline arrived early in step 3.4 and the security suite has
+**Status: ~30%.** The observability baseline arrived early in step 3.4 and the security suite has
 been growing alongside each phase â€” 121 tests marked `security`, 87 marked `gate`, across eight
-files. What is entirely
-absent is evaluation: no gold dataset, no metric harness, and no calibration, which means every
-tuning number in `settings.py` is still the placeholder it was written as, and D-23's promise to
-replace the derived latency budgets with measured p95 is unmet.
+files. Evaluation is no longer absent, but it reaches one stage of the pipeline: steps 17.1
+through 17.3 built a gold set and a metric harness for retrieval and used them to measure two
+changes, one of which was rejected on what they said. Nothing measures reranking, generation,
+multi-hop or memory, and no threshold has been calibrated against any of it â€” so the tuning
+numbers in `settings.py` are still the placeholders they were written as, and D-23's promise
+to replace the derived latency budgets with measured p95 is unmet.
 
 - [x] Stage timers via `StageTimer`, emitted as structlog events with elapsed milliseconds â€”
       retrieval stages only; the full Â§62 set spans phases not yet built
