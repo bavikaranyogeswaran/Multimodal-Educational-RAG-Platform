@@ -47,10 +47,11 @@ from app.domain.models.validation import (
     check_numeric_fidelity,
     decide,
 )
+from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
 from app.domain.ports.model_gateway import ModelGatewayPort
-from app.domain.ports.repositories import ConversationUnitOfWork
+from app.domain.ports.repositories import ConversationUnitOfWork, GraphRepository, KnowledgeBaseRepository
 from app.domain.retrieval.entities import (
     Citation,
     Evidence,
@@ -59,6 +60,10 @@ from app.domain.retrieval.entities import (
 )
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
+
+#: Maximum nodes returned by concept_map_subgraph for the graph context slot.
+#: Keeps graph context concise; seeds always appear regardless of the cap.
+_MAX_GRAPH_NODES = 30
 
 #: Identity only. Grounding, abstention and register used to be stated here as well, and are
 #: now numbered requirements — a rule that appears both in the preamble and in the list is a
@@ -213,6 +218,8 @@ class AnswerUseCase:
         context_builder: ContextBuilder,
         entailment: ClaimEntailmentPort,
         faithfulness: AnswerFaithfulnessPort,
+        kb_repo: KnowledgeBaseRepository | None = None,
+        graph_repo: GraphRepository | None = None,
     ) -> None:
         self._retrieve = retrieve
         self._uow = conversation_uow
@@ -220,6 +227,8 @@ class AnswerUseCase:
         self._context_builder = context_builder
         self._entailment = entailment
         self._faithfulness = faithfulness
+        self._kb_repo = kb_repo
+        self._graph_repo = graph_repo
 
     async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:
         """Stream the answer for one turn.
@@ -270,6 +279,12 @@ class AnswerUseCase:
         )
         evidence = retrieval.evidence
 
+        # Graph context is loaded after retrieval so it is seeded by the same
+        # chunks the model will see — not by all entities in the document.
+        graph_context = await _load_graph_context(
+            command.scope, evidence, self._kb_repo, self._graph_repo
+        )
+
         if retrieval.was_rewritten:
             now_rw = datetime.now(UTC)
             async with self._uow() as repo:
@@ -312,6 +327,7 @@ class AnswerUseCase:
                 conversation_history=history,
                 evidence=labeled,
                 output_schema=OUTPUT_SCHEMA,
+                knowledge_base_state=graph_context,
             )
         )
 
@@ -357,6 +373,7 @@ class AnswerUseCase:
                             conversation_history=history,
                             evidence=labeled,
                             output_schema=OUTPUT_SCHEMA,
+                            knowledge_base_state=graph_context,
                             critical_checklist=(repair,) if repair else (),
                         )
                     )
@@ -632,6 +649,93 @@ async def _check_entailment(
         ]
         per_claim.append(await entailment.check_claim(check.claim, real_passages))
     return tuple(per_claim)
+
+
+# ---------------------------------------------------------------------------
+# Graph context
+# ---------------------------------------------------------------------------
+
+
+async def _load_graph_context(
+    scope: ScopeContext,
+    evidence: Sequence[Evidence],
+    kb_repo: KnowledgeBaseRepository | None,
+    graph_repo: GraphRepository | None,
+) -> str | None:
+    """Return a formatted subgraph seeded by the chunks in the retrieved evidence.
+
+    Uses only entities whose source_chunk_id matches a retrieved chunk, so the
+    graph context is tightly aligned with the passages the model will see. Returns
+    None when graph RAG is not wired in, the KB has it disabled, the evidence is
+    empty, or no entities were found for the retrieved chunks.
+    """
+    if kb_repo is None or graph_repo is None:
+        return None
+
+    kb = await kb_repo.get(scope)
+    if kb is None or not kb.graph_enabled:
+        return None
+
+    if not evidence:
+        return None
+
+    retrieved_chunk_ids = frozenset(ev.chunk.id for ev in evidence)
+    document_ids = frozenset(ev.chunk.document_id for ev in evidence)
+
+    seed_entity_ids: set[uuid.UUID] = set()
+    for document_id in document_ids:
+        for entity in await graph_repo.list_entities_for_document(scope, document_id):
+            if entity.source_chunk_id in retrieved_chunk_ids:
+                seed_entity_ids.add(entity.id)
+
+    if not seed_entity_ids:
+        return None
+
+    subgraph_entities, subgraph_rels = await graph_repo.concept_map_subgraph(
+        scope, frozenset(seed_entity_ids), max_nodes=_MAX_GRAPH_NODES
+    )
+
+    if not subgraph_entities:
+        return None
+
+    return _format_graph_context(subgraph_entities, subgraph_rels)
+
+
+def _format_graph_context(
+    entities: Sequence[GraphEntity],
+    rels: Sequence[GraphRelationship],
+) -> str:
+    """Render entities and relationships as structured text for the prompt slot."""
+    entity_map = {e.id: e for e in entities}
+
+    entity_lines: list[str] = []
+    for e in sorted(entities, key=lambda x: x.name):
+        line = f"{e.name} ({e.entity_type.value})"
+        if e.description:
+            line = f"{line}: {e.description}"
+        entity_lines.append(line)
+
+    rel_lines: list[str] = []
+    for rel in rels:
+        src = entity_map.get(rel.source_entity_id)
+        tgt = entity_map.get(rel.target_entity_id)
+        if src and tgt:
+            rel_type = rel.relationship_type.value.replace("_", " ")
+            rel_lines.append(
+                f"  {src.name} → {rel_type} → {tgt.name}  [p. {rel.page_number}]"
+            )
+
+    lines: list[str] = [
+        "CONCEPT MAP — knowledge graph for the retrieved passages:",
+        "",
+        "Entities: " + ", ".join(entity_lines),
+    ]
+    if rel_lines:
+        lines.append("")
+        lines.append("Relationships:")
+        lines.extend(sorted(rel_lines))
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
