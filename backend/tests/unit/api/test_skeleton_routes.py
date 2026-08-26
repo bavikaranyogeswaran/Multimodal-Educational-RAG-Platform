@@ -124,25 +124,31 @@ class TestDocumentSkeletons:
 
 
 class TestGraphSkeletons:
-    @pytest.mark.parametrize(
-        "method,path_suffix",
-        [
-            ("GET", ""),
-            ("GET", f"/entities/{uuid.uuid4()}"),
-        ],
-    )
-    def test_all_graph_endpoints_return_501(
-        self, method: str, path_suffix: str
-    ) -> None:
+    def test_graph_returns_401_without_token(self) -> None:
         user_id = uuid.uuid4()
         kb_id = uuid.uuid4()
-        app = _make_app(graph_router, user_id=user_id, kb_id=kb_id)
+        app = _make_app(graph_router, user_id=user_id, kb_id=kb_id, auth_raises_401=True)
         with TestClient(app) as client:
-            resp = client.request(
-                method, f"/api/v1/knowledge-bases/{kb_id}/graph{path_suffix}"
+            resp = client.get(f"/api/v1/knowledge-bases/{kb_id}/graph")
+        assert resp.status_code == 401
+
+    def test_graph_returns_404_for_foreign_kb(self) -> None:
+        user_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+        app = _make_app(graph_router, user_id=user_id, kb_id=kb_id, scope_raises_404=True)
+        with TestClient(app) as client:
+            resp = client.get(f"/api/v1/knowledge-bases/{kb_id}/graph")
+        assert resp.status_code == 404
+
+    def test_entity_detail_returns_404_for_foreign_kb(self) -> None:
+        user_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+        app = _make_app(graph_router, user_id=user_id, kb_id=kb_id, scope_raises_404=True)
+        with TestClient(app) as client:
+            resp = client.get(
+                f"/api/v1/knowledge-bases/{kb_id}/graph/entities/{uuid.uuid4()}"
             )
-        assert resp.status_code == 501
-        assert resp.json()["phase"] == "12"
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
