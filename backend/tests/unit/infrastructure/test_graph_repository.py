@@ -381,3 +381,358 @@ class TestGraphScopeGuard:
         with pytest.raises(ScopeViolationError):
             await repo.delete_for_document(_make_scope(), uuid.uuid4())
         session.execute.assert_not_called()
+
+    async def test_list_entities_for_document_rejects_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _repo(_make_scope(), session)
+        with pytest.raises(ScopeViolationError):
+            await repo.list_entities_for_document(_make_scope(), uuid.uuid4())
+        session.execute.assert_not_called()
+
+    async def test_find_entity_by_name_rejects_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _repo(_make_scope(), session)
+        with pytest.raises(ScopeViolationError):
+            await repo.find_entity_by_name(_make_scope(), "Concept")
+        session.execute.assert_not_called()
+
+    async def test_list_relationships_for_entities_rejects_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _repo(_make_scope(), session)
+        with pytest.raises(ScopeViolationError):
+            await repo.list_relationships_for_entities(_make_scope(), frozenset([uuid.uuid4()]))
+        session.execute.assert_not_called()
+
+    async def test_concept_map_subgraph_rejects_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _repo(_make_scope(), session)
+        with pytest.raises(ScopeViolationError):
+            await repo.concept_map_subgraph(_make_scope(), frozenset([uuid.uuid4()]), max_nodes=50)
+        session.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# list_entities_for_document
+# ---------------------------------------------------------------------------
+
+
+class TestListEntitiesForDocument:
+    async def test_returns_entities_for_document(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        doc_id = uuid.uuid4()
+        e1 = _make_entity(scope, name="Beta", source_document_id=doc_id)
+        e2 = _make_entity(scope, name="Alpha", source_document_id=doc_id)
+        other = _make_entity(scope, name="Gamma")
+        await repo.save_entities(scope, [e1, e2, other])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await repo.list_entities_for_document(scope, doc_id)
+
+        assert len(results) == 2
+        # ordered by name
+        assert results[0].name == "Alpha"
+        assert results[1].name == "Beta"
+
+    async def test_returns_empty_for_unknown_document(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        results = await _repo(scope, sqlite_session).list_entities_for_document(
+            scope, uuid.uuid4()
+        )
+        assert results == []
+
+    async def test_excludes_other_documents(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        doc_a = uuid.uuid4()
+        doc_b = uuid.uuid4()
+        ea = _make_entity(scope, name="A", source_document_id=doc_a)
+        eb = _make_entity(scope, name="B", source_document_id=doc_b)
+        await repo.save_entities(scope, [ea, eb])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await repo.list_entities_for_document(scope, doc_a)
+
+        assert len(results) == 1
+        assert results[0].id == ea.id
+
+    async def test_scoped_to_user(self, sqlite_session: AsyncSession) -> None:
+        scope_a = _make_scope()
+        scope_b = _make_scope()
+        await _save_kb(scope_a, sqlite_session)
+        await _save_kb(scope_b, sqlite_session)
+        doc_id = uuid.uuid4()
+        ea = _make_entity(scope_a, source_document_id=doc_id)
+        eb = _make_entity(scope_b, source_document_id=doc_id)
+        await _repo(scope_a, sqlite_session).save_entity(scope_a, ea)
+        await _repo(scope_b, sqlite_session).save_entity(scope_b, eb)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await _repo(scope_a, sqlite_session).list_entities_for_document(scope_a, doc_id)
+
+        assert len(results) == 1
+        assert results[0].id == ea.id
+
+
+# ---------------------------------------------------------------------------
+# find_entity_by_name
+# ---------------------------------------------------------------------------
+
+
+class TestFindEntityByName:
+    async def test_returns_entity_when_found(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        entity = _make_entity(scope, name="Newton's Second Law")
+        await _repo(scope, sqlite_session).save_entity(scope, entity)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        result = await _repo(scope, sqlite_session).find_entity_by_name(
+            scope, "Newton's Second Law"
+        )
+
+        assert result is not None
+        assert result.id == entity.id
+
+    async def test_returns_none_when_absent(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        result = await _repo(scope, sqlite_session).find_entity_by_name(scope, "Nonexistent")
+        assert result is None
+
+    async def test_name_match_is_exact(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        entity = _make_entity(scope, name="Momentum")
+        await _repo(scope, sqlite_session).save_entity(scope, entity)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        result = await _repo(scope, sqlite_session).find_entity_by_name(scope, "momentum")
+
+        assert result is None
+
+    async def test_scoped_to_user(self, sqlite_session: AsyncSession) -> None:
+        scope_a = _make_scope()
+        scope_b = _make_scope()
+        await _save_kb(scope_a, sqlite_session)
+        await _save_kb(scope_b, sqlite_session)
+        ea = _make_entity(scope_a, name="Entropy")
+        await _repo(scope_a, sqlite_session).save_entity(scope_a, ea)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        result = await _repo(scope_b, sqlite_session).find_entity_by_name(scope_b, "Entropy")
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# list_relationships_for_entities
+# ---------------------------------------------------------------------------
+
+
+class TestListRelationshipsForEntities:
+    async def test_returns_empty_for_empty_ids(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        results = await _repo(scope, sqlite_session).list_relationships_for_entities(
+            scope, frozenset()
+        )
+        assert results == []
+
+    async def test_returns_outgoing_relationships(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        src = _make_entity(scope, name="A")
+        tgt = _make_entity(scope, name="B")
+        await repo.save_entities(scope, [src, tgt])
+        rel = _make_relationship(scope, src.id, tgt.id)
+        await repo.save_relationship(scope, rel)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await repo.list_relationships_for_entities(scope, frozenset([src.id]))
+
+        assert len(results) == 1
+        assert results[0].id == rel.id
+
+    async def test_returns_incoming_relationships(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        src = _make_entity(scope, name="A")
+        tgt = _make_entity(scope, name="B")
+        await repo.save_entities(scope, [src, tgt])
+        rel = _make_relationship(scope, src.id, tgt.id)
+        await repo.save_relationship(scope, rel)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await repo.list_relationships_for_entities(scope, frozenset([tgt.id]))
+
+        assert len(results) == 1
+        assert results[0].id == rel.id
+
+    async def test_excludes_unrelated_relationships(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        a = _make_entity(scope, name="A")
+        b = _make_entity(scope, name="B")
+        c = _make_entity(scope, name="C")
+        await repo.save_entities(scope, [a, b, c])
+        rel_ab = _make_relationship(scope, a.id, b.id)
+        rel_bc = _make_relationship(scope, b.id, c.id)
+        await repo.save_relationships(scope, [rel_ab, rel_bc])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        # Only A is seeded — rel_ab is touching A, rel_bc is not
+        results = await repo.list_relationships_for_entities(scope, frozenset([a.id]))
+
+        ids = {r.id for r in results}
+        assert rel_ab.id in ids
+        assert rel_bc.id not in ids
+
+    async def test_does_not_duplicate_when_both_endpoints_are_seeds(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        a = _make_entity(scope, name="A")
+        b = _make_entity(scope, name="B")
+        await repo.save_entities(scope, [a, b])
+        rel = _make_relationship(scope, a.id, b.id)
+        await repo.save_relationship(scope, rel)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        # Both endpoints in seed set — relationship should appear exactly once
+        results = await repo.list_relationships_for_entities(
+            scope, frozenset([a.id, b.id])
+        )
+
+        assert len(results) == 1
+
+    async def test_scoped_to_user(self, sqlite_session: AsyncSession) -> None:
+        scope_a = _make_scope()
+        scope_b = _make_scope()
+        await _save_kb(scope_a, sqlite_session)
+        await _save_kb(scope_b, sqlite_session)
+        ea1 = _make_entity(scope_a, name="A1")
+        ea2 = _make_entity(scope_a, name="A2")
+        eb1 = _make_entity(scope_b, name="B1")
+        eb2 = _make_entity(scope_b, name="B2")
+        await _repo(scope_a, sqlite_session).save_entities(scope_a, [ea1, ea2])
+        await _repo(scope_b, sqlite_session).save_entities(scope_b, [eb1, eb2])
+        rel_a = _make_relationship(scope_a, ea1.id, ea2.id)
+        rel_b = _make_relationship(scope_b, eb1.id, eb2.id)
+        await _repo(scope_a, sqlite_session).save_relationship(scope_a, rel_a)
+        await _repo(scope_b, sqlite_session).save_relationship(scope_b, rel_b)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        results = await _repo(scope_a, sqlite_session).list_relationships_for_entities(
+            scope_a, frozenset([ea1.id])
+        )
+
+        assert len(results) == 1
+        assert results[0].id == rel_a.id
+
+
+# ---------------------------------------------------------------------------
+# concept_map_subgraph
+# ---------------------------------------------------------------------------
+
+
+class TestConceptMapSubgraph:
+    async def test_returns_empty_for_empty_seeds(self, sqlite_session: AsyncSession) -> None:
+        scope = _make_scope()
+        entities, rels = await _repo(scope, sqlite_session).concept_map_subgraph(
+            scope, frozenset(), max_nodes=50
+        )
+        assert entities == []
+        assert rels == []
+
+    async def test_returns_seeds_and_one_hop_neighbours(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        seed = _make_entity(scope, name="Seed")
+        neighbour = _make_entity(scope, name="Neighbour")
+        unrelated = _make_entity(scope, name="Unrelated")
+        await repo.save_entities(scope, [seed, neighbour, unrelated])
+        rel = _make_relationship(scope, seed.id, neighbour.id)
+        await repo.save_relationship(scope, rel)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        entities, rels = await repo.concept_map_subgraph(
+            scope, frozenset([seed.id]), max_nodes=50
+        )
+
+        entity_ids = {e.id for e in entities}
+        assert seed.id in entity_ids
+        assert neighbour.id in entity_ids
+        assert unrelated.id not in entity_ids
+        assert len(rels) == 1
+        assert rels[0].id == rel.id
+
+    async def test_caps_to_max_nodes_preserving_seeds(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        seed = _make_entity(scope, name="Seed")
+        neighbours = [_make_entity(scope, name=f"N{i}") for i in range(5)]
+        await repo.save_entities(scope, [seed, *neighbours])
+        rels = [_make_relationship(scope, seed.id, n.id) for n in neighbours]
+        await repo.save_relationships(scope, rels)
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        entities, _ = await repo.concept_map_subgraph(
+            scope, frozenset([seed.id]), max_nodes=3
+        )
+
+        # Total nodes capped at 3; seed is always present
+        assert len(entities) == 3
+        assert any(e.id == seed.id for e in entities)
+
+    async def test_excludes_relationships_outside_cap(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        seed = _make_entity(scope, name="Seed")
+        n1 = _make_entity(scope, name="N1")
+        n2 = _make_entity(scope, name="N2")
+        await repo.save_entities(scope, [seed, n1, n2])
+        rel1 = _make_relationship(scope, seed.id, n1.id)
+        rel2 = _make_relationship(scope, seed.id, n2.id)
+        await repo.save_relationships(scope, [rel1, rel2])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        # Cap at 2: only seed + one neighbour fits; the relationship to the dropped
+        # neighbour must also be dropped.
+        entities, included_rels = await repo.concept_map_subgraph(
+            scope, frozenset([seed.id]), max_nodes=2
+        )
+
+        entity_ids = {e.id for e in entities}
+        for rel in included_rels:
+            assert rel.source_entity_id in entity_ids
+            assert rel.target_entity_id in entity_ids

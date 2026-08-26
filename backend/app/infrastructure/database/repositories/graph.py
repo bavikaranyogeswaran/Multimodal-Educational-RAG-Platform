@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
@@ -82,6 +83,117 @@ class SqlGraphRepository(ScopedRepository):
             self._scope_filter(GraphEntityModel),
         )
         await self._session.execute(stmt)
+
+    async def list_entities_for_document(
+        self, scope: ScopeContext, document_id: UUID
+    ) -> list[GraphEntity]:
+        self._require_scope(scope)
+        stmt = (
+            select(GraphEntityModel)
+            .where(
+                GraphEntityModel.source_document_id == document_id,
+                self._scope_filter(GraphEntityModel),
+            )
+            .order_by(GraphEntityModel.name)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_entity_to_entity(row) for row in rows]
+
+    async def find_entity_by_name(
+        self, scope: ScopeContext, canonical_name: str
+    ) -> GraphEntity | None:
+        self._require_scope(scope)
+        stmt = (
+            select(GraphEntityModel)
+            .where(
+                GraphEntityModel.name == canonical_name,
+                self._scope_filter(GraphEntityModel),
+            )
+            .limit(1)
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _entity_to_entity(row) if row else None
+
+    async def list_relationships_for_entities(
+        self, scope: ScopeContext, entity_ids: frozenset[UUID]
+    ) -> list[GraphRelationship]:
+        self._require_scope(scope)
+        if not entity_ids:
+            return []
+        ids = list(entity_ids)
+        stmt = (
+            select(GraphRelationshipModel)
+            .where(
+                sa.or_(
+                    GraphRelationshipModel.source_entity_id.in_(ids),
+                    GraphRelationshipModel.target_entity_id.in_(ids),
+                ),
+                self._scope_filter(GraphRelationshipModel),
+            )
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_rel_to_entity(row) for row in rows]
+
+    async def concept_map_subgraph(
+        self,
+        scope: ScopeContext,
+        seed_entity_ids: frozenset[UUID],
+        *,
+        max_nodes: int,
+    ) -> tuple[list[GraphEntity], list[GraphRelationship]]:
+        self._require_scope(scope)
+        if not seed_entity_ids:
+            return [], []
+
+        seed_ids = list(seed_entity_ids)
+
+        # One-hop expansion: all relationships touching any seed.
+        rel_stmt = (
+            select(GraphRelationshipModel)
+            .where(
+                sa.or_(
+                    GraphRelationshipModel.source_entity_id.in_(seed_ids),
+                    GraphRelationshipModel.target_entity_id.in_(seed_ids),
+                ),
+                self._scope_filter(GraphRelationshipModel),
+            )
+        )
+        rel_rows = (await self._session.execute(rel_stmt)).scalars().all()
+        relationships = [_rel_to_entity(row) for row in rel_rows]
+
+        # Collect all entity IDs: seeds + every endpoint in the relationships.
+        all_ids: set[UUID] = set(seed_entity_ids)
+        for rel in relationships:
+            all_ids.add(rel.source_entity_id)
+            all_ids.add(rel.target_entity_id)
+
+        # Cap to max_nodes; seeds are always kept, neighbours fill remaining slots.
+        if len(all_ids) <= max_nodes:
+            capped = list(all_ids)
+        else:
+            non_seeds = [eid for eid in all_ids if eid not in seed_entity_ids]
+            capped = seed_ids + non_seeds[: max_nodes - len(seed_ids)]
+
+        capped_set = frozenset(capped)
+
+        # Load full entity objects for the capped set.
+        entity_stmt = (
+            select(GraphEntityModel)
+            .where(
+                GraphEntityModel.id.in_(list(capped_set)),
+                self._scope_filter(GraphEntityModel),
+            )
+        )
+        entity_rows = (await self._session.execute(entity_stmt)).scalars().all()
+        entities = [_entity_to_entity(row) for row in entity_rows]
+
+        # Trim relationships to those whose both endpoints survived the cap.
+        included_rels = [
+            rel for rel in relationships
+            if rel.source_entity_id in capped_set and rel.target_entity_id in capped_set
+        ]
+
+        return entities, included_rels
 
 
 def _utc(dt: datetime) -> datetime:

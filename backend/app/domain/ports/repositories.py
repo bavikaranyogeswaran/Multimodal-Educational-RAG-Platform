@@ -339,6 +339,39 @@ class GraphRepository(Protocol):
         """Remove all entities and relationships extracted from this document."""
         ...
 
+    async def list_entities_for_document(
+        self, scope: ScopeContext, document_id: UUID
+    ) -> Sequence[GraphEntity]:
+        """All entities whose source_document_id matches, ordered by name."""
+        ...
+
+    async def find_entity_by_name(
+        self, scope: ScopeContext, canonical_name: str
+    ) -> GraphEntity | None:
+        """First entity with this exact canonical name within scope, or None."""
+        ...
+
+    async def list_relationships_for_entities(
+        self, scope: ScopeContext, entity_ids: frozenset[UUID]
+    ) -> Sequence[GraphRelationship]:
+        """All relationships where either endpoint is in entity_ids."""
+        ...
+
+    async def concept_map_subgraph(
+        self,
+        scope: ScopeContext,
+        seed_entity_ids: frozenset[UUID],
+        *,
+        max_nodes: int,
+    ) -> tuple[Sequence[GraphEntity], Sequence[GraphRelationship]]:
+        """One-hop induced subgraph around the seeds, capped at max_nodes nodes.
+
+        Seed entities are always included; neighbour entities fill the remaining
+        slots up to max_nodes. Only relationships whose both endpoints survived
+        the cap are returned.
+        """
+        ...
+
 
 class JobRepository(Protocol):
     """Persistence for ProcessingJobs.
