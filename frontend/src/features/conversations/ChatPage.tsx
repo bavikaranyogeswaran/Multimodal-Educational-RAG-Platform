@@ -6,7 +6,7 @@ import { parseCitations } from '@/features/conversations/citationUtils';
 import { useMessages, useStreamMessage } from '@/features/conversations/hooks';
 import styles from '@/features/conversations/conversations.module.css';
 import { useDocumentUrl } from '@/features/documents/hooks';
-import type { Citation } from '@/schemas/conversation';
+import type { BoundingBox, Citation } from '@/schemas/conversation';
 import type { MessageStatus } from '@/schemas/enums';
 
 // The PDF viewer is large; split it into its own chunk so the main bundle stays lean.
@@ -20,9 +20,11 @@ const STATUS_FAILED: MessageStatus[] = ['FAILED', 'CANCELLED'];
 function MessageWithCitations({
   content,
   citations,
+  onCite,
 }: {
   content: string;
   citations: Citation[];
+  onCite?: (citation: Citation) => void;
 }) {
   const citationByLabel = new Map(citations.map((c) => [c.label, c]));
   const parts = parseCitations(content);
@@ -32,17 +34,29 @@ function MessageWithCitations({
         i % 2 === 0 ? (
           <span key={i}>{part}</span>
         ) : (
-          // Clicking is a no-op here; navigation to the source is wired in step 19.5.
           <sup
             key={i}
             className={styles.citationChip}
             data-label={part}
             aria-label={`Citation ${part}`}
+            role="button"
+            tabIndex={0}
             title={
               citationByLabel.has(part)
                 ? `Page ${String(citationByLabel.get(part)!.page_number)}`
                 : part
             }
+            onClick={() => {
+              const cit = citationByLabel.get(part);
+              if (cit && onCite) onCite(cit);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                const cit = citationByLabel.get(part);
+                if (cit && onCite) onCite(cit);
+              }
+            }}
           >
             [{part}]
           </sup>
@@ -70,12 +84,17 @@ export function ChatPage() {
   const { data: messages, isLoading } = useMessages(kbId ?? '', convId ?? '');
   const { send, stop, tokens, isStreaming, streamError } = useStreamMessage(kbId ?? '', convId ?? '');
 
-  // PDF panel is open by default when the conversation has an active document.
+  // Which document is currently shown in the panel. Starts as the conversation's active document
+  // (from router state) and updates whenever the student clicks a citation chip.
+  const [panelDocumentId, setPanelDocumentId] = useState<string | null>(activeDocumentId);
   const [panelOpen, setPanelOpen] = useState(!!activeDocumentId);
+  // The page and bounding box of the last-clicked citation chip.
+  const [targetPage, setTargetPage] = useState<number | null>(null);
+  const [activeBbox, setActiveBbox] = useState<BoundingBox | null>(null);
 
   const { data: docUrl } = useDocumentUrl(
     kbId ?? '',
-    panelOpen ? activeDocumentId : null,
+    panelOpen ? panelDocumentId : null,
   );
 
   const [query, setQuery] = useState('');
@@ -85,6 +104,19 @@ export function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView?.({ behavior: 'smooth' });
   }, [messages, tokens]);
+
+  function handleCite(cit: Citation) {
+    setPanelDocumentId(cit.document_id);
+    setPanelOpen(true);
+    setTargetPage(cit.page_number);
+    setActiveBbox(cit.bounding_box ?? null);
+  }
+
+  function handleClosePanel() {
+    setPanelOpen(false);
+    setTargetPage(null);
+    setActiveBbox(null);
+  }
 
   async function handleSend(e: FormEvent) {
     e.preventDefault();
@@ -134,7 +166,12 @@ export function ChatPage() {
             <button
               type="button"
               className={styles.pdfToggleBtn}
-              onClick={() => setPanelOpen(true)}
+              onClick={() => {
+                setPanelDocumentId(activeDocumentId);
+                setPanelOpen(true);
+                setTargetPage(null);
+                setActiveBbox(null);
+              }}
             >
               View PDF
             </button>
@@ -179,7 +216,11 @@ export function ChatPage() {
             return (
               <div key={msg.id} className={styles.assistantMsg}>
                 {msg.status === 'COMPLETED' ? (
-                  <MessageWithCitations content={msg.content} citations={msg.citations ?? []} />
+                  <MessageWithCitations
+                    content={msg.content}
+                    citations={msg.citations ?? []}
+                    onCite={handleCite}
+                  />
                 ) : (
                   msg.content
                 )}
@@ -234,7 +275,7 @@ export function ChatPage() {
       </div>
 
       {/* ── PDF panel ───────────────────────────────────────────────────── */}
-      {panelOpen && activeDocumentId ? (
+      {panelOpen && panelDocumentId ? (
         <div className={styles.pdfPanel}>
           <div className={styles.pdfPanelHeader}>
             <span>Document</span>
@@ -242,14 +283,18 @@ export function ChatPage() {
               type="button"
               className={styles.pdfPanelClose}
               aria-label="Close PDF panel"
-              onClick={() => setPanelOpen(false)}
+              onClick={handleClosePanel}
             >
               ✕
             </button>
           </div>
           {docUrl ? (
             <Suspense fallback={<div className={styles.loading}>Loading viewer…</div>}>
-              <PdfViewer url={docUrl.url} />
+              <PdfViewer
+                url={docUrl.url}
+                targetPage={targetPage ?? undefined}
+                overlay={activeBbox}
+              />
             </Suspense>
           ) : (
             <div className={styles.loading}>Fetching document…</div>

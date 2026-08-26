@@ -20,12 +20,23 @@ const MIN_SCALE = 0.5;
 const MAX_SCALE = 3.0;
 const SCALE_STEP = 0.25;
 
+interface BoundingBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 interface PdfViewerProps {
   /** Presigned URL from the backend — must be fetched before rendering. */
   url: string;
+  /** When changed, jump to this 1-indexed page. The user can navigate freely afterwards. */
+  targetPage?: number;
+  /** Bounding box in PDF-point coordinates (origin at page bottom-left) to highlight. */
+  overlay?: BoundingBox | null;
 }
 
-export function PdfViewer({ url }: PdfViewerProps) {
+export function PdfViewer({ url, targetPage, overlay }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
@@ -35,6 +46,8 @@ export function PdfViewer({ url }: PdfViewerProps) {
   const [totalPages, setTotalPages] = useState(0);
   const [scale, setScale] = useState(1.0);
   const [isLoading, setIsLoading] = useState(true);
+  // Height of the current page at scale=1 (PDF points), used to flip the y-axis for the overlay.
+  const [basePageHeight, setBasePageHeight] = useState(0);
 
   // Load the PDF document whenever the URL changes.
   useEffect(() => {
@@ -58,6 +71,15 @@ export function PdfViewer({ url }: PdfViewerProps) {
     };
   }, [url]);
 
+  // Jump to the externally requested page whenever it changes (e.g. citation chip click).
+  // Also fires when totalPages becomes non-zero so a targetPage that arrived before the
+  // document finished loading still takes effect.
+  useEffect(() => {
+    if (targetPage != null && totalPages > 0 && targetPage >= 1 && targetPage <= totalPages) {
+      setCurrentPage(targetPage);
+    }
+  }, [targetPage, totalPages]);
+
   // Re-render the current page whenever pdfDoc, currentPage, or scale changes.
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current || isLoading) return;
@@ -72,12 +94,16 @@ export function PdfViewer({ url }: PdfViewerProps) {
         if (cancelled || !canvasRef.current) return;
 
         const viewport = page.getViewport({ scale });
+        // Store the unscaled height so the overlay can convert PDF y-coordinates to CSS pixels.
+        const baseViewport = page.getViewport({ scale: 1.0 });
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+
+        if (!cancelled) setBasePageHeight(baseViewport.height);
 
         const renderTask = page.render({ canvasContext: ctx, viewport });
         renderTaskRef.current = renderTask;
@@ -195,6 +221,18 @@ export function PdfViewer({ url }: PdfViewerProps) {
         <div className={styles.pdfCanvasWrapper}>
           <canvas ref={canvasRef} aria-label={`PDF page ${currentPage} of ${totalPages}`} />
           <div ref={textLayerRef} className={styles.textLayer} aria-hidden="true" />
+          {overlay && basePageHeight > 0 ? (
+            <div
+              className={styles.citationOverlay}
+              style={{
+                // PDF x-axis matches canvas; y-axis is flipped (PDF origin at bottom-left).
+                left: overlay.x0 * scale,
+                top: (basePageHeight - overlay.y1) * scale,
+                width: (overlay.x1 - overlay.x0) * scale,
+                height: (overlay.y1 - overlay.y0) * scale,
+              }}
+            />
+          ) : null}
         </div>
       </div>
     </div>

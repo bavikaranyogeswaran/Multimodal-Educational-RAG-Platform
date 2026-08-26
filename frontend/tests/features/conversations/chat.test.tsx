@@ -4,6 +4,24 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
+// Replace the lazy-loaded PDF viewer with a lightweight stub so chat tests
+// don't pull in pdfjs-dist or its canvas requirements.
+vi.mock('@/features/documents/PdfViewer', () => ({
+  PdfViewer: ({
+    url,
+    targetPage,
+  }: {
+    url: string;
+    targetPage?: number;
+  }) => (
+    <div
+      data-testid="pdf-viewer"
+      data-url={url}
+      data-page={targetPage ?? ''}
+    />
+  ),
+}));
+
 import { SessionProvider } from '@/features/authentication/SessionProvider';
 import { ConversationContext } from '@/features/conversations/gatewayContext';
 import { ChatPage } from '@/features/conversations/ChatPage';
@@ -134,9 +152,9 @@ describe('Chat page', () => {
         ],
       }),
     ]);
-    // The markers should be replaced by chip elements, not rendered as raw text.
-    expect(await screen.findByRole('superscript', { name: /Citation S1/i })).toBeInTheDocument();
-    expect(screen.getByRole('superscript', { name: /Citation S2/i })).toBeInTheDocument();
+    // The markers should be replaced by chip buttons, not rendered as raw text.
+    expect(await screen.findByRole('button', { name: /Citation S1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Citation S2/i })).toBeInTheDocument();
     // The surrounding plain text should still be present.
     expect(screen.getByText(/Gradient descent/)).toBeInTheDocument();
     expect(screen.getByText(/minimises loss/)).toBeInTheDocument();
@@ -237,5 +255,88 @@ describe('Chat page', () => {
     await waitFor(() => {
       expect(screen.getByText('test response')).toBeInTheDocument();
     });
+  });
+
+  it('clicking a citation chip opens the PDF viewer panel', async () => {
+    renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'See gradient descent [S1] in the notes.',
+        citations: [
+          {
+            label: 'S1',
+            document_id: '00000000-0000-4000-8000-000000000001',
+            page_number: 5,
+            chunk_type: 'text',
+          },
+        ],
+      }),
+    ]);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Citation S1/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-viewer')).toBeInTheDocument();
+    });
+  });
+
+  it('clicking a citation chip navigates the viewer to the cited page', async () => {
+    renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'See [S1].',
+        citations: [
+          {
+            label: 'S1',
+            document_id: '00000000-0000-4000-8000-000000000001',
+            page_number: 7,
+            chunk_type: 'text',
+          },
+        ],
+      }),
+    ]);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Citation S1/i }));
+
+    const viewer = await screen.findByTestId('pdf-viewer');
+    expect(viewer).toHaveAttribute('data-page', '7');
+  });
+
+  it('clicking a second chip updates the target page', async () => {
+    renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'First [S1] then [S2].',
+        citations: [
+          {
+            label: 'S1',
+            document_id: '00000000-0000-4000-8000-000000000001',
+            page_number: 3,
+            chunk_type: 'text',
+          },
+          {
+            label: 'S2',
+            document_id: '00000000-0000-4000-8000-000000000001',
+            page_number: 9,
+            chunk_type: 'text',
+          },
+        ],
+      }),
+    ]);
+
+    // Click the first chip — viewer opens at page 3.
+    await userEvent.click(await screen.findByRole('button', { name: /Citation S1/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId('pdf-viewer')).toHaveAttribute('data-page', '3'),
+    );
+
+    // Click the second chip — viewer updates to page 9.
+    await userEvent.click(screen.getByRole('button', { name: /Citation S2/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId('pdf-viewer')).toHaveAttribute('data-page', '9'),
+    );
   });
 });

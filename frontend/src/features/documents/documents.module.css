@@ -363,3 +363,13 @@
   cursor: text;
   transform-origin: 0 0;
 }
+
+/* Highlight overlay drawn over the PDF canvas at the coordinates of a cited passage. */
+.citationOverlay {
+  position: absolute;
+  pointer-events: none;
+  background: var(--color-accent-soft);
+  border: 2px solid var(--color-accent);
+  border-radius: 2px;
+  opacity: 0.55;
+}

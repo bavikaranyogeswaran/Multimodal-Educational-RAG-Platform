@@ -536,8 +536,12 @@
   font-weight: 600;
   line-height: 1.4;
   vertical-align: super;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
+}
+
+.citationChip:hover {
+  opacity: 0.8;
 }
 
 /* ── Answer-state banners ────────────────────────────────────────────────── */
