@@ -83,6 +83,55 @@ export class ApiClient {
     await this.#send(path, options);
   }
 
+  /**
+   * POST to a Server-Sent Events endpoint and yield each data token until [DONE].
+   *
+   * The SSE wire format used here is:
+   *   `data: <token>\n\n`  — one content fragment
+   *   `event: error\ndata: <message>\n\n`  — terminal error, thrown as ApiError
+   *   `data: [DONE]\n\n`  — clean end of stream
+   *
+   * The caller controls cancellation through `options.signal`.
+   */
+  async *stream(path: string, options: RequestOptions = {}): AsyncGenerator<string> {
+    const response = await this.#send(path, { method: 'POST', ...options });
+    const body = response.body;
+    if (!body) {
+      throw new NetworkError(path, new Error('no response body'));
+    }
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const chunk of parts) {
+          const trimmed = chunk.trim();
+          if (trimmed.startsWith('event: error')) {
+            const dataLine = trimmed.split('\n').find((l) => l.startsWith('data: '));
+            const detail = dataLine ? dataLine.slice(6) : 'Stream error';
+            throw new ApiError(200, detail, null);
+          }
+          if (trimmed.startsWith('data: ')) {
+            const data = trimmed.slice(6);
+            if (data === '[DONE]') break outer;
+            if (data) yield data;
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   // -----------------------------------------------------------------------
 
   async #send(path: string, options: RequestOptions): Promise<Response> {

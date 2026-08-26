@@ -6,6 +6,8 @@ import { ApiProvider } from '@/api/ApiProvider';
 import { createQueryClient } from '@/app/queryClient';
 import { SessionProvider } from '@/features/authentication/SessionProvider';
 import type { AuthGateway } from '@/features/authentication/gateway';
+import { ConversationProvider } from '@/features/conversations/ConversationProvider';
+import type { ConversationGateway } from '@/features/conversations/gateway';
 import { DocumentProvider } from '@/features/documents/DocumentProvider';
 import type { DocumentGateway } from '@/features/documents/gateway';
 import type { KnowledgeBaseGateway } from '@/features/knowledge-bases/gateway';
@@ -22,6 +24,8 @@ interface AppProvidersProps {
   kbGateway?: KnowledgeBaseGateway;
   /** When supplied, bypasses the document API gateway (for tests that do not want network calls). */
   docGateway?: DocumentGateway;
+  /** When supplied, bypasses the conversation API gateway (for tests that do not want network calls). */
+  convGateway?: ConversationGateway;
 }
 
 /**
@@ -42,6 +46,7 @@ export function AppProviders({
   router,
   kbGateway,
   docGateway,
+  convGateway,
 }: AppProvidersProps) {
   const [queryClient] = useState(createQueryClient);
   const wrap = router ?? ((inner: ReactNode) => <BrowserRouter>{inner}</BrowserRouter>);
@@ -52,7 +57,11 @@ export function AppProviders({
         <ApiProvider auth={auth} baseUrl={apiBaseUrl}>
           <KnowledgeBaseProvider {...(kbGateway !== undefined ? { gateway: kbGateway } : {})}>
             <DocumentProvider {...(docGateway !== undefined ? { gateway: docGateway } : {})}>
-              {wrap(children)}
+              <ConversationProvider
+                {...(convGateway !== undefined ? { gateway: convGateway } : {})}
+              >
+                {wrap(children)}
+              </ConversationProvider>
             </DocumentProvider>
           </KnowledgeBaseProvider>
         </ApiProvider>

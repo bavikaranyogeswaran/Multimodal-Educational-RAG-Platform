@@ -3,6 +3,8 @@ import { Route, Routes } from 'react-router';
 import { RequireAuth } from '@/features/authentication/RequireAuth';
 import { SignInPage } from '@/features/authentication/SignInPage';
 import { SignUpPage } from '@/features/authentication/SignUpPage';
+import { ChatPage } from '@/features/conversations/ChatPage';
+import { ConversationListPage } from '@/features/conversations/ConversationListPage';
 import { DocumentListPage } from '@/features/documents/DocumentListPage';
 import { KnowledgeBaseListPage } from '@/features/knowledge-bases/KnowledgeBaseListPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
@@ -33,6 +35,22 @@ export function App() {
         element={
           <RequireAuth>
             <DocumentListPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/knowledge-bases/:kbId/conversations"
+        element={
+          <RequireAuth>
+            <ConversationListPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/knowledge-bases/:kbId/conversations/:convId"
+        element={
+          <RequireAuth>
+            <ChatPage />
           </RequireAuth>
         }
       />

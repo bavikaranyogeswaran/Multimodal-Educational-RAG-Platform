@@ -1,6 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 
+
 import { useSession } from '@/features/authentication/sessionContext';
 import { useDeleteDocument, useDocuments, useUploadDocument } from '@/features/documents/hooks';
 import styles from '@/features/documents/documents.module.css';
@@ -83,6 +84,13 @@ export function DocumentListPage() {
 
         <div className={styles.toolbar}>
           <h2 className={styles.pageTitle}>Documents</h2>
+          <Link
+            className={styles.convsLink}
+            to={`/knowledge-bases/${kbId ?? ''}/conversations`}
+            state={{ kbName }}
+          >
+            Conversations
+          </Link>
           <label className={styles.uploadLabel} htmlFor="doc-upload">
             {uploadMutation.isPending ? 'Uploading…' : 'Upload PDF'}
             <input
