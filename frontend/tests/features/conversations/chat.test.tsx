@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SessionProvider } from '@/features/authentication/SessionProvider';
 import { ConversationContext } from '@/features/conversations/gatewayContext';
@@ -88,7 +88,7 @@ describe('Chat page', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => {
-      expect(gateway.stream).toHaveBeenCalledWith(KB_ID, CONV_ID, 'Explain softmax');
+      expect(gateway.stream).toHaveBeenCalledWith(KB_ID, CONV_ID, 'Explain softmax', expect.any(AbortSignal));
     });
   });
 
@@ -135,6 +135,88 @@ describe('Chat page', () => {
     // The surrounding plain text should still be present.
     expect(screen.getByText(/Gradient descent/)).toBeInTheDocument();
     expect(screen.getByText(/minimises loss/)).toBeInTheDocument();
+  });
+
+  it('shows a Stop button while streaming and re-enables Send after stopping', async () => {
+    // A stream that stalls indefinitely — aborts when the signal fires.
+    const { gateway } = renderChat();
+    gateway.stream = vi.fn(
+      (_kbId: string, _convId: string, _query: string, signal?: AbortSignal) =>
+        (async function* () {
+          yield 'partial ';
+          await new Promise<void>((_, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          });
+        })(),
+    );
+
+    await userEvent.type(screen.getByLabelText('Your question'), 'test question');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    // Stop button appears while the stream is open.
+    await screen.findByRole('button', { name: 'Stop' });
+
+    // Clicking Stop should abort the stream and restore the Send button.
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+    });
+  });
+
+  it('does not show a stream error when the stream is stopped deliberately', async () => {
+    const { gateway } = renderChat();
+    gateway.stream = vi.fn(
+      (_kbId: string, _convId: string, _query: string, signal?: AbortSignal) =>
+        (async function* () {
+          await new Promise<void>((_, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          });
+        })(),
+    );
+
+    await userEvent.type(screen.getByLabelText('Your question'), 'test question');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Stop' });
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    });
+    // No error, no Retry button.
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('shows a Retry button on stream failure and resends the original query', async () => {
+    const { gateway } = renderChat();
+    gateway.stream = vi.fn(
+      () =>
+        (async function* (): AsyncGenerator<string> {
+          throw new Error('connection reset');
+        })(),
+    );
+
+    await userEvent.type(screen.getByLabelText('Your question'), 'Explain backprop');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    // A Retry button appears after the failure.
+    const retryBtn = await screen.findByRole('button', { name: 'Retry' });
+
+    // Clicking Retry calls stream again with the same query that failed.
+    await userEvent.click(retryBtn);
+    await waitFor(() => {
+      expect(gateway.stream).toHaveBeenCalledTimes(2);
+      expect(gateway.stream).toHaveBeenLastCalledWith(
+        KB_ID,
+        CONV_ID,
+        'Explain backprop',
+        expect.any(AbortSignal),
+      );
+    });
   });
 
   it('shows the response in history after the stream completes', async () => {

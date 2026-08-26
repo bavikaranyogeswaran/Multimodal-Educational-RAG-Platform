@@ -43,9 +43,9 @@ export class ApiConversationGateway implements ConversationGateway {
       `/knowledge-bases/${kbId}/conversations/${convId}/messages`,
     );
 
-  stream = (kbId: string, convId: string, query: string): AsyncIterable<string> =>
+  stream = (kbId: string, convId: string, query: string, signal?: AbortSignal): AsyncIterable<string> =>
     this.#client.stream(
       `/knowledge-bases/${kbId}/conversations/${convId}/stream`,
-      { body: { query } },
+      { body: { query }, signal },
     );
 }

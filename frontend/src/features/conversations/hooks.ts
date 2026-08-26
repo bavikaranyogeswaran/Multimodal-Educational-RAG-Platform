@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useConversationGateway } from '@/features/conversations/gatewayContext';
@@ -57,26 +57,42 @@ export function useStreamMessage(kbId: string, convId: string) {
   const [tokens, setTokens] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  // One controller per in-flight stream; null when idle.
+  const controllerRef = useRef<AbortController | null>(null);
 
   const send = useCallback(
     async (query: string) => {
+      const controller = new AbortController();
+      controllerRef.current = controller;
       setIsStreaming(true);
       setTokens('');
       setStreamError(null);
       try {
-        for await (const token of gateway.stream(kbId, convId, query)) {
+        for await (const token of gateway.stream(kbId, convId, query, controller.signal)) {
           setTokens((prev) => prev + token);
         }
+        // Stream ended cleanly — fetch the final recorded message.
         void queryClient.invalidateQueries({ queryKey: msgListKey(kbId, convId) });
       } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          // User stopped the stream deliberately — not an error. Still invalidate so the
+          // CANCELLED message status is reflected without a manual refresh.
+          void queryClient.invalidateQueries({ queryKey: msgListKey(kbId, convId) });
+          return;
+        }
         setStreamError(e instanceof Error ? e.message : 'Request failed.');
       } finally {
         setIsStreaming(false);
         setTokens('');
+        controllerRef.current = null;
       }
     },
     [gateway, kbId, convId, queryClient],
   );
 
-  return { send, tokens, isStreaming, streamError };
+  const stop = useCallback(() => {
+    controllerRef.current?.abort();
+  }, []);
+
+  return { send, stop, tokens, isStreaming, streamError };
 }

@@ -60,10 +60,12 @@ export function ChatPage() {
   const email = state.status === 'signed-in' ? state.session.email : null;
 
   const { data: messages, isLoading } = useMessages(kbId ?? '', convId ?? '');
-  const { send, tokens, isStreaming, streamError } = useStreamMessage(kbId ?? '', convId ?? '');
+  const { send, stop, tokens, isStreaming, streamError } = useStreamMessage(kbId ?? '', convId ?? '');
 
   const [query, setQuery] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Kept as a ref so retrying never causes the textarea to flash with the previous query.
+  const lastQueryRef = useRef<string>('');
 
   // Scroll to bottom whenever messages or streaming tokens change.
   useEffect(() => {
@@ -74,6 +76,7 @@ export function ChatPage() {
     e.preventDefault();
     const trimmed = query.trim();
     if (!trimmed || isStreaming) return;
+    lastQueryRef.current = trimmed;
     setQuery('');
     await send(trimmed);
   }
@@ -175,7 +178,14 @@ export function ChatPage() {
 
         {streamError ? (
           <div className={styles.streamError} role="alert">
-            {streamError}
+            <span>{streamError}</span>
+            <button
+              type="button"
+              className={styles.retryButton}
+              onClick={() => void send(lastQueryRef.current)}
+            >
+              Retry
+            </button>
           </div>
         ) : null}
 
@@ -193,9 +203,15 @@ export function ChatPage() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button className={styles.sendButton} type="submit" disabled={isStreaming || !query.trim()}>
-          {isStreaming ? 'Answering…' : 'Send'}
-        </button>
+        {isStreaming ? (
+          <button className={styles.stopButton} type="button" onClick={stop}>
+            Stop
+          </button>
+        ) : (
+          <button className={styles.sendButton} type="submit" disabled={!query.trim()}>
+            Send
+          </button>
+        )}
       </form>
     </div>
   );

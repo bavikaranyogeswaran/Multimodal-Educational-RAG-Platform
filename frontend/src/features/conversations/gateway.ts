@@ -10,5 +10,5 @@ export interface ConversationGateway {
   rename: (kbId: string, convId: string, title: string) => Promise<Conversation>;
   remove: (kbId: string, convId: string) => Promise<void>;
   listMessages: (kbId: string, convId: string) => Promise<readonly Message[]>;
-  stream: (kbId: string, convId: string, query: string) => AsyncIterable<string>;
+  stream: (kbId: string, convId: string, query: string, signal?: AbortSignal) => AsyncIterable<string>;
 }

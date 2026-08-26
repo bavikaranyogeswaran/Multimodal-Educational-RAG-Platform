@@ -362,6 +362,9 @@
 
 .streamError {
   align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   background: var(--color-conflict-soft);
   border-radius: var(--radius-sm);
@@ -414,6 +417,41 @@
 .sendButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Replaces Send while a response is streaming. */
+.stopButton {
+  align-self: flex-end;
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  color: var(--color-conflict);
+  border: 1px solid var(--color-conflict);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.stopButton:hover {
+  background: var(--color-conflict-soft);
+}
+
+/* Inline button inside the stream-error banner. */
+.retryButton {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-3);
+  background: transparent;
+  border: 1px solid var(--color-conflict);
+  border-radius: var(--radius-sm);
+  color: var(--color-conflict);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.retryButton:hover {
+  background: var(--color-conflict-soft);
 }
 
 .bottomAnchor {

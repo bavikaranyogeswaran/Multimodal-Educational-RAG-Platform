@@ -93,7 +93,7 @@ export function createFakeConversationGateway(
     ),
 
     stream: vi.fn(
-      (_kbId: string, _convId: string, query: string): AsyncIterable<string> =>
+      (_kbId: string, _convId: string, query: string, _signal?: AbortSignal): AsyncIterable<string> =>
         (async function* () {
           yield 'test ';
           yield 'response';

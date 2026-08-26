@@ -106,6 +106,9 @@ export class ApiClient {
 
     try {
       outer: while (true) {
+        // Check the abort signal before each read so a stop() issued between tokens
+        // exits cleanly rather than waiting for the next network chunk to arrive.
+        if (options.signal?.aborted) return;
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -128,7 +131,10 @@ export class ApiClient {
         }
       }
     } finally {
-      reader.releaseLock();
+      // cancel() signals disinterest in the remaining body and releases the lock.
+      // Errors here are suppressed: they fire when the stream was already closed or
+      // the reader lock was already released by a prior cancel() call.
+      reader.cancel().catch(() => {});
     }
   }
 
