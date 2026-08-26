@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { App } from '@/app/App';
 import { AppProviders } from '@/app/AppProviders';
 import { aSession, createFakeAuth, type FakeAuth } from '../fixtures/fakeAuth';
+import { createFakeKbGateway } from '../fixtures/fakeKbGateway';
 
 /**
  * The whole tree, mounted the way the application mounts it.
@@ -22,6 +23,7 @@ function mount(auth: FakeAuth, route = '/') {
     <AppProviders
       auth={auth}
       apiBaseUrl=""
+      kbGateway={createFakeKbGateway()}
       router={(children: ReactNode) => (
         <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
       )}

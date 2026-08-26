@@ -6,6 +6,8 @@ import { ApiProvider } from '@/api/ApiProvider';
 import { createQueryClient } from '@/app/queryClient';
 import { SessionProvider } from '@/features/authentication/SessionProvider';
 import type { AuthGateway } from '@/features/authentication/gateway';
+import type { KnowledgeBaseGateway } from '@/features/knowledge-bases/gateway';
+import { KnowledgeBaseProvider } from '@/features/knowledge-bases/KnowledgeBaseProvider';
 
 interface AppProvidersProps {
   /** Passed in rather than built here, so what a test runs against is its own. */
@@ -14,6 +16,8 @@ interface AppProvidersProps {
   children: ReactNode;
   /** Substituted in tests for a router that does not touch the address bar. */
   router?: (children: ReactNode) => ReactNode;
+  /** When supplied, bypasses the API gateway (for tests that do not want network calls). */
+  kbGateway?: KnowledgeBaseGateway;
 }
 
 /**
@@ -27,7 +31,13 @@ interface AppProvidersProps {
  * — otherwise tests would share cache across cases, and the first test to populate the
  * cache would silently change the behaviour of every test after it.
  */
-export function AppProviders({ auth, apiBaseUrl, children, router }: AppProvidersProps) {
+export function AppProviders({
+  auth,
+  apiBaseUrl,
+  children,
+  router,
+  kbGateway,
+}: AppProvidersProps) {
   const [queryClient] = useState(createQueryClient);
   const wrap = router ?? ((inner: ReactNode) => <BrowserRouter>{inner}</BrowserRouter>);
 
@@ -35,7 +45,9 @@ export function AppProviders({ auth, apiBaseUrl, children, router }: AppProvider
     <QueryClientProvider client={queryClient}>
       <SessionProvider auth={auth}>
         <ApiProvider auth={auth} baseUrl={apiBaseUrl}>
-          {wrap(children)}
+          <KnowledgeBaseProvider {...(kbGateway !== undefined ? { gateway: kbGateway } : {})}>
+            {wrap(children)}
+          </KnowledgeBaseProvider>
         </ApiProvider>
       </SessionProvider>
     </QueryClientProvider>

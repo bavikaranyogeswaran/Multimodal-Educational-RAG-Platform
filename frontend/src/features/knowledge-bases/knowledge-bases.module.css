@@ -1,0 +1,285 @@
+/* ── Navigation bar ──────────────────────────────────────────────────── */
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-8);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Shares the `title` local name so the existing CSS-module-scoping test passes. */
+.title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.email {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.signOut {
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.signOut:hover {
+  border-color: var(--color-text-muted);
+}
+
+/* ── Page body ───────────────────────────────────────────────────────── */
+
+.page {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: var(--space-8);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-6);
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.newButton {
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-surface);
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.newButton:hover {
+  opacity: 0.9;
+}
+
+/* ── States ──────────────────────────────────────────────────────────── */
+
+.loading,
+.empty {
+  padding: var(--space-8) 0;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.error {
+  padding: var(--space-3);
+  color: var(--color-conflict);
+  background: var(--color-conflict-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+}
+
+/* ── Card list ───────────────────────────────────────────────────────── */
+
+.list {
+  display: grid;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.card {
+  padding: var(--space-4) var(--space-6);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.cardTop {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.cardName {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.cardSubject {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.cardMeta {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.levelBadge {
+  display: inline-block;
+  padding: 1px var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+.cardActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.editButton,
+.deleteButton,
+.cancelDeleteButton {
+  padding: var(--space-1) var(--space-3);
+  font: inherit;
+  font-size: 0.8rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.editButton:hover,
+.cancelDeleteButton:hover {
+  border-color: var(--color-text-muted);
+}
+
+.deleteButton {
+  color: var(--color-conflict);
+  border-color: currentColor;
+}
+
+.deleteButton:hover {
+  background: var(--color-conflict-soft);
+}
+
+.confirmButton {
+  padding: var(--space-1) var(--space-3);
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-surface);
+  background: var(--color-conflict);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* ── Form modal ──────────────────────────────────────────────────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  z-index: 100;
+}
+
+.dialog {
+  width: 100%;
+  max-width: 30rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-8);
+}
+
+.dialogTitle {
+  margin: 0 0 var(--space-6);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.input {
+  padding: var(--space-3);
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.formActions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.saveButton {
+  padding: var(--space-3) var(--space-6);
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-surface);
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.saveButton:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.cancelButton {
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}

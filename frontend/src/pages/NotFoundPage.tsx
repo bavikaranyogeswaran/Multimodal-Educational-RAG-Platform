@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 
-import styles from '@/pages/HomePage.module.css';
+import styles from '@/pages/NotFoundPage.module.css';
 
 /**
  * An address that matches nothing.

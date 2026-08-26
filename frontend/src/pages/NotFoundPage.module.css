@@ -1,0 +1,25 @@
+.shell {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: var(--space-8);
+}
+
+.card {
+  max-width: 32rem;
+  padding: var(--space-8);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.title {
+  margin: 0 0 var(--space-3);
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+}
+
+.body {
+  margin: 0 0 var(--space-4);
+  color: var(--color-text-muted);
+}

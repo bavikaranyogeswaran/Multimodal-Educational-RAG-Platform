@@ -3,7 +3,7 @@ import { Route, Routes } from 'react-router';
 import { RequireAuth } from '@/features/authentication/RequireAuth';
 import { SignInPage } from '@/features/authentication/SignInPage';
 import { SignUpPage } from '@/features/authentication/SignUpPage';
-import { HomePage } from '@/pages/HomePage';
+import { KnowledgeBaseListPage } from '@/features/knowledge-bases/KnowledgeBaseListPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
 /**
@@ -23,7 +23,7 @@ export function App() {
         path="/"
         element={
           <RequireAuth>
-            <HomePage />
+            <KnowledgeBaseListPage />
           </RequireAuth>
         }
       />
