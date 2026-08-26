@@ -150,6 +150,16 @@ class GenerationParseError(DomainError):
     """
 
 
+class DecompositionError(DomainError):
+    """The model's query decomposition output could not be parsed or validated.
+
+    Raised by QueryDecompositionPort implementations when the JSON is malformed,
+    a required field is absent, or the sub-question structure cannot be interpreted.
+    The use case catches this to surface a graceful degradation path rather than
+    propagating a raw provider failure to the student.
+    """
+
+
 class GraphExtractionError(DomainError):
     """The model's graph extraction output could not be parsed or failed validation.
 

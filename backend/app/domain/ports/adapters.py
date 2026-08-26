@@ -25,6 +25,7 @@ from uuid import UUID
 
 from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
 from app.domain.graph.entities import GraphEntity, GraphRelationship
+from app.domain.retrieval.decomposition import SubQuestion
 from app.domain.retrieval.entities import Evidence, RetrievalFilters
 from app.domain.scope import ScopeContext
 from app.domain.values import BoundingBox
@@ -377,5 +378,39 @@ class ObservabilityPort(Protocol):
 
         Used to attach a trace ID or request ID once at the start of a use case,
         so callers do not thread it through every subsequent call.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Query decomposition
+# ---------------------------------------------------------------------------
+
+
+class QueryDecompositionPort(Protocol):
+    """LLM-backed decomposition of a complex query into sub-questions.
+
+    Returns unordered candidates — topological sort and max-count enforcement
+    are the caller's responsibility via DecompositionPlan.build.
+
+    Scope enforcement: the query itself does not contain private document text,
+    so no ScopeContext is required here. The sub-questions produced will drive
+    subsequent scoped retrieval calls that enforce scope independently.
+
+    Raises DecompositionError when the model output cannot be parsed or the
+    resulting structure fails validation before it is returned.
+    """
+
+    async def decompose(
+        self,
+        query: str,
+        *,
+        max_sub_questions: int,
+    ) -> list[SubQuestion]:
+        """Break `query` into at most `max_sub_questions` sub-questions.
+
+        The returned list may be shorter when the query does not warrant full
+        decomposition. `depends_on` on each SubQuestion references other ids
+        in the same list; the caller must sort them before execution.
         """
         ...
