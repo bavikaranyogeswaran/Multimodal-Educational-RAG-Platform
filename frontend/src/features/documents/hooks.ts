@@ -35,3 +35,17 @@ export function useDeleteDocument(kbId: string) {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: listKey(kbId) }),
   });
 }
+
+const docUrlKey = (kbId: string, documentId: string) =>
+  ['document-url', kbId, documentId] as const;
+
+export function useDocumentUrl(kbId: string, documentId: string | null) {
+  const gateway = useDocumentGateway();
+  return useQuery({
+    queryKey: docUrlKey(kbId, documentId ?? ''),
+    queryFn: () => gateway.getDocumentUrl(kbId, documentId!),
+    enabled: !!documentId,
+    // Refresh 1 minute before the 5-minute presigned URL expires.
+    staleTime: 4 * 60 * 1000,
+  });
+}

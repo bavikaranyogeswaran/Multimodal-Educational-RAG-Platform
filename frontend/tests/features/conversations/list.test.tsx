@@ -8,6 +8,7 @@ import { SessionProvider } from '@/features/authentication/SessionProvider';
 import { ConversationContext } from '@/features/conversations/gatewayContext';
 import { ConversationListPage } from '@/features/conversations/ConversationListPage';
 import { ChatPage } from '@/features/conversations/ChatPage';
+import { DocumentContext } from '@/features/documents/gatewayContext';
 import type { Conversation } from '@/schemas/conversation';
 import { aSession, createFakeAuth } from '../../fixtures/fakeAuth';
 import {
@@ -15,6 +16,7 @@ import {
   createFakeConversationGateway,
   type FakeConversationGateway,
 } from '../../fixtures/fakeConversationGateway';
+import { createFakeDocGateway } from '../../fixtures/fakeDocGateway';
 
 const KB_ID = 'kb-abc-123';
 
@@ -23,26 +25,29 @@ function renderPage(
 ): { gateway: FakeConversationGateway } {
   const auth = createFakeAuth({ initial: aSession() });
   const gateway = createFakeConversationGateway(initialConvs);
+  const docGateway = createFakeDocGateway();
 
   render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
       <SessionProvider auth={auth}>
-        <ConversationContext.Provider value={gateway}>
-          <MemoryRouter initialEntries={[`/knowledge-bases/${KB_ID}/conversations`]}>
-            <Routes>
-              <Route
-                path="/knowledge-bases/:kbId/conversations"
-                element={<ConversationListPage />}
-              />
-              <Route
-                path="/knowledge-bases/:kbId/conversations/:convId"
-                element={<ChatPage />}
-              />
-            </Routes>
-          </MemoryRouter>
-        </ConversationContext.Provider>
+        <DocumentContext.Provider value={docGateway}>
+          <ConversationContext.Provider value={gateway}>
+            <MemoryRouter initialEntries={[`/knowledge-bases/${KB_ID}/conversations`]}>
+              <Routes>
+                <Route
+                  path="/knowledge-bases/:kbId/conversations"
+                  element={<ConversationListPage />}
+                />
+                <Route
+                  path="/knowledge-bases/:kbId/conversations/:convId"
+                  element={<ChatPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </ConversationContext.Provider>
+        </DocumentContext.Provider>
       </SessionProvider>
     </QueryClientProvider>,
   );

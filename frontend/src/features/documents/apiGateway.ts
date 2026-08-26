@@ -3,8 +3,10 @@ import type { DocumentGateway } from '@/features/documents/gateway';
 import {
   documentList,
   documentUpload,
+  documentUrl,
   type Document,
   type DocumentUpload,
+  type DocumentUrl,
 } from '@/schemas/document';
 
 export class ApiDocumentGateway implements DocumentGateway {
@@ -29,4 +31,10 @@ export class ApiDocumentGateway implements DocumentGateway {
     this.#client.requestNoContent(`/knowledge-bases/${kbId}/documents/${documentId}`, {
       method: 'DELETE',
     });
+
+  getDocumentUrl = (kbId: string, documentId: string): Promise<DocumentUrl> =>
+    this.#client.request(
+      documentUrl,
+      `/knowledge-bases/${kbId}/documents/${documentId}/url`,
+    );
 }

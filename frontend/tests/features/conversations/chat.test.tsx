@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SessionProvider } from '@/features/authentication/SessionProvider';
 import { ConversationContext } from '@/features/conversations/gatewayContext';
 import { ChatPage } from '@/features/conversations/ChatPage';
+import { DocumentContext } from '@/features/documents/gatewayContext';
 import type { Message } from '@/schemas/conversation';
 import { aSession, createFakeAuth } from '../../fixtures/fakeAuth';
 import {
@@ -14,6 +15,7 @@ import {
   createFakeConversationGateway,
   type FakeConversationGateway,
 } from '../../fixtures/fakeConversationGateway';
+import { createFakeDocGateway } from '../../fixtures/fakeDocGateway';
 
 const KB_ID = 'kb-abc-123';
 const CONV_ID = 'conv-def-456';
@@ -24,29 +26,32 @@ function renderChat(
 ): { gateway: FakeConversationGateway } {
   const auth = createFakeAuth({ initial: aSession() });
   const gateway = createFakeConversationGateway([], initialMessages);
+  const docGateway = createFakeDocGateway();
 
   render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
       <SessionProvider auth={auth}>
-        <ConversationContext.Provider value={gateway}>
-          <MemoryRouter
-            initialEntries={[
-              {
-                pathname: `/knowledge-bases/${KB_ID}/conversations/${CONV_ID}`,
-                state: { kbName: 'Machine Learning', convTitle },
-              },
-            ]}
-          >
-            <Routes>
-              <Route
-                path="/knowledge-bases/:kbId/conversations/:convId"
-                element={<ChatPage />}
-              />
-            </Routes>
-          </MemoryRouter>
-        </ConversationContext.Provider>
+        <DocumentContext.Provider value={docGateway}>
+          <ConversationContext.Provider value={gateway}>
+            <MemoryRouter
+              initialEntries={[
+                {
+                  pathname: `/knowledge-bases/${KB_ID}/conversations/${CONV_ID}`,
+                  state: { kbName: 'Machine Learning', convTitle },
+                },
+              ]}
+            >
+              <Routes>
+                <Route
+                  path="/knowledge-bases/:kbId/conversations/:convId"
+                  element={<ChatPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </ConversationContext.Provider>
+        </DocumentContext.Provider>
       </SessionProvider>
     </QueryClientProvider>,
   );

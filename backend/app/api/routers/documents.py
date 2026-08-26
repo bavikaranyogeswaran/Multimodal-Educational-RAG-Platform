@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import pypdf
@@ -18,6 +18,7 @@ from app.api.schemas.document import (
     DocumentResponse,
     DocumentStatusResponse,
     DocumentUploadResponse,
+    DocumentUrlResponse,
 )
 from app.application.commands.upload_document import (
     UploadDocumentCommand,
@@ -147,6 +148,28 @@ async def get_document_status(
     if doc is None:
         raise HTTPException(status_code=404, detail=_404_DOCUMENT)
     return DocumentStatusResponse.model_validate(doc)
+
+
+_URL_TTL_SECONDS = 300  # 5-minute window — long enough to load a PDF, short enough to limit exposure
+
+
+@router.get("/{document_id}/url")
+async def get_document_url(
+    document_id: uuid.UUID,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    container: Annotated[Container, Depends(get_container)],
+) -> DocumentUrlResponse:
+    doc = await SqlDocumentRepository(scope, session).get(scope, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=_404_DOCUMENT)
+    url = await container.storage.presigned_get_url(
+        doc.storage_key, expires_in=_URL_TTL_SECONDS
+    )
+    return DocumentUrlResponse(
+        url=url,
+        expires_at=datetime.now(UTC) + timedelta(seconds=_URL_TTL_SECONDS),
+    )
 
 
 @router.delete("/{document_id}", status_code=202)

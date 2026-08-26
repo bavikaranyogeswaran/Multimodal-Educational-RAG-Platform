@@ -42,7 +42,7 @@ export function ConversationListPage() {
     setFormOpen(false);
     setTitle('');
     void navigate(`/knowledge-bases/${resolvedKbId}/conversations/${conv.id}`, {
-      state: { kbName, convTitle: conv.title },
+      state: { kbName, convTitle: conv.title, activeDocumentId: conv.active_document_id ?? null },
     });
   }
 
@@ -195,7 +195,7 @@ export function ConversationListPage() {
                     <Link
                       className={styles.convCardMain}
                       to={`/knowledge-bases/${resolvedKbId}/conversations/${conv.id}`}
-                      state={{ kbName, convTitle: conv.title }}
+                      state={{ kbName, convTitle: conv.title, activeDocumentId: conv.active_document_id ?? null }}
                     >
                       <div className={styles.convTitle}>{conv.title}</div>
                       <div className={styles.convMeta}>

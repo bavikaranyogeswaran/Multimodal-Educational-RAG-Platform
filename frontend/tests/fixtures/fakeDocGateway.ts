@@ -6,6 +6,7 @@ import {
   documentUpload,
   type Document,
   type DocumentUpload,
+  type DocumentUrl,
 } from '@/schemas/document';
 import type { DocumentStatus } from '@/schemas/enums';
 
@@ -59,6 +60,14 @@ export function createFakeDocGateway(initialDocs: Document[] = []): FakeDocGatew
       gateway.docs = gateway.docs.filter((d) => d.id !== documentId);
       return Promise.resolve();
     }),
+
+    getDocumentUrl: vi.fn(
+      (_kbId: string, _documentId: string): Promise<DocumentUrl> =>
+        Promise.resolve({
+          url: 'https://example.com/doc.pdf?sig=test',
+          expires_at: new Date('2026-01-01T01:00:00Z'),
+        }),
+    ),
   };
 
   return gateway;

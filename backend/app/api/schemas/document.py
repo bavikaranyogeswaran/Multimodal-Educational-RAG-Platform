@@ -47,3 +47,10 @@ class DocumentStatusResponse(BaseModel):
     page_count: int | None = None
     failure_reason: str | None = None
     updated_at: datetime
+
+
+class DocumentUrlResponse(BaseModel):
+    """Time-limited download URL returned by GET /{document_id}/url."""
+
+    url: str
+    expires_at: datetime

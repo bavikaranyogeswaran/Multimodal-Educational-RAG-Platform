@@ -34,6 +34,13 @@ export type Document = z.infer<typeof document>;
 
 export const documentList = z.array(document);
 
+/** Time-limited presigned URL returned by GET /{document_id}/url. */
+export const documentUrl = z.object({
+  url: z.string(),
+  expires_at: instant,
+});
+export type DocumentUrl = z.infer<typeof documentUrl>;
+
 /**
  * The smaller shape the status endpoint returns, which is the one a screen polls while a
  * document is being read. It carries the failure reason because a poll that only reported
