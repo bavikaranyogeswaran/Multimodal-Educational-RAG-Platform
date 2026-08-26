@@ -364,6 +364,24 @@
   transform-origin: 0 0;
 }
 
+/* Invisible click target drawn over a table or figure region on the current page. */
+.regionTarget {
+  position: absolute;
+  cursor: pointer;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 2px;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.regionTarget:hover,
+.regionTarget:focus-visible {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  opacity: 0.5;
+  outline: none;
+}
+
 /* Highlight overlay drawn over the PDF canvas at the coordinates of a cited passage. */
 .citationOverlay {
   position: absolute;

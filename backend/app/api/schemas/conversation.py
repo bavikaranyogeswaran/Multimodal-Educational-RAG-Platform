@@ -30,8 +30,12 @@ class ConversationResponse(BaseModel):
     active_table_id: UUID | None = None
 
 
-class RenameConversationRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+class UpdateConversationRequest(BaseModel):
+    """Partial update — all fields are optional; only explicitly-provided fields are applied."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    active_table_id: UUID | None = None
+    active_figure_id: UUID | None = None
 
 
 class StreamRequest(BaseModel):

@@ -5,10 +5,11 @@
  * never included in the main bundle unless the viewer is actually opened.
  */
 
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
 import styles from '@/features/documents/documents.module.css';
+import type { DocumentRegion } from '@/schemas/document';
 
 // Worker path resolved at build time; Vite includes it in the output.
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -34,9 +35,13 @@ interface PdfViewerProps {
   targetPage?: number;
   /** Bounding box in PDF-point coordinates (origin at page bottom-left) to highlight. */
   overlay?: BoundingBox | null;
+  /** Table and figure regions that render as invisible click targets on their page. */
+  regions?: readonly DocumentRegion[];
+  /** Called when the student clicks a table or figure region. */
+  onRegionClick?: (region: DocumentRegion) => void;
 }
 
-export function PdfViewer({ url, targetPage, overlay }: PdfViewerProps) {
+export function PdfViewer({ url, targetPage, overlay, regions, onRegionClick }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
@@ -233,6 +238,32 @@ export function PdfViewer({ url, targetPage, overlay }: PdfViewerProps) {
               }}
             />
           ) : null}
+          {basePageHeight > 0
+            ? regions
+                ?.filter((r) => r.page_number === currentPage)
+                .map((r) => (
+                  <div
+                    key={r.id}
+                    className={styles.regionTarget}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Select ${r.region_type}`}
+                    style={{
+                      left: r.bounding_box.x0 * scale,
+                      top: (basePageHeight - r.bounding_box.y1) * scale,
+                      width: (r.bounding_box.x1 - r.bounding_box.x0) * scale,
+                      height: (r.bounding_box.y1 - r.bounding_box.y0) * scale,
+                    }}
+                    onClick={() => onRegionClick?.(r)}
+                    onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onRegionClick?.(r);
+                      }
+                    }}
+                  />
+                ))
+            : null}
         </div>
       </div>
     </div>

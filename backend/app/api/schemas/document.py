@@ -54,3 +54,19 @@ class DocumentUrlResponse(BaseModel):
 
     url: str
     expires_at: datetime
+
+
+class BoundingBoxResponse(BaseModel):
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+class DocumentRegionResponse(BaseModel):
+    """A table or figure bounding box the student can click to focus a question."""
+
+    id: UUID
+    region_type: str  # "table" or "figure"
+    page_number: int
+    bounding_box: BoundingBoxResponse

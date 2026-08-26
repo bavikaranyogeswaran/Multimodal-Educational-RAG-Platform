@@ -5,6 +5,7 @@ import {
   document as docSchema,
   documentUpload,
   type Document,
+  type DocumentRegion,
   type DocumentUpload,
   type DocumentUrl,
 } from '@/schemas/document';
@@ -67,6 +68,11 @@ export function createFakeDocGateway(initialDocs: Document[] = []): FakeDocGatew
           url: 'https://example.com/doc.pdf?sig=test',
           expires_at: new Date('2026-01-01T01:00:00Z'),
         }),
+    ),
+
+    listRegions: vi.fn(
+      (_kbId: string, _documentId: string): Promise<readonly DocumentRegion[]> =>
+        Promise.resolve([]),
     ),
   };
 

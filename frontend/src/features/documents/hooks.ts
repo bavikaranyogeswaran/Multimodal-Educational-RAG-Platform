@@ -49,3 +49,17 @@ export function useDocumentUrl(kbId: string, documentId: string | null) {
     staleTime: 4 * 60 * 1000,
   });
 }
+
+const docRegionsKey = (kbId: string, documentId: string) =>
+  ['document-regions', kbId, documentId] as const;
+
+export function useDocumentRegions(kbId: string, documentId: string | null) {
+  const gateway = useDocumentGateway();
+  return useQuery({
+    queryKey: docRegionsKey(kbId, documentId ?? ''),
+    queryFn: () => gateway.listRegions(kbId, documentId!),
+    enabled: !!documentId,
+    // Regions are written at ingestion time and do not change afterwards.
+    staleTime: Infinity,
+  });
+}

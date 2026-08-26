@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.container import get_container
 from app.api.dependencies.scope import get_kb_scope
 from app.api.schemas.document import (
+    BoundingBoxResponse,
+    DocumentRegionResponse,
     DocumentResponse,
     DocumentStatusResponse,
     DocumentUploadResponse,
@@ -170,6 +172,43 @@ async def get_document_url(
         url=url,
         expires_at=datetime.now(UTC) + timedelta(seconds=_URL_TTL_SECONDS),
     )
+
+
+@router.get("/{document_id}/regions")
+async def list_document_regions(
+    document_id: uuid.UUID,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[DocumentRegionResponse]:
+    """Return all table and figure bounding boxes for a document.
+
+    The PDF viewer draws invisible click targets over these regions so the student
+    can point a question at a specific visual element on the page.
+    """
+    repo = SqlDocumentRepository(scope, session)
+    doc = await repo.get(scope, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=_404_DOCUMENT)
+    tables = await repo.get_tables(scope, document_id)
+    figures = await repo.get_figures(scope, document_id)
+    result: list[DocumentRegionResponse] = []
+    for t in tables:
+        bb = t.bounding_box
+        result.append(DocumentRegionResponse(
+            id=t.id,
+            region_type="table",
+            page_number=t.page_number,
+            bounding_box=BoundingBoxResponse(x0=bb.x0, y0=bb.y0, x1=bb.x1, y1=bb.y1),
+        ))
+    for f in figures:
+        bb = f.bounding_box
+        result.append(DocumentRegionResponse(
+            id=f.id,
+            region_type="figure",
+            page_number=f.page_number,
+            bounding_box=BoundingBoxResponse(x0=bb.x0, y0=bb.y0, x1=bb.x1, y1=bb.y1),
+        ))
+    return result
 
 
 @router.delete("/{document_id}", status_code=202)

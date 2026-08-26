@@ -521,6 +521,37 @@
   height: 0;
 }
 
+/* ── Table / figure selection chip ──────────────────────────────────────── */
+
+/* Shown above the input row when the student has selected a table or figure as context. */
+.selectionChip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-6);
+  background: var(--color-accent-soft);
+  border-top: 1px solid var(--color-accent);
+  font-size: 0.8125rem;
+  color: var(--color-accent);
+}
+
+.selectionChipDeselect {
+  margin-left: auto;
+  padding: 2px var(--space-2);
+  background: transparent;
+  border: none;
+  color: var(--color-accent);
+  font-size: 0.875rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.selectionChipDeselect:hover {
+  opacity: 0.7;
+}
+
 /* ── Citation chips ──────────────────────────────────────────────────────── */
 
 /* Inline superscript chip that marks one cited source passage. */

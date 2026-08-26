@@ -1,5 +1,5 @@
 import type { ApiClient } from '@/api/client';
-import type { ConversationGateway } from '@/features/conversations/gateway';
+import type { ConversationGateway, FocusUpdate } from '@/features/conversations/gateway';
 import {
   conversation,
   conversationList,
@@ -29,6 +29,13 @@ export class ApiConversationGateway implements ConversationGateway {
       conversation,
       `/knowledge-bases/${kbId}/conversations/${convId}`,
       { method: 'PATCH', body: { title } },
+    );
+
+  updateFocus = (kbId: string, convId: string, focus: FocusUpdate): Promise<Conversation> =>
+    this.#client.request(
+      conversation,
+      `/knowledge-bases/${kbId}/conversations/${convId}`,
+      { method: 'PATCH', body: focus },
     );
 
   remove = (kbId: string, convId: string): Promise<void> =>

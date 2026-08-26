@@ -10,15 +10,22 @@ vi.mock('@/features/documents/PdfViewer', () => ({
   PdfViewer: ({
     url,
     targetPage,
+    regions,
+    onRegionClick,
   }: {
     url: string;
     targetPage?: number;
+    regions?: readonly { id: string; region_type: string; page_number: number; bounding_box: { x0: number; y0: number; x1: number; y1: number } }[];
+    onRegionClick?: (r: { id: string; region_type: string; page_number: number; bounding_box: { x0: number; y0: number; x1: number; y1: number } }) => void;
   }) => (
-    <div
-      data-testid="pdf-viewer"
-      data-url={url}
-      data-page={targetPage ?? ''}
-    />
+    <>
+      <div data-testid="pdf-viewer" data-url={url} data-page={targetPage ?? ''} />
+      {regions?.map((r) => (
+        <button key={r.id} data-testid={`region-${r.id}`} onClick={() => onRegionClick?.(r)}>
+          {r.region_type}
+        </button>
+      ))}
+    </>
   ),
 }));
 
@@ -33,7 +40,7 @@ import {
   createFakeConversationGateway,
   type FakeConversationGateway,
 } from '../../fixtures/fakeConversationGateway';
-import { createFakeDocGateway } from '../../fixtures/fakeDocGateway';
+import { createFakeDocGateway, type FakeDocGateway } from '../../fixtures/fakeDocGateway';
 
 const KB_ID = 'kb-abc-123';
 const CONV_ID = 'conv-def-456';
@@ -41,7 +48,8 @@ const CONV_ID = 'conv-def-456';
 function renderChat(
   initialMessages: Message[] = [],
   convTitle = 'Test conversation',
-): { gateway: FakeConversationGateway } {
+  opts: { activeDocumentId?: string } = {},
+): { gateway: FakeConversationGateway; docGateway: FakeDocGateway } {
   const auth = createFakeAuth({ initial: aSession() });
   const gateway = createFakeConversationGateway([], initialMessages);
   const docGateway = createFakeDocGateway();
@@ -57,7 +65,11 @@ function renderChat(
               initialEntries={[
                 {
                   pathname: `/knowledge-bases/${KB_ID}/conversations/${CONV_ID}`,
-                  state: { kbName: 'Machine Learning', convTitle },
+                  state: {
+                    kbName: 'Machine Learning',
+                    convTitle,
+                    ...(opts.activeDocumentId ? { activeDocumentId: opts.activeDocumentId } : {}),
+                  },
                 },
               ]}
             >
@@ -74,7 +86,7 @@ function renderChat(
     </QueryClientProvider>,
   );
 
-  return { gateway };
+  return { gateway, docGateway };
 }
 
 describe('Chat page', () => {
@@ -302,6 +314,122 @@ describe('Chat page', () => {
 
     const viewer = await screen.findByTestId('pdf-viewer');
     expect(viewer).toHaveAttribute('data-page', '7');
+  });
+
+  it('clicking a table region calls updateFocus with the table id', async () => {
+    const docId = '00000000-0000-4000-8000-000000000001';
+    const tableId = '00000000-0000-4000-8000-000000000010';
+    const { gateway, docGateway } = renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'See [S1].',
+        citations: [{ label: 'S1', document_id: docId, page_number: 1, chunk_type: 'text' }],
+      }),
+    ]);
+
+    docGateway.listRegions = vi.fn(() =>
+      Promise.resolve([
+        { id: tableId, region_type: 'table' as const, page_number: 1, bounding_box: { x0: 10, y0: 10, x1: 100, y1: 50 } },
+      ]),
+    );
+
+    // Open the panel by clicking the citation chip.
+    await userEvent.click(await screen.findByRole('button', { name: /Citation S1/i }));
+
+    // Wait for the region button to appear (after listRegions resolves).
+    await waitFor(() => expect(screen.getByTestId(`region-${tableId}`)).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId(`region-${tableId}`));
+
+    await waitFor(() => {
+      expect(gateway.updateFocus).toHaveBeenCalledWith(KB_ID, CONV_ID, { active_table_id: tableId });
+    });
+  });
+
+  it('clicking a region shows a selection chip', async () => {
+    const docId = '00000000-0000-4000-8000-000000000001';
+    const tableId = '00000000-0000-4000-8000-000000000010';
+    const { docGateway } = renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'See [S1].',
+        citations: [{ label: 'S1', document_id: docId, page_number: 1, chunk_type: 'text' }],
+      }),
+    ]);
+
+    docGateway.listRegions = vi.fn(() =>
+      Promise.resolve([
+        { id: tableId, region_type: 'table' as const, page_number: 1, bounding_box: { x0: 10, y0: 10, x1: 100, y1: 50 } },
+      ]),
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Citation S1/i }));
+    await waitFor(() => expect(screen.getByTestId(`region-${tableId}`)).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId(`region-${tableId}`));
+
+    expect(await screen.findByText(/Table selected/i)).toBeInTheDocument();
+  });
+
+  it('clicking deselect clears the selection chip', async () => {
+    const docId = '00000000-0000-4000-8000-000000000001';
+    const tableId = '00000000-0000-4000-8000-000000000010';
+    const { docGateway } = renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'See [S1].',
+        citations: [{ label: 'S1', document_id: docId, page_number: 1, chunk_type: 'text' }],
+      }),
+    ]);
+
+    docGateway.listRegions = vi.fn(() =>
+      Promise.resolve([
+        { id: tableId, region_type: 'table' as const, page_number: 1, bounding_box: { x0: 10, y0: 10, x1: 100, y1: 50 } },
+      ]),
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Citation S1/i }));
+    await waitFor(() => expect(screen.getByTestId(`region-${tableId}`)).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId(`region-${tableId}`));
+    await screen.findByText(/Table selected/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /Deselect table/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Table selected/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('deselect sends a PATCH with null to clear the selection', async () => {
+    const docId = '00000000-0000-4000-8000-000000000001';
+    const tableId = '00000000-0000-4000-8000-000000000010';
+    const { gateway, docGateway } = renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'See [S1].',
+        citations: [{ label: 'S1', document_id: docId, page_number: 1, chunk_type: 'text' }],
+      }),
+    ]);
+
+    docGateway.listRegions = vi.fn(() =>
+      Promise.resolve([
+        { id: tableId, region_type: 'table' as const, page_number: 1, bounding_box: { x0: 10, y0: 10, x1: 100, y1: 50 } },
+      ]),
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Citation S1/i }));
+    await waitFor(() => expect(screen.getByTestId(`region-${tableId}`)).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId(`region-${tableId}`));
+    await screen.findByText(/Table selected/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /Deselect table/i }));
+
+    await waitFor(() => {
+      expect(gateway.updateFocus).toHaveBeenLastCalledWith(KB_ID, CONV_ID, { active_table_id: null });
+    });
   });
 
   it('clicking a second chip updates the target page', async () => {

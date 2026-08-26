@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~90%, steps 19.1â€"19.5 done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~95%, steps 19.1â€"19.6 done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 12, 13, 14, 15, 20 |
-| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 126 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **Phase 19** â€" step 19.6 (table and figure region selection) |
-| Last updated | 26 August 2026 (step 19.5 â€" citation navigation) |
+| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 130 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **Phase 19** â€" step 19.7 (retrieval-detail panel) |
+| Last updated | 26 August 2026 (step 19.6 â€" table and figure region selection) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2419,7 +2419,7 @@ before navigation, the viewer before anything that opens it.
 | 19.3 | Stop streaming and error recovery | S | ☐ |
 | 19.4 | Presigned-URL endpoint and PDF.js viewer | L · risky | ☐ |
 | 19.5 | Citation navigation — chip → PDF page → bounding-box overlay | M | ☐ |
-| 19.6 | Table and figure region selection | M | ☐ |
+| 19.6 | Table and figure region selection | M | ☑ |
 | 19.7 | Retrieval-detail panel | S | ☐ |
 
 ### 19.1 — Conversation rename and delete
@@ -2520,16 +2520,16 @@ Connects the citation chips from 19.2 to the PDF viewer from 19.4.
 Lets the student point the next question at a specific table or figure, driving §55’s early-exit
 paths on the backend.
 
-- [ ] **Backend**: verify `PATCH /knowledge-bases/{kb_id}/conversations/{conv_id}` accepts
+- [x] **Backend**: verify `PATCH /knowledge-bases/{kb_id}/conversations/{conv_id}` accepts
       `active_table_id` and `active_figure_id` fields and persists them; implement if not
-- [ ] Table and figure bounding boxes from `document_elements` are fetched alongside the document
+- [x] Table and figure bounding boxes from `document_elements` are fetched alongside the document
       metadata; the viewer draws invisible click targets over each region
-- [ ] Clicking a table or figure region: sends the PATCH call, updates conversation state in the
+- [x] Clicking a table or figure region: sends the PATCH call, updates conversation state in the
       query cache; the chat input area shows a “Table selected” or “Figure selected” chip
-- [ ] A deselect button on the chip sends a PATCH with `null` to clear the selection
-- [ ] The selection chip is styled using `--color-accent-soft` — the same token as the citation
+- [x] A deselect button on the chip sends a PATCH with `null` to clear the selection
+- [x] The selection chip is styled using `--color-accent-soft` — the same token as the citation
       overlay, so selected context and cited evidence share a visual language
-- [ ] Tests: clicking a region calls the PATCH endpoint with the right id; the chip appears;
+- [x] Tests: clicking a region calls the PATCH endpoint with the right id; the chip appears;
       deselect clears it; a new question carries the active id to `gateway.stream`
 
 ### 19.7 — Retrieval-detail panel

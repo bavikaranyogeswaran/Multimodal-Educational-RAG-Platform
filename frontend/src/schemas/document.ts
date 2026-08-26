@@ -41,6 +41,22 @@ export const documentUrl = z.object({
 });
 export type DocumentUrl = z.infer<typeof documentUrl>;
 
+/** A table or figure bounding box the student can click to focus a question. */
+export const documentRegion = z.object({
+  id: uuid,
+  region_type: z.enum(['table', 'figure']),
+  page_number: z.number().int(),
+  bounding_box: z.object({
+    x0: z.number(),
+    y0: z.number(),
+    x1: z.number(),
+    y1: z.number(),
+  }),
+});
+export type DocumentRegion = z.infer<typeof documentRegion>;
+
+export const documentRegionList = z.array(documentRegion);
+
 /**
  * The smaller shape the status endpoint returns, which is the one a screen polls while a
  * document is being read. It carries the failure reason because a poll that only reported

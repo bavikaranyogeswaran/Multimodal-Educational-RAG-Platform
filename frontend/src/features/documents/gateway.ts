@@ -1,8 +1,9 @@
-import type { Document, DocumentUpload, DocumentUrl } from '@/schemas/document';
+import type { Document, DocumentRegion, DocumentUpload, DocumentUrl } from '@/schemas/document';
 
 export interface DocumentGateway {
   list: (kbId: string) => Promise<readonly Document[]>;
   upload: (kbId: string, file: File) => Promise<DocumentUpload>;
   remove: (kbId: string, documentId: string) => Promise<void>;
   getDocumentUrl: (kbId: string, documentId: string) => Promise<DocumentUrl>;
+  listRegions: (kbId: string, documentId: string) => Promise<readonly DocumentRegion[]>;
 }

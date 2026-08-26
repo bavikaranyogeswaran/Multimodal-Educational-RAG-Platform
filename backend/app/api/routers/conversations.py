@@ -21,7 +21,7 @@ from app.api.schemas.conversation import (
     ConversationResponse,
     CreateConversationRequest,
     MessageResponse,
-    RenameConversationRequest,
+    UpdateConversationRequest,
     StreamRequest,
 )
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
@@ -190,9 +190,9 @@ async def get_conversation(
 
 
 @router.patch("/{conversation_id}", status_code=200)
-async def rename_conversation(
+async def update_conversation(
     conversation_id: uuid.UUID,
-    body: RenameConversationRequest,
+    body: UpdateConversationRequest,
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ConversationResponse:
@@ -200,7 +200,19 @@ async def rename_conversation(
     conversation = await repo.get(scope, conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail=_404_CONVERSATION)
-    conversation = conversation.renamed(body.title, now=datetime.now(UTC))
+    now = datetime.now(UTC)
+    if "title" in body.model_fields_set and body.title is not None:
+        conversation = conversation.renamed(body.title, now=now)
+    if "active_table_id" in body.model_fields_set:
+        if body.active_table_id is not None:
+            conversation = conversation.focus_table(body.active_table_id, now=now)
+        else:
+            conversation = conversation.clear_selection(now=now)
+    if "active_figure_id" in body.model_fields_set:
+        if body.active_figure_id is not None:
+            conversation = conversation.focus_figure(body.active_figure_id, now=now)
+        else:
+            conversation = conversation.clear_selection(now=now)
     await repo.save(scope, conversation)
     await session.commit()
     return _conv_response(conversation)

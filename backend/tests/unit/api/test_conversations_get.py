@@ -95,13 +95,15 @@ def _get_session(row: MagicMock | None) -> AsyncMock:
 
 
 def _get_then_list_session(conv_row: MagicMock | None, msg_rows: list) -> AsyncMock:
-    """Session that handles get-conversation then list-messages execute calls in order."""
+    """Session that handles get-conversation, list-messages, and list-citations execute calls."""
     get_result = MagicMock()
     get_result.scalar_one_or_none.return_value = conv_row
     list_result = MagicMock()
     list_result.scalars.return_value.all.return_value = msg_rows
+    citations_result = MagicMock()
+    citations_result.scalars.return_value.all.return_value = []
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[get_result, list_result])
+    session.execute = AsyncMock(side_effect=[get_result, list_result, citations_result])
     return session
 
 

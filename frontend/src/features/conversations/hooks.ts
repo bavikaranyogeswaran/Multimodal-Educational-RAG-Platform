@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useConversationGateway } from '@/features/conversations/gatewayContext';
+import type { FocusUpdate } from '@/features/conversations/gateway';
 import type { CreateConversationRequest } from '@/schemas/conversation';
 
 const convListKey = (kbId: string) => ['conversations', kbId] as const;
@@ -40,6 +41,13 @@ export function useRemoveConversation(kbId: string) {
   return useMutation({
     mutationFn: (convId: string) => gateway.remove(kbId, convId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: convListKey(kbId) }),
+  });
+}
+
+export function useUpdateFocus(kbId: string, convId: string) {
+  const gateway = useConversationGateway();
+  return useMutation({
+    mutationFn: (focus: FocusUpdate) => gateway.updateFocus(kbId, convId, focus),
   });
 }
 

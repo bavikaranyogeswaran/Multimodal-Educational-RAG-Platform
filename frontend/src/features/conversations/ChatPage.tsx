@@ -3,10 +3,11 @@ import { Link, useLocation, useParams } from 'react-router';
 
 import { useSession } from '@/features/authentication/sessionContext';
 import { parseCitations } from '@/features/conversations/citationUtils';
-import { useMessages, useStreamMessage } from '@/features/conversations/hooks';
+import { useMessages, useStreamMessage, useUpdateFocus } from '@/features/conversations/hooks';
 import styles from '@/features/conversations/conversations.module.css';
-import { useDocumentUrl } from '@/features/documents/hooks';
+import { useDocumentRegions, useDocumentUrl } from '@/features/documents/hooks';
 import type { BoundingBox, Citation } from '@/schemas/conversation';
+import type { DocumentRegion } from '@/schemas/document';
 import type { MessageStatus } from '@/schemas/enums';
 
 // The PDF viewer is large; split it into its own chunk so the main bundle stays lean.
@@ -83,6 +84,7 @@ export function ChatPage() {
 
   const { data: messages, isLoading } = useMessages(kbId ?? '', convId ?? '');
   const { send, stop, tokens, isStreaming, streamError } = useStreamMessage(kbId ?? '', convId ?? '');
+  const { mutateAsync: updateFocus } = useUpdateFocus(kbId ?? '', convId ?? '');
 
   // Which document is currently shown in the panel. Starts as the conversation's active document
   // (from router state) and updates whenever the student clicks a citation chip.
@@ -91,8 +93,15 @@ export function ChatPage() {
   // The page and bounding box of the last-clicked citation chip.
   const [targetPage, setTargetPage] = useState<number | null>(null);
   const [activeBbox, setActiveBbox] = useState<BoundingBox | null>(null);
+  // The table or figure the student has selected as context for the next question.
+  const [activeRegion, setActiveRegion] = useState<{ id: string; type: 'table' | 'figure' } | null>(null);
 
   const { data: docUrl } = useDocumentUrl(
+    kbId ?? '',
+    panelOpen ? panelDocumentId : null,
+  );
+
+  const { data: regions } = useDocumentRegions(
     kbId ?? '',
     panelOpen ? panelDocumentId : null,
   );
@@ -116,6 +125,25 @@ export function ChatPage() {
     setPanelOpen(false);
     setTargetPage(null);
     setActiveBbox(null);
+  }
+
+  function handleRegionClick(region: DocumentRegion) {
+    const focus =
+      region.region_type === 'table'
+        ? { active_table_id: region.id }
+        : { active_figure_id: region.id };
+    void updateFocus(focus);
+    setActiveRegion({ id: region.id, type: region.region_type as 'table' | 'figure' });
+  }
+
+  function handleDeselect() {
+    if (!activeRegion) return;
+    const focus =
+      activeRegion.type === 'table'
+        ? { active_table_id: null }
+        : { active_figure_id: null };
+    void updateFocus(focus);
+    setActiveRegion(null);
   }
 
   async function handleSend(e: FormEvent) {
@@ -251,6 +279,20 @@ export function ChatPage() {
           <div ref={bottomRef} className={styles.bottomAnchor} />
         </div>
 
+        {activeRegion ? (
+          <div className={styles.selectionChip}>
+            <span>{activeRegion.type === 'table' ? 'Table' : 'Figure'} selected</span>
+            <button
+              type="button"
+              className={styles.selectionChipDeselect}
+              aria-label={`Deselect ${activeRegion.type}`}
+              onClick={handleDeselect}
+            >
+              ✕
+            </button>
+          </div>
+        ) : null}
+
         <form className={styles.inputRow} onSubmit={(e) => void handleSend(e)}>
           <textarea
             className={styles.queryInput}
@@ -294,6 +336,8 @@ export function ChatPage() {
                 url={docUrl.url}
                 targetPage={targetPage ?? undefined}
                 overlay={activeBbox}
+                regions={regions}
+                onRegionClick={handleRegionClick}
               />
             </Suspense>
           ) : (

@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-import type { ConversationGateway } from '@/features/conversations/gateway';
+import type { ConversationGateway, FocusUpdate } from '@/features/conversations/gateway';
 import {
   conversation as convSchema,
   message as msgSchema,
@@ -81,6 +81,10 @@ export function createFakeConversationGateway(
       gateway.convs = gateway.convs.map((c) => (c.id === convId ? updated : c));
       return Promise.resolve(updated);
     }),
+
+    updateFocus: vi.fn((_kbId: string, _convId: string, _focus: FocusUpdate): Promise<Conversation> =>
+      Promise.resolve(aConversation()),
+    ),
 
     remove: vi.fn((_kbId: string, convId: string): Promise<void> => {
       gateway.convs = gateway.convs.filter((c) => c.id !== convId);

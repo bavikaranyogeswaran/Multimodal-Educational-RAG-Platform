@@ -2,9 +2,11 @@ import type { ApiClient } from '@/api/client';
 import type { DocumentGateway } from '@/features/documents/gateway';
 import {
   documentList,
+  documentRegionList,
   documentUpload,
   documentUrl,
   type Document,
+  type DocumentRegion,
   type DocumentUpload,
   type DocumentUrl,
 } from '@/schemas/document';
@@ -36,5 +38,11 @@ export class ApiDocumentGateway implements DocumentGateway {
     this.#client.request(
       documentUrl,
       `/knowledge-bases/${kbId}/documents/${documentId}/url`,
+    );
+
+  listRegions = (kbId: string, documentId: string): Promise<readonly DocumentRegion[]> =>
+    this.#client.request(
+      documentRegionList,
+      `/knowledge-bases/${kbId}/documents/${documentId}/regions`,
     );
 }
