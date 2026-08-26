@@ -2,6 +2,7 @@ import type {
   Conversation,
   CreateConversationRequest,
   Message,
+  RetrievalSource,
 } from '@/schemas/conversation';
 
 export type FocusUpdate = {
@@ -16,5 +17,6 @@ export interface ConversationGateway {
   remove: (kbId: string, convId: string) => Promise<void>;
   updateFocus: (kbId: string, convId: string, focus: FocusUpdate) => Promise<Conversation>;
   listMessages: (kbId: string, convId: string) => Promise<readonly Message[]>;
+  listSources: (kbId: string, convId: string, msgId: string) => Promise<readonly RetrievalSource[]>;
   stream: (kbId: string, convId: string, query: string, signal?: AbortSignal) => AsyncIterable<string>;
 }

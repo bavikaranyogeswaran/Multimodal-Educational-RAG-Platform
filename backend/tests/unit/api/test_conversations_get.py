@@ -303,3 +303,88 @@ class TestListMessages:
         with TestClient(_make_app(session, scope_raises_404=True)) as client:
             resp = client.get(f"{_BASE_URL}/{uuid.uuid4()}/messages")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /conversations/{id}/messages/{msg_id}/sources
+# ---------------------------------------------------------------------------
+
+
+def _source_row(
+    *,
+    chunk_id: uuid.UUID | None = None,
+    rank: int = 1,
+    score: float = 0.8,
+    document_id: uuid.UUID | None = None,
+    page_start: int = 3,
+    filename: str = "lecture.pdf",
+    title: str | None = None,
+) -> MagicMock:
+    row = MagicMock()
+    row.chunk_id = chunk_id or uuid.uuid4()
+    row.rank = rank
+    row.score = score
+    row.document_id = document_id or uuid.uuid4()
+    row.page_start = page_start
+    row.filename = filename
+    row.title = title
+    return row
+
+
+def _sources_session(chunk_rows: list, cited_ids: list) -> AsyncMock:
+    """Session for the sources endpoint: first execute uses .all(), second uses .scalars().all()."""
+    chunk_result = MagicMock()
+    chunk_result.all.return_value = chunk_rows
+    cited_result = MagicMock()
+    cited_result.scalars.return_value.all.return_value = cited_ids
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[chunk_result, cited_result])
+    return session
+
+
+class TestListMessageSources:
+    def test_returns_200_with_empty_list_when_no_chunks(self) -> None:
+        session = _sources_session([], [])
+        with TestClient(_make_app(session)) as client:
+            resp = client.get(f"{_BASE_URL}/{uuid.uuid4()}/messages/{uuid.uuid4()}/sources")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_returns_source_with_correct_fields(self) -> None:
+        chunk_id = uuid.uuid4()
+        doc_id = uuid.uuid4()
+        row = _source_row(chunk_id=chunk_id, rank=1, score=0.75, document_id=doc_id, page_start=5, filename="notes.pdf", title=None)
+        session = _sources_session([row], [])
+        with TestClient(_make_app(session)) as client:
+            body = client.get(f"{_BASE_URL}/{uuid.uuid4()}/messages/{uuid.uuid4()}/sources").json()
+        assert len(body) == 1
+        assert body[0]["document_name"] == "notes.pdf"
+        assert body[0]["page_number"] == 5
+        assert body[0]["score"] == 0.75
+        assert body[0]["rank"] == 1
+        assert body[0]["cited"] is False
+
+    def test_cited_flag_true_when_chunk_in_citations(self) -> None:
+        chunk_id = uuid.uuid4()
+        row = _source_row(chunk_id=chunk_id)
+        session = _sources_session([row], [chunk_id])
+        with TestClient(_make_app(session)) as client:
+            body = client.get(f"{_BASE_URL}/{uuid.uuid4()}/messages/{uuid.uuid4()}/sources").json()
+        assert body[0]["cited"] is True
+
+    def test_document_title_takes_precedence_over_filename(self) -> None:
+        row = _source_row(filename="notes.pdf", title="Lecture 3 — Backprop")
+        session = _sources_session([row], [])
+        with TestClient(_make_app(session)) as client:
+            body = client.get(f"{_BASE_URL}/{uuid.uuid4()}/messages/{uuid.uuid4()}/sources").json()
+        assert body[0]["document_name"] == "Lecture 3 — Backprop"
+
+    def test_returns_401_without_auth(self) -> None:
+        with TestClient(_make_app(_sources_session([], []), auth_raises_401=True)) as client:
+            resp = client.get(f"{_BASE_URL}/{uuid.uuid4()}/messages/{uuid.uuid4()}/sources")
+        assert resp.status_code == 401
+
+    def test_returns_404_for_foreign_kb(self) -> None:
+        with TestClient(_make_app(_sources_session([], []), scope_raises_404=True)) as client:
+            resp = client.get(f"{_BASE_URL}/{uuid.uuid4()}/messages/{uuid.uuid4()}/sources")
+        assert resp.status_code == 404

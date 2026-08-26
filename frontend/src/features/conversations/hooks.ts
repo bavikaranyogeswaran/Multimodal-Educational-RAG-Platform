@@ -7,6 +7,8 @@ import type { CreateConversationRequest } from '@/schemas/conversation';
 
 const convListKey = (kbId: string) => ['conversations', kbId] as const;
 const msgListKey = (kbId: string, convId: string) => ['messages', kbId, convId] as const;
+const msgSourcesKey = (kbId: string, convId: string, msgId: string) =>
+  ['message-sources', kbId, convId, msgId] as const;
 
 export function useConversations(kbId: string) {
   const gateway = useConversationGateway();
@@ -48,6 +50,15 @@ export function useUpdateFocus(kbId: string, convId: string) {
   const gateway = useConversationGateway();
   return useMutation({
     mutationFn: (focus: FocusUpdate) => gateway.updateFocus(kbId, convId, focus),
+  });
+}
+
+export function useMessageSources(kbId: string, convId: string, msgId: string | null) {
+  const gateway = useConversationGateway();
+  return useQuery({
+    queryKey: msgSourcesKey(kbId, convId, msgId ?? ''),
+    queryFn: () => gateway.listSources(kbId, convId, msgId!),
+    enabled: !!msgId,
   });
 }
 

@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from 'react-router';
 
 import { useSession } from '@/features/authentication/sessionContext';
 import { parseCitations } from '@/features/conversations/citationUtils';
-import { useMessages, useStreamMessage, useUpdateFocus } from '@/features/conversations/hooks';
+import { useMessageSources, useMessages, useStreamMessage, useUpdateFocus } from '@/features/conversations/hooks';
 import styles from '@/features/conversations/conversations.module.css';
 import { useDocumentRegions, useDocumentUrl } from '@/features/documents/hooks';
 import type { BoundingBox, Citation } from '@/schemas/conversation';
@@ -67,6 +67,50 @@ function MessageWithCitations({
   );
 }
 
+function SourcesPanel({
+  kbId,
+  convId,
+  msgId,
+  status,
+}: {
+  kbId: string;
+  convId: string;
+  msgId: string;
+  status: MessageStatus;
+}) {
+  const { data: sources = [], isLoading } = useMessageSources(kbId, convId, msgId);
+  if (isLoading) return <div className={styles.sourcesPanel}>Loading sources…</div>;
+  const maxScore = sources.reduce((m, s) => Math.max(m, s.score), 0.001);
+  return (
+    <div className={styles.sourcesPanel}>
+      {status === 'ABSTAINED' && (
+        <p className={styles.sourcesAbstentionNote}>
+          No passages with sufficient confidence — top candidates:
+        </p>
+      )}
+      {sources.length === 0 ? (
+        <p className={styles.sourcesEmpty}>No retrieval data recorded.</p>
+      ) : (
+        <ul className={styles.sourcesList}>
+          {sources.map((s, i) => (
+            <li key={`${s.document_id}-${i}`} className={styles.sourceRow}>
+              <span className={styles.sourceName}>{s.document_name}</span>
+              <span className={styles.sourcePage}>p.{s.page_number}</span>
+              <div className={styles.sourceBarTrack} aria-hidden="true">
+                <div
+                  className={styles.sourceBar}
+                  style={{ width: `${(s.score / maxScore) * 100}%` }}
+                />
+              </div>
+              {s.cited && <span className={styles.sourceCited}>Cited</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ChatPage() {
   const { kbId, convId } = useParams<{ kbId: string; convId: string }>();
   const loc = useLocation();
@@ -95,6 +139,8 @@ export function ChatPage() {
   const [activeBbox, setActiveBbox] = useState<BoundingBox | null>(null);
   // The table or figure the student has selected as context for the next question.
   const [activeRegion, setActiveRegion] = useState<{ id: string; type: 'table' | 'figure' } | null>(null);
+  // Which assistant message's sources panel is open (null = all closed).
+  const [sourcesOpenId, setSourcesOpenId] = useState<string | null>(null);
 
   const { data: docUrl } = useDocumentUrl(
     kbId ?? '',
@@ -219,38 +265,86 @@ export function ChatPage() {
             }
             if (STATUS_FAILED.includes(msg.status)) {
               return (
-                <div key={msg.id} className={styles.failedMsg}>
-                  {msg.content || 'This response could not be completed.'}
+                <div key={msg.id} className={styles.msgGroup}>
+                  <div className={styles.failedMsg}>
+                    {msg.content || 'This response could not be completed.'}
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.sourcesToggle}
+                    onClick={() => setSourcesOpenId((id) => (id === msg.id ? null : msg.id))}
+                  >
+                    Sources
+                  </button>
+                  {sourcesOpenId === msg.id && (
+                    <SourcesPanel kbId={kbId ?? ''} convId={convId ?? ''} msgId={msg.id} status={msg.status} />
+                  )}
                 </div>
               );
             }
             if (msg.status === 'ABSTAINED') {
               return (
-                <div key={msg.id} className={styles.abstentionMsg} role="status">
-                  The uploaded material does not contain enough information to answer this
-                  question. Try asking something the documents cover, or upload more material.
+                <div key={msg.id} className={styles.msgGroup}>
+                  <div className={styles.abstentionMsg} role="status">
+                    The uploaded material does not contain enough information to answer this
+                    question. Try asking something the documents cover, or upload more material.
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.sourcesToggle}
+                    onClick={() => setSourcesOpenId((id) => (id === msg.id ? null : msg.id))}
+                  >
+                    Sources
+                  </button>
+                  {sourcesOpenId === msg.id && (
+                    <SourcesPanel kbId={kbId ?? ''} convId={convId ?? ''} msgId={msg.id} status={msg.status} />
+                  )}
                 </div>
               );
             }
             if (msg.status === 'CONFLICTING') {
               return (
-                <div key={msg.id} className={styles.conflictMsg} role="status">
-                  Conflicting evidence was found in your material. The documents may
-                  contradict each other on this topic. Review the sources before relying on
-                  any answer here.
+                <div key={msg.id} className={styles.msgGroup}>
+                  <div className={styles.conflictMsg} role="status">
+                    Conflicting evidence was found in your material. The documents may
+                    contradict each other on this topic. Review the sources before relying on
+                    any answer here.
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.sourcesToggle}
+                    onClick={() => setSourcesOpenId((id) => (id === msg.id ? null : msg.id))}
+                  >
+                    Sources
+                  </button>
+                  {sourcesOpenId === msg.id && (
+                    <SourcesPanel kbId={kbId ?? ''} convId={convId ?? ''} msgId={msg.id} status={msg.status} />
+                  )}
                 </div>
               );
             }
             return (
-              <div key={msg.id} className={styles.assistantMsg}>
-                {msg.status === 'COMPLETED' ? (
-                  <MessageWithCitations
-                    content={msg.content}
-                    citations={msg.citations ?? []}
-                    onCite={handleCite}
-                  />
-                ) : (
-                  msg.content
+              <div key={msg.id} className={styles.msgGroup}>
+                <div className={styles.assistantMsg}>
+                  {msg.status === 'COMPLETED' ? (
+                    <MessageWithCitations
+                      content={msg.content}
+                      citations={msg.citations ?? []}
+                      onCite={handleCite}
+                    />
+                  ) : (
+                    msg.content
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className={styles.sourcesToggle}
+                  onClick={() => setSourcesOpenId((id) => (id === msg.id ? null : msg.id))}
+                >
+                  Sources
+                </button>
+                {sourcesOpenId === msg.id && (
+                  <SourcesPanel kbId={kbId ?? ''} convId={convId ?? ''} msgId={msg.id} status={msg.status} />
                 )}
               </div>
             );

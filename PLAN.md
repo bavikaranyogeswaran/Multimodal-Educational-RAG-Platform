@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~95%, steps 19.1â€"19.6 done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~100%, all steps done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 12, 13, 14, 15, 20 |
-| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 130 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **Phase 19** â€" step 19.7 (retrieval-detail panel) |
-| Last updated | 26 August 2026 (step 19.6 â€" table and figure region selection) |
+| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **Phase 19** â€" step 19.8 (not yet planned — Phase 19 complete) |
+| Last updated | 26 August 2026 (step 19.7 â€" retrieval-detail panel) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2420,7 +2420,7 @@ before navigation, the viewer before anything that opens it.
 | 19.4 | Presigned-URL endpoint and PDF.js viewer | L · risky | ☐ |
 | 19.5 | Citation navigation — chip → PDF page → bounding-box overlay | M | ☐ |
 | 19.6 | Table and figure region selection | M | ☑ |
-| 19.7 | Retrieval-detail panel | S | ☐ |
+| 19.7 | Retrieval-detail panel | S | ☑ |
 
 ### 19.1 — Conversation rename and delete
 
@@ -2537,33 +2537,33 @@ paths on the backend.
 After an answer renders, the student can see which passages were retrieved, which were cited, and
 why the system abstained if it did.
 
-- [ ] **Backend**: `GET /knowledge-bases/{kb_id}/conversations/{conv_id}/messages/{msg_id}/sources`
+- [x] **Backend**: `GET /knowledge-bases/{kb_id}/conversations/{conv_id}/messages/{msg_id}/sources`
       — returns the ranked list of chunks from `conversation_retrieval_chunks`, each with its
       document name, page number, reranker score, and whether it was cited in the final answer;
       scoped and authenticated
-- [ ] Add `listSources(kbId, convId, msgId)` to `ConversationGateway` and `ApiConversationGateway`
-- [ ] “Sources” toggle below each ASSISTANT message expands a panel; collapsed by default to
+- [x] Add `listSources(kbId, convId, msgId)` to `ConversationGateway` and `ApiConversationGateway`
+- [x] “Sources” toggle below each ASSISTANT message expands a panel; collapsed by default to
       preserve the reading flow
-- [ ] Each source row: document name, page number, a relevance bar (score as a visual fraction of
+- [x] Each source row: document name, page number, a relevance bar (score as a visual fraction of
       the top score), and a “Cited” badge when the chunk appears in `message_citations`
-- [ ] For abstentions: a “No passages with sufficient confidence” note followed by the top
+- [x] For abstentions: a “No passages with sufficient confidence” note followed by the top
       candidates and their scores, so the student can see what was found but not trusted
-- [ ] Tests: panel opens on toggle; correct source count; cited badge appears on the right rows;
+- [x] Tests: panel opens on toggle; correct source count; cited badge appears on the right rows;
       abstention note shows when message status is `ABSTAINED`
 
 ### Definition of done
 
-- [ ] Conversation rename and delete working in the list
-- [ ] Citation chips `[S1]` clickable in every answer; abstention and conflict states visually
+- [x] Conversation rename and delete working in the list
+- [x] Citation chips `[S1]` clickable in every answer; abstention and conflict states visually
       distinct from a normal answer (`--color-text-muted` and `--color-conflict` tokens)
-- [ ] Stop button aborts an in-flight stream and re-enables the input; retry re-sends the query
-- [ ] PDF viewer opens the original document via a scoped presigned URL; page navigation and
+- [x] Stop button aborts an in-flight stream and re-enables the input; retry re-sends the query
+- [x] PDF viewer opens the original document via a scoped presigned URL; page navigation and
       zoom work; text layer is selectable
-- [ ] Clicking a citation chip navigates the viewer to the right page and draws the bounding box
-- [ ] Clicking a table or figure region in the viewer sets `active_table_id` /
+- [x] Clicking a citation chip navigates the viewer to the right page and draws the bounding box
+- [x] Clicking a table or figure region in the viewer sets `active_table_id` /
       `active_figure_id` on the conversation; the chip shows the selection; deselect clears it
-- [ ] Sources panel shows each retrieved chunk with its score and whether it was cited
-- [ ] UC-22
+- [x] Sources panel shows each retrieved chunk with its score and whether it was cited
+- [x] UC-22
 
 ## Phase 20 â€” Frontend graph, study features, memory & end-to-end
 

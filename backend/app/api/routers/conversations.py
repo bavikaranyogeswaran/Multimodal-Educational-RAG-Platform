@@ -21,6 +21,7 @@ from app.api.schemas.conversation import (
     ConversationResponse,
     CreateConversationRequest,
     MessageResponse,
+    RetrievalSourceResponse,
     UpdateConversationRequest,
     StreamRequest,
 )
@@ -285,6 +286,28 @@ async def stream_response(
             await stream.aclose()
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+
+@router.get("/{conversation_id}/messages/{message_id}/sources", status_code=200)
+async def list_message_sources(
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[RetrievalSourceResponse]:
+    repo = SqlConversationRepository(scope=scope, session=session)
+    sources = await repo.list_retrieval_sources(scope, conversation_id, message_id)
+    return [
+        RetrievalSourceResponse(
+            document_id=row.document_id,
+            document_name=row.title or row.filename,
+            page_number=row.page_start,
+            score=row.score,
+            rank=row.rank,
+            cited=cited,
+        )
+        for row, cited in sources
+    ]
 
 
 @router.get("/{conversation_id}/messages", status_code=200)

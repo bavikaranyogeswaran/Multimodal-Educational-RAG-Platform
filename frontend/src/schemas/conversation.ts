@@ -83,3 +83,15 @@ export const message = z.object({
 export type Message = z.infer<typeof message>;
 
 export const messageList = z.array(message);
+
+/** One retrieved chunk shown in the sources panel after an answer renders. */
+export const retrievalSource = z.object({
+  document_id: uuid,
+  document_name: z.string(),
+  page_number: z.number().int(),
+  score: z.number(),
+  rank: z.number().int(),
+  cited: z.boolean(),
+});
+export type RetrievalSource = z.infer<typeof retrievalSource>;
+export const retrievalSourceList = z.array(retrievalSource);

@@ -4,9 +4,11 @@ import {
   conversation,
   conversationList,
   messageList,
+  retrievalSourceList,
   type Conversation,
   type CreateConversationRequest,
   type Message,
+  type RetrievalSource,
 } from '@/schemas/conversation';
 
 export class ApiConversationGateway implements ConversationGateway {
@@ -48,6 +50,12 @@ export class ApiConversationGateway implements ConversationGateway {
     this.#client.request(
       messageList,
       `/knowledge-bases/${kbId}/conversations/${convId}/messages`,
+    );
+
+  listSources = (kbId: string, convId: string, msgId: string): Promise<readonly RetrievalSource[]> =>
+    this.#client.request(
+      retrievalSourceList,
+      `/knowledge-bases/${kbId}/conversations/${convId}/messages/${msgId}/sources`,
     );
 
   stream = (kbId: string, convId: string, query: string, signal?: AbortSignal): AsyncIterable<string> =>

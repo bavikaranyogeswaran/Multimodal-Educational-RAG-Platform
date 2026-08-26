@@ -467,4 +467,58 @@ describe('Chat page', () => {
       expect(screen.getByTestId('pdf-viewer')).toHaveAttribute('data-page', '9'),
     );
   });
+
+  it('clicking Sources toggle opens the sources panel', async () => {
+    renderChat([aMessage({ role: 'ASSISTANT', status: 'COMPLETED', content: 'Answer.' })]);
+
+    const toggle = await screen.findByRole('button', { name: 'Sources' });
+    await userEvent.click(toggle);
+
+    // Panel renders (even with empty sources it shows the empty-state text).
+    expect(await screen.findByText('No retrieval data recorded.')).toBeInTheDocument();
+  });
+
+  it('shows the correct source count', async () => {
+    const { gateway } = renderChat([
+      aMessage({ role: 'ASSISTANT', status: 'COMPLETED', content: 'Answer.' }),
+    ]);
+    gateway.listSources.mockResolvedValue([
+      { document_id: '00000000-0000-4000-8000-000000000001', document_name: 'Lecture 1', page_number: 3, score: 0.9, rank: 1, cited: false },
+      { document_id: '00000000-0000-4000-8000-000000000002', document_name: 'Lecture 2', page_number: 7, score: 0.6, rank: 2, cited: false },
+    ]);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sources' }));
+
+    expect(await screen.findAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('cited badge appears on the cited source row', async () => {
+    const { gateway } = renderChat([
+      aMessage({ role: 'ASSISTANT', status: 'COMPLETED', content: 'Answer.' }),
+    ]);
+    gateway.listSources.mockResolvedValue([
+      { document_id: '00000000-0000-4000-8000-000000000001', document_name: 'Notes', page_number: 2, score: 0.95, rank: 1, cited: true },
+      { document_id: '00000000-0000-4000-8000-000000000002', document_name: 'Slides', page_number: 4, score: 0.5, rank: 2, cited: false },
+    ]);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sources' }));
+
+    const badges = await screen.findAllByText('Cited');
+    expect(badges).toHaveLength(1);
+  });
+
+  it('shows the abstention note when message status is ABSTAINED', async () => {
+    const { gateway } = renderChat([
+      aMessage({ role: 'ASSISTANT', status: 'ABSTAINED', content: '' }),
+    ]);
+    gateway.listSources.mockResolvedValue([
+      { document_id: '00000000-0000-4000-8000-000000000001', document_name: 'Notes', page_number: 1, score: 0.3, rank: 1, cited: false },
+    ]);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sources' }));
+
+    expect(
+      await screen.findByText(/No passages with sufficient confidence/i),
+    ).toBeInTheDocument();
+  });
 });

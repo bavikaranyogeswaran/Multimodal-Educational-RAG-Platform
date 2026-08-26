@@ -14,12 +14,14 @@ from app.domain.enums import MessageRole, MessageStatus
 from app.domain.retrieval.entities import Citation, Evidence
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
+from app.infrastructure.database.models.chunk import ChunkModel
 from app.infrastructure.database.models.conversation import (
     ConversationModel,
     ConversationRetrievalChunkModel,
     MessageCitationModel,
     MessageModel,
 )
+from app.infrastructure.database.models.document import DocumentModel
 from app.infrastructure.database.repository import ScopedRepository
 
 
@@ -138,6 +140,50 @@ class SqlConversationRepository(ScopedRepository):
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_msg_to_entity(row) for row in rows]
+
+    async def list_retrieval_sources(
+        self, scope: ScopeContext, conversation_id: UUID, message_id: UUID
+    ) -> list[tuple]:
+        """Retrieval chunks for one message, joined with their document, ranked by position.
+
+        Returns a list of (row, cited) pairs where each row carries document display
+        fields alongside the retrieval score and rank. Scoped via MessageModel so an
+        attacker who guesses a message_id from another user gets an empty list.
+        """
+        self._require_scope(scope)
+        chunk_stmt = (
+            select(
+                ConversationRetrievalChunkModel.chunk_id,
+                ConversationRetrievalChunkModel.rank,
+                ConversationRetrievalChunkModel.score,
+                ChunkModel.document_id,
+                ChunkModel.page_start,
+                DocumentModel.filename,
+                DocumentModel.title,
+            )
+            .join(MessageModel, ConversationRetrievalChunkModel.message_id == MessageModel.id)
+            .join(ChunkModel, ConversationRetrievalChunkModel.chunk_id == ChunkModel.id)
+            .join(DocumentModel, ChunkModel.document_id == DocumentModel.id)
+            .where(
+                ConversationRetrievalChunkModel.message_id == message_id,
+                MessageModel.conversation_id == conversation_id,
+                self._scope_filter(MessageModel),
+            )
+            .order_by(ConversationRetrievalChunkModel.rank)
+        )
+        chunk_rows = (await self._session.execute(chunk_stmt)).all()
+        if not chunk_rows:
+            return []
+        cited_stmt = (
+            select(MessageCitationModel.chunk_id)
+            .where(MessageCitationModel.message_id == message_id)
+        )
+        cited_ids = {
+            row
+            for row in (await self._session.execute(cited_stmt)).scalars().all()
+            if row is not None
+        }
+        return [(row, row.chunk_id in cited_ids) for row in chunk_rows]
 
     async def save_retrieval_chunks(
         self, scope: ScopeContext, message_id: UUID, evidence: Sequence[Evidence]

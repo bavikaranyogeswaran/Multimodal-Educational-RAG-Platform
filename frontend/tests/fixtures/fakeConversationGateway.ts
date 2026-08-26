@@ -8,6 +8,7 @@ import {
   type Conversation,
   type CreateConversationRequest,
   type Message,
+  type RetrievalSource,
 } from '@/schemas/conversation';
 import type { MessageRole, MessageStatus } from '@/schemas/enums';
 
@@ -84,6 +85,11 @@ export function createFakeConversationGateway(
 
     updateFocus: vi.fn((_kbId: string, _convId: string, _focus: FocusUpdate): Promise<Conversation> =>
       Promise.resolve(aConversation()),
+    ),
+
+    listSources: vi.fn(
+      (_kbId: string, _convId: string, _msgId: string): Promise<readonly RetrievalSource[]> =>
+        Promise.resolve([]),
     ),
 
     remove: vi.fn((_kbId: string, convId: string): Promise<void> => {

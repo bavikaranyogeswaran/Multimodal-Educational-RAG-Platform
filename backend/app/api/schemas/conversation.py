@@ -79,3 +79,14 @@ class MessageResponse(BaseModel):
     completion_tokens: int | None = None
     finish_reason: str | None = None
     citations: list[CitationResponse] = []
+
+
+class RetrievalSourceResponse(BaseModel):
+    """One retrieved chunk shown in the sources panel after an answer."""
+
+    document_id: UUID
+    document_name: str
+    page_number: int
+    score: float
+    rank: int
+    cited: bool
