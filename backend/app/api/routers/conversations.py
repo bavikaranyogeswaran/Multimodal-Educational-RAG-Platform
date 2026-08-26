@@ -19,6 +19,7 @@ from app.api.schemas.conversation import (
     ConversationResponse,
     CreateConversationRequest,
     MessageResponse,
+    RenameConversationRequest,
     StreamRequest,
 )
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
@@ -151,6 +152,37 @@ async def get_conversation(
     if conversation is None:
         raise HTTPException(status_code=404, detail=_404_CONVERSATION)
     return _conv_response(conversation)
+
+
+@router.patch("/{conversation_id}", status_code=200)
+async def rename_conversation(
+    conversation_id: uuid.UUID,
+    body: RenameConversationRequest,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ConversationResponse:
+    repo = SqlConversationRepository(scope=scope, session=session)
+    conversation = await repo.get(scope, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail=_404_CONVERSATION)
+    conversation = conversation.renamed(body.title, now=datetime.now(UTC))
+    await repo.save(scope, conversation)
+    await session.commit()
+    return _conv_response(conversation)
+
+
+@router.delete("/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    repo = SqlConversationRepository(scope=scope, session=session)
+    conversation = await repo.get(scope, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail=_404_CONVERSATION)
+    await repo.delete(scope, conversation_id)
+    await session.commit()
 
 
 @router.post("/{conversation_id}/stream", status_code=200)

@@ -176,6 +176,86 @@
   border-color: var(--color-accent);
 }
 
+/* ── Restructured conversation card (rename / delete support) ──────────────── */
+
+.convItem {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.convItem:hover {
+  border-color: var(--color-accent);
+}
+
+.convCardMain {
+  display: block;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  text-decoration: none;
+  color: var(--color-text);
+}
+
+.convActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.convRenameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.convRenameInput {
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.convRenameInput:focus {
+  outline: none;
+}
+
+.cardButton {
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.cardButton:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.cardDangerButton {
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-conflict);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.cardDangerButton:hover {
+  border-color: var(--color-conflict);
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+
 .convTitle {
   font-weight: 600;
   font-size: 0.9375rem;

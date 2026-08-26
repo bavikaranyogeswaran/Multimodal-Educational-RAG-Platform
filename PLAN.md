@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~80%, KB screens and Document screens done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~30%, step 19.1 done â€" conversation rename and delete) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
-| Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 85 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **18.4 — the Document screens** (upload, list, status), the first place a file crosses the boundary. Retrieval's open thread is unchanged and recorded: the score margin cannot tell a flat-bad ranking from a flat-good one |
-| Last updated | 26 August 2026 (step 18.4 — Document screens) |
+| Not started | Phase 12, 13, 14, 15, 20 |
+| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 100 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **Phase 19** â€" step 19.2 (citation chips, answer states) or 19.3 (stop/cancel streaming) |
+| Last updated | 26 August 2026 (step 19.1 â€" Conversation rename and delete) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2364,15 +2364,15 @@ to replace the derived latency budgets with measured p95 is unmet.
 
 Covers Â§7 authentication, Knowledge Base management and uploads.
 
-**Status: ~65% — the Knowledge Base screens are live; a person can create, edit and delete them.**
-`AppProviders.tsx`, `queryClient.ts` and `global.css` exist with its design tokens. Step 18.1
+**Status: ~95% â€" all five screen sets are live; a person can sign in, manage Knowledge Bases, upload documents, and hold a streaming conversation.**
+`AppProviders.tsx`, `queryClient.ts` and `global.css` exist with their design tokens. Step 18.1
 filled `src/schemas/` with a Zod mirror of every backend response model and `src/api/` with the
 one client each request passes through, checked against responses captured from the backend
-itself. Step 18.2 added the sign-in service. Step 18.3 added the Knowledge Base screens: the list
-that opens after sign-in, the create and edit modal, and the inline delete confirmation. The API
-client is wired to the session and the contract layer is now actually used. **Document screens are now done** — `src/components/`, `src/hooks/` and `src/state/` are still bare `.gitkeep` files,
-as are most feature directories. D-01 put the backend first deliberately, so this is on plan
-rather than behind it.
+itself. Step 18.2 added the sign-in service. Step 18.3 added the Knowledge Base screens. Step
+18.4 added Document screens with client-side PDF validation and live status polling via
+`refetchInterval`. Step 18.5 added the Conversation list and Chat page, completing the streaming
+path end to end. `src/components/`, `src/hooks/` and `src/state/` are still bare `.gitkeep` files;
+D-01 put the backend first deliberately, so this is on plan rather than behind it.
 
 - [x] **App shell, routing, layout, CSS Modules design tokens, light and dark** â€” `react-router`,
       with the guard wrapping each protected element rather than sitting once around a layout
@@ -2391,28 +2391,178 @@ rather than behind it.
       interaction logic is tested without hitting the network (A-797, A-798)
 - [x] **Document screens** — upload with client-side validation and live processing status polling,
       document list with metadata, inline delete confirmation; gateway interface, API adapter,
-      context, hooks, CSS module, 10 new tests (A-801, A-802, A-803)
-- [~] **Vitest setup and component tests** â€” 65 tests covering the contract, the client, the
-      session store, the guard and both screens. Grows with each screen rather than closing here
+      context, hooks, CSS module, 10 new tests (A-801, A-802, A-803, A-804)
+- [x] **Chat screens** â€” conversation list with inline create form, chat page with SSE token streaming,
+      USER/ASSISTANT/FAILED message rendering; `ApiClient.stream()` async generator over
+      `ReadableStream`; `ConversationGateway` interface with `AsyncIterable<string>` for the
+      stream return type; 11 new tests (A-805, A-806, A-807, A-808)
+- [~] **Vitest setup and component tests** â€” 96 tests covering the contract, the client, the
+      session store, the guard and all five screen sets. Grows with each screen rather than closing here
 
-## Phase 19 â€” Frontend chat, streaming, PDF viewer & citations
+## Phase 19 — Frontend chat, streaming, PDF viewer & citations
 
-Covers Â§7 chat, streaming, PDF, citations and selection; Â§40 frontend contract.
+Covers §7 chat, streaming, PDF, citations and selection; §40 frontend contract.
 
-**Status: not started.** Blocked on Phase 18. Two items are additionally blocked on Phase 6:
-table and figure region selection has nothing to select, and citation navigation can highlight a
-bounding box but cannot name the object it belongs to until Â§40's *object* field is fillable.
+**Status: ~20% — conversation list, create and basic SSE chat were pulled forward into step 18.5.**
+Phase 18 unblocked this phase. Two items are additionally blocked on Phase 6: table and figure
+region selection has nothing to select, and citation navigation can highlight a bounding box but
+cannot name the object it belongs to until §40’s *object* field is fillable (chunks carrying
+`figure_id` / `table_id` is the outstanding gap there).
 
-- [ ] Conversation list, create, rename, delete
-- [ ] Chat rendering the structured response **as natural prose** (Â§38)
-- [ ] SSE streaming with progressive rendering, stop and cancel, error recovery
-- [ ] Insufficient-evidence and conflicting-source states rendered distinctly, never as a normal
-      answer
-- [ ] PDF.js viewer: page navigation, zoom, text layer, search
-- [ ] Citation navigation: click `[S1]` â†’ open document â†’ jump to page â†’ **highlight bounding box**
-- [ ] Table and figure region selection setting `active_table_id` / `active_figure_id`, driving the
-      Â§55 early-exit paths
-- [ ] Retrieval-detail panel: which sources, which scores, why abstained
+The steps build in dependency order: conversation management before the viewer, citation chips
+before navigation, the viewer before anything that opens it.
+
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 19.1 | Conversation rename and delete | S | ☑ |
+| 19.2 | Structured citation rendering and answer states | M | ☐ |
+| 19.3 | Stop streaming and error recovery | S | ☐ |
+| 19.4 | Presigned-URL endpoint and PDF.js viewer | L · risky | ☐ |
+| 19.5 | Citation navigation — chip → PDF page → bounding-box overlay | M | ☐ |
+| 19.6 | Table and figure region selection | M | ☐ |
+| 19.7 | Retrieval-detail panel | S | ☐ |
+
+### 19.1 — Conversation rename and delete
+
+Completes the conversation management surface started in step 18.5. List and create are done;
+rename and delete are the missing half.
+
+- [x] **Backend**: `PATCH /knowledge-bases/{kb_id}/conversations/{conv_id}` and
+      `DELETE /knowledge-bases/{kb_id}/conversations/{conv_id}` added; PATCH uses `Conversation.renamed()`,
+      DELETE fetches first to return 404 rather than silent no-op (A-809)
+- [x] **Frontend**: inline rename on the conversation card — “Rename” button reveals an input
+      pre-filled with the current title; Enter commits, Escape cancels, blur commits via `onBlur`
+      with `onMouseDown` prevention on the cancel button to avoid the blur-before-click race (A-811)
+- [x] **Frontend**: inline delete confirm — “Delete” expands to “Confirm delete” + “Cancel” (A-812)
+- [x] `ConversationGateway` gains `rename(kbId, convId, title)` and `remove(kbId, convId)`;
+      `ApiConversationGateway` implements both — rename uses `request()`, remove uses
+      `requestNoContent()` for the 204 response (A-810)
+- [x] Tests: 4 new tests — rename updates title; cancel leaves title unchanged; delete removes
+      card; cancel-delete restores the Delete button; 100 frontend tests total
+
+### 19.2 — Structured citation rendering and answer states
+
+The backend streams and stores a structured answer `{answer, claims[{claim, citations[]}]}`. The
+current chat page renders the raw prose without parsing it. This step makes citations visible and
+gives abstentions and conflicts their own appearance.
+
+- [ ] **Backend**: if `MessageResponse` does not already include `citations`, extend the message
+      list endpoint to return them — each citation carries `document_id`, `page_number`,
+      `element_type`, `bounding_box`, `content_hash`, and the label (`S1` etc.) it was cited as
+- [ ] Extend the `message` Zod schema with an optional `citations` array
+- [ ] `parseCitations(content: string)` — splits answer prose on `[S1]`…`[Sn]` markers, returns
+      an array of text segments interleaved with label strings; pure function, no side effects
+- [ ] Citation chips rendered as `<mark>` or `<sup>` elements carrying `data-label=”S1”`;
+      clicking one does nothing yet — 19.5 attaches navigation
+- [ ] `ABSTAINED` / insufficient-evidence status: muted banner below the message using the
+      `--color-text-muted` token, never styled like a normal answer
+- [ ] Conflicting-source status: `--color-conflict` banner (token already in `global.css`)
+- [ ] Tests: chips appear for each label in the prose; clicking a chip is a no-op; abstention
+      banner shows; conflict banner shows; a message with no citations renders unchanged
+
+### 19.3 — Stop streaming and error recovery
+
+Two small gaps left from step 18.5: the stream cannot be cancelled mid-flight, and a stream error
+offers no path to retry.
+
+- [ ] `ApiClient.stream()` accepts an optional `AbortSignal`; the `ReadableStream` reader’s loop
+      checks the signal on each iteration and calls `reader.cancel()` when it fires
+- [ ] `useStreamMessage` creates an `AbortController` per send, exposes a `stop()` function that
+      calls `controller.abort()`, and cleans up the controller in its `finally` block
+- [ ] `ChatPage`: “Stop” button replaces “Answering…” during streaming; clicking it calls `stop()`
+      and re-enables the input immediately
+- [ ] `ChatPage`: when `streamError` is set, a “Retry” button re-sends the last query rather than
+      requiring the student to re-type it; the last query is kept in a ref, not in state, so
+      retrying does not flash the input
+- [ ] Tests: stop mid-stream re-enables the input; retry re-calls `gateway.stream` with the same
+      query; an aborted stream does not set `streamError`
+
+### 19.4 — Presigned-URL endpoint and PDF.js viewer
+
+A document’s original PDF lives in R2. Nothing exposes a URL for it yet. This step adds the
+endpoint and the viewer that loads it.
+
+- [ ] **Backend**: `GET /knowledge-bases/{kb_id}/documents/{doc_id}/url` — scoped by
+      `get_kb_scope`, calls `StoragePort.presigned_url(storage_key, ttl)`, returns
+      `{url: string, expires_at: string}`; closes Phase 4’s open thread on the signed-URL
+      expiry test; security test: foreign-KB document returns 404
+- [ ] Add `getDocumentUrl(kbId, documentId)` to `DocumentGateway` and `ApiDocumentGateway`
+- [ ] `pdfjs-dist` installed; worker configured to load from the package’s own path
+- [ ] `PdfViewer` component: fetches the presigned URL on mount, loads the PDF, renders pages
+      to a `<canvas>` via PDF.js; lazy-loaded so the chunk does not inflate the main bundle
+- [ ] Page navigation: previous/next buttons, current-page input, total-page count
+- [ ] Zoom: slider or +/− buttons, stored in component state
+- [ ] Text layer rendered alongside the canvas so text is selectable and searchable
+- [ ] The viewer is a side panel on the chat page, toggled open when a document is selected;
+      a separate route is not needed
+- [ ] Tests: viewer renders page 1; page navigation fires the right PDF.js calls; the presigned
+      URL endpoint is called; 404 on a foreign document
+
+### 19.5 — Citation navigation
+
+Connects the citation chips from 19.2 to the PDF viewer from 19.4.
+
+- [ ] Citation chips (`data-label=”S1”`) dispatch a `cite` event carrying the label; `ChatPage`
+      maps the label to its citation object (document_id, page_number, bbox)
+- [ ] Clicking a chip opens the PDF viewer panel if it is closed and navigates to the cited
+      document and page
+- [ ] Bounding-box overlay: an absolutely-positioned `<div>` drawn over the PDF canvas, sized
+      and positioned from the citation’s `bounding_box` scaled to the current zoom
+- [ ] The overlay colour uses `--color-accent-soft` with a 2 px solid `--color-accent` border —
+      visible without obscuring the text underneath
+- [ ] When the viewer is already open on a different document, switching documents refetches the
+      URL for the new one
+- [ ] Tests: clicking a chip navigates to the right page; the overlay div has the expected
+      dimensions; clicking a second chip replaces the overlay
+
+### 19.6 — Table and figure region selection
+
+Lets the student point the next question at a specific table or figure, driving §55’s early-exit
+paths on the backend.
+
+- [ ] **Backend**: verify `PATCH /knowledge-bases/{kb_id}/conversations/{conv_id}` accepts
+      `active_table_id` and `active_figure_id` fields and persists them; implement if not
+- [ ] Table and figure bounding boxes from `document_elements` are fetched alongside the document
+      metadata; the viewer draws invisible click targets over each region
+- [ ] Clicking a table or figure region: sends the PATCH call, updates conversation state in the
+      query cache; the chat input area shows a “Table selected” or “Figure selected” chip
+- [ ] A deselect button on the chip sends a PATCH with `null` to clear the selection
+- [ ] The selection chip is styled using `--color-accent-soft` — the same token as the citation
+      overlay, so selected context and cited evidence share a visual language
+- [ ] Tests: clicking a region calls the PATCH endpoint with the right id; the chip appears;
+      deselect clears it; a new question carries the active id to `gateway.stream`
+
+### 19.7 — Retrieval-detail panel
+
+After an answer renders, the student can see which passages were retrieved, which were cited, and
+why the system abstained if it did.
+
+- [ ] **Backend**: `GET /knowledge-bases/{kb_id}/conversations/{conv_id}/messages/{msg_id}/sources`
+      — returns the ranked list of chunks from `conversation_retrieval_chunks`, each with its
+      document name, page number, reranker score, and whether it was cited in the final answer;
+      scoped and authenticated
+- [ ] Add `listSources(kbId, convId, msgId)` to `ConversationGateway` and `ApiConversationGateway`
+- [ ] “Sources” toggle below each ASSISTANT message expands a panel; collapsed by default to
+      preserve the reading flow
+- [ ] Each source row: document name, page number, a relevance bar (score as a visual fraction of
+      the top score), and a “Cited” badge when the chunk appears in `message_citations`
+- [ ] For abstentions: a “No passages with sufficient confidence” note followed by the top
+      candidates and their scores, so the student can see what was found but not trusted
+- [ ] Tests: panel opens on toggle; correct source count; cited badge appears on the right rows;
+      abstention note shows when message status is `ABSTAINED`
+
+### Definition of done
+
+- [ ] Conversation rename and delete working in the list
+- [ ] Citation chips `[S1]` clickable in every answer; abstention and conflict states visually
+      distinct from a normal answer (`--color-text-muted` and `--color-conflict` tokens)
+- [ ] Stop button aborts an in-flight stream and re-enables the input; retry re-sends the query
+- [ ] PDF viewer opens the original document via a scoped presigned URL; page navigation and
+      zoom work; text layer is selectable
+- [ ] Clicking a citation chip navigates the viewer to the right page and draws the bounding box
+- [ ] Clicking a table or figure region in the viewer sets `active_table_id` /
+      `active_figure_id` on the conversation; the chip shows the selection; deselect clears it
+- [ ] Sources panel shows each retrieved chunk with its score and whether it was cited
 - [ ] UC-22
 
 ## Phase 20 â€” Frontend graph, study features, memory & end-to-end

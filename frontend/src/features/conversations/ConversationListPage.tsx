@@ -1,12 +1,17 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 
 import { useSession } from '@/features/authentication/sessionContext';
 import {
   useConversations,
   useCreateConversation,
+  useRemoveConversation,
+  useRenameConversation,
 } from '@/features/conversations/hooks';
 import styles from '@/features/conversations/conversations.module.css';
+import type { Conversation } from '@/schemas/conversation';
+
+const KB_ID_FALLBACK = '';
 
 export function ConversationListPage() {
   const { kbId } = useParams<{ kbId: string }>();
@@ -17,11 +22,17 @@ export function ConversationListPage() {
   const { state, signOut } = useSession();
   const email = state.status === 'signed-in' ? state.session.email : null;
 
-  const { data: convs, isLoading, isError } = useConversations(kbId ?? '');
-  const createMutation = useCreateConversation(kbId ?? '');
+  const resolvedKbId = kbId ?? KB_ID_FALLBACK;
+  const { data: convs, isLoading, isError } = useConversations(resolvedKbId);
+  const createMutation = useCreateConversation(resolvedKbId);
+  const renameMutation = useRenameConversation(resolvedKbId);
+  const removeMutation = useRemoveConversation(resolvedKbId);
 
   const [formOpen, setFormOpen] = useState(false);
   const [title, setTitle] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -30,7 +41,7 @@ export function ConversationListPage() {
     const conv = await createMutation.mutateAsync({ title: trimmed });
     setFormOpen(false);
     setTitle('');
-    void navigate(`/knowledge-bases/${kbId ?? ''}/conversations/${conv.id}`, {
+    void navigate(`/knowledge-bases/${resolvedKbId}/conversations/${conv.id}`, {
       state: { kbName, convTitle: conv.title },
     });
   }
@@ -38,6 +49,45 @@ export function ConversationListPage() {
   function openCreate() {
     setTitle('New conversation');
     setFormOpen(true);
+  }
+
+  function startRename(conv: Conversation) {
+    setRenamingId(conv.id);
+    setRenameTitle(conv.title);
+    setDeletingId(null);
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameTitle('');
+  }
+
+  async function commitRename(convId: string) {
+    const trimmed = renameTitle.trim();
+    if (!trimmed) {
+      cancelRename();
+      return;
+    }
+    await renameMutation.mutateAsync({ convId, title: trimmed });
+    cancelRename();
+  }
+
+  function handleRenameKeyDown(e: KeyboardEvent<HTMLInputElement>, convId: string) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void commitRename(convId);
+    }
+    if (e.key === 'Escape') {
+      cancelRename();
+    }
+  }
+
+  async function handleDelete(convId: string) {
+    try {
+      await removeMutation.mutateAsync(convId);
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -57,7 +107,7 @@ export function ConversationListPage() {
         <span className={styles.breadSep}>›</span>
         <Link
           className={styles.back}
-          to={`/knowledge-bases/${kbId ?? ''}`}
+          to={`/knowledge-bases/${resolvedKbId}`}
           state={{ kbName }}
         >
           Documents
@@ -118,17 +168,77 @@ export function ConversationListPage() {
         {convs && convs.length > 0 ? (
           <ul className={styles.list}>
             {convs.map((conv) => (
-              <li key={conv.id}>
-                <Link
-                  className={styles.convCard}
-                  to={`/knowledge-bases/${kbId ?? ''}/conversations/${conv.id}`}
-                  state={{ kbName, convTitle: conv.title }}
-                >
-                  <div className={styles.convTitle}>{conv.title}</div>
-                  <div className={styles.convMeta}>
-                    {new Date(conv.updated_at).toLocaleString()}
+              <li key={conv.id} className={styles.convItem}>
+                {renamingId === conv.id ? (
+                  <div className={styles.convRenameRow}>
+                    <input
+                      className={styles.convRenameInput}
+                      aria-label="Conversation title"
+                      value={renameTitle}
+                      maxLength={200}
+                      autoFocus
+                      onChange={(e) => setRenameTitle(e.target.value)}
+                      onKeyDown={(e) => handleRenameKeyDown(e, conv.id)}
+                      onBlur={() => void commitRename(conv.id)}
+                    />
+                    <button
+                      className={styles.cardButton}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={cancelRename}
+                    >
+                      Cancel
+                    </button>
                   </div>
-                </Link>
+                ) : (
+                  <>
+                    <Link
+                      className={styles.convCardMain}
+                      to={`/knowledge-bases/${resolvedKbId}/conversations/${conv.id}`}
+                      state={{ kbName, convTitle: conv.title }}
+                    >
+                      <div className={styles.convTitle}>{conv.title}</div>
+                      <div className={styles.convMeta}>
+                        {new Date(conv.updated_at).toLocaleString()}
+                      </div>
+                    </Link>
+                    <div className={styles.convActions}>
+                      <button
+                        className={styles.cardButton}
+                        type="button"
+                        onClick={() => startRename(conv)}
+                      >
+                        Rename
+                      </button>
+                      {deletingId === conv.id ? (
+                        <>
+                          <button
+                            className={styles.cardDangerButton}
+                            type="button"
+                            onClick={() => void handleDelete(conv.id)}
+                          >
+                            Confirm delete
+                          </button>
+                          <button
+                            className={styles.cardButton}
+                            type="button"
+                            onClick={() => setDeletingId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className={styles.cardDangerButton}
+                          type="button"
+                          onClick={() => setDeletingId(conv.id)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
               </li>
             ))}
           </ul>

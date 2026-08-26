@@ -30,6 +30,10 @@ class ConversationResponse(BaseModel):
     active_table_id: UUID | None = None
 
 
+class RenameConversationRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
 class StreamRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
 

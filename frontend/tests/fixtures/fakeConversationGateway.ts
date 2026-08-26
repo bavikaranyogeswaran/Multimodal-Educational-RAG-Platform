@@ -70,6 +70,20 @@ export function createFakeConversationGateway(
       return Promise.resolve(conv);
     }),
 
+    rename: vi.fn((_kbId: string, convId: string, title: string): Promise<Conversation> => {
+      const existing = gateway.convs.find((c) => c.id === convId);
+      const updated = existing
+        ? { ...existing, title }
+        : aConversation({ title });
+      gateway.convs = gateway.convs.map((c) => (c.id === convId ? updated : c));
+      return Promise.resolve(updated);
+    }),
+
+    remove: vi.fn((_kbId: string, convId: string): Promise<void> => {
+      gateway.convs = gateway.convs.filter((c) => c.id !== convId);
+      return Promise.resolve();
+    }),
+
     listMessages: vi.fn(
       (_kbId: string, _convId: string): Promise<readonly Message[]> =>
         Promise.resolve(gateway.messages),

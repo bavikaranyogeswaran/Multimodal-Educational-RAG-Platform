@@ -24,6 +24,19 @@ export class ApiConversationGateway implements ConversationGateway {
       body,
     });
 
+  rename = (kbId: string, convId: string, title: string): Promise<Conversation> =>
+    this.#client.request(
+      conversation,
+      `/knowledge-bases/${kbId}/conversations/${convId}`,
+      { method: 'PATCH', body: { title } },
+    );
+
+  remove = (kbId: string, convId: string): Promise<void> =>
+    this.#client.requestNoContent(
+      `/knowledge-bases/${kbId}/conversations/${convId}`,
+      { method: 'DELETE' },
+    );
+
   listMessages = (kbId: string, convId: string): Promise<readonly Message[]> =>
     this.#client.request(
       messageList,

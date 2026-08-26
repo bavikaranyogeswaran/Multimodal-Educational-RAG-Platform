@@ -24,6 +24,25 @@ export function useCreateConversation(kbId: string) {
   });
 }
 
+export function useRenameConversation(kbId: string) {
+  const gateway = useConversationGateway();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ convId, title }: { convId: string; title: string }) =>
+      gateway.rename(kbId, convId, title),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: convListKey(kbId) }),
+  });
+}
+
+export function useRemoveConversation(kbId: string) {
+  const gateway = useConversationGateway();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (convId: string) => gateway.remove(kbId, convId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: convListKey(kbId) }),
+  });
+}
+
 export function useMessages(kbId: string, convId: string) {
   const gateway = useConversationGateway();
   return useQuery({
