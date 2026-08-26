@@ -6,6 +6,8 @@ import { ApiProvider } from '@/api/ApiProvider';
 import { createQueryClient } from '@/app/queryClient';
 import { SessionProvider } from '@/features/authentication/SessionProvider';
 import type { AuthGateway } from '@/features/authentication/gateway';
+import { DocumentProvider } from '@/features/documents/DocumentProvider';
+import type { DocumentGateway } from '@/features/documents/gateway';
 import type { KnowledgeBaseGateway } from '@/features/knowledge-bases/gateway';
 import { KnowledgeBaseProvider } from '@/features/knowledge-bases/KnowledgeBaseProvider';
 
@@ -16,8 +18,10 @@ interface AppProvidersProps {
   children: ReactNode;
   /** Substituted in tests for a router that does not touch the address bar. */
   router?: (children: ReactNode) => ReactNode;
-  /** When supplied, bypasses the API gateway (for tests that do not want network calls). */
+  /** When supplied, bypasses the KB API gateway (for tests that do not want network calls). */
   kbGateway?: KnowledgeBaseGateway;
+  /** When supplied, bypasses the document API gateway (for tests that do not want network calls). */
+  docGateway?: DocumentGateway;
 }
 
 /**
@@ -37,6 +41,7 @@ export function AppProviders({
   children,
   router,
   kbGateway,
+  docGateway,
 }: AppProvidersProps) {
   const [queryClient] = useState(createQueryClient);
   const wrap = router ?? ((inner: ReactNode) => <BrowserRouter>{inner}</BrowserRouter>);
@@ -46,7 +51,9 @@ export function AppProviders({
       <SessionProvider auth={auth}>
         <ApiProvider auth={auth} baseUrl={apiBaseUrl}>
           <KnowledgeBaseProvider {...(kbGateway !== undefined ? { gateway: kbGateway } : {})}>
-            {wrap(children)}
+            <DocumentProvider {...(docGateway !== undefined ? { gateway: docGateway } : {})}>
+              {wrap(children)}
+            </DocumentProvider>
           </KnowledgeBaseProvider>
         </ApiProvider>
       </SessionProvider>

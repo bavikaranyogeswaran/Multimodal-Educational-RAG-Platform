@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router';
 import { RequireAuth } from '@/features/authentication/RequireAuth';
 import { SignInPage } from '@/features/authentication/SignInPage';
 import { SignUpPage } from '@/features/authentication/SignUpPage';
+import { DocumentListPage } from '@/features/documents/DocumentListPage';
 import { KnowledgeBaseListPage } from '@/features/knowledge-bases/KnowledgeBaseListPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
@@ -24,6 +25,14 @@ export function App() {
         element={
           <RequireAuth>
             <KnowledgeBaseListPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/knowledge-bases/:kbId"
+        element={
+          <RequireAuth>
+            <DocumentListPage />
           </RequireAuth>
         }
       />

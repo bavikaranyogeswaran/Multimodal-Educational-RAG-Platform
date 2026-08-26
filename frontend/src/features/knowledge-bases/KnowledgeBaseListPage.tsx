@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router';
 
 import { useSession } from '@/features/authentication/sessionContext';
 import {
@@ -237,6 +238,13 @@ export function KnowledgeBaseListPage() {
                   </span>
                 </div>
                 <div className={styles.cardActions}>
+                  <Link
+                    className={styles.docsButton}
+                    to={`/knowledge-bases/${kb.id}`}
+                    state={{ kbName: kb.name }}
+                  >
+                    Documents
+                  </Link>
                   <button
                     className={styles.editButton}
                     type="button"

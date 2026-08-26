@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~65%, list, create, edit and delete screens done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~80%, KB screens and Document screens done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 12, 13, 14, 15, 19, 20 |
-| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 75 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 85 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
 | Next step | **18.4 — the Document screens** (upload, list, status), the first place a file crosses the boundary. Retrieval's open thread is unchanged and recorded: the score margin cannot tell a flat-bad ranking from a flat-good one |
-| Last updated | 25 August 2026 (step 18.3 — Knowledge Base screens) |
+| Last updated | 26 August 2026 (step 18.4 — Document screens) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2370,8 +2370,7 @@ filled `src/schemas/` with a Zod mirror of every backend response model and `src
 one client each request passes through, checked against responses captured from the backend
 itself. Step 18.2 added the sign-in service. Step 18.3 added the Knowledge Base screens: the list
 that opens after sign-in, the create and edit modal, and the inline delete confirmation. The API
-client is wired to the session and the contract layer is now actually used. **No Document screens
-exist yet** — `src/components/`, `src/hooks/` and `src/state/` are still bare `.gitkeep` files,
+client is wired to the session and the contract layer is now actually used. **Document screens are now done** — `src/components/`, `src/hooks/` and `src/state/` are still bare `.gitkeep` files,
 as are most feature directories. D-01 put the backend first deliberately, so this is on plan
 rather than behind it.
 
@@ -2390,9 +2389,9 @@ rather than behind it.
 - [x] **Knowledge Base CRUD screens** — list with empty state and KB cards, create/edit
       modal, inline delete confirmation; the gateway sits behind an interface so all
       interaction logic is tested without hitting the network (A-797, A-798)
-- [ ] Upload with drag-drop, client-side validation, progress, **live per-stage processing status**,
-      failure display with retry
-- [ ] Document list, metadata, delete with confirmation
+- [x] **Document screens** — upload with client-side validation and live processing status polling,
+      document list with metadata, inline delete confirmation; gateway interface, API adapter,
+      context, hooks, CSS module, 10 new tests (A-801, A-802, A-803)
 - [~] **Vitest setup and component tests** â€” 65 tests covering the contract, the client, the
       session store, the guard and both screens. Grows with each screen rather than closing here
 

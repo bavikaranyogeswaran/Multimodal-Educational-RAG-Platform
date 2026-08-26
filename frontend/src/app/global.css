@@ -15,6 +15,8 @@
   --color-abstain-soft: #fdf6e3;
   --color-conflict: #9a3d2f;
   --color-conflict-soft: #fdefec;
+  --color-success: #2d6a3f;
+  --color-success-soft: #eaf4ee;
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -47,6 +49,8 @@
     --color-abstain-soft: #2b2416;
     --color-conflict: #e08977;
     --color-conflict-soft: #2e1c19;
+    --color-success: #5fb87a;
+    --color-success-soft: #162b1e;
   }
 }
 
