@@ -38,6 +38,29 @@ class StreamRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
 
 
+class BoundingBoxResponse(BaseModel):
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+class CitationResponse(BaseModel):
+    """One source passage the model cited in the answer.
+
+    Location columns are copied from the evidence at citation time rather than joined
+    through the chunk, so the record stays accurate after reprocessing rewrites chunks.
+    """
+
+    label: str
+    document_id: UUID
+    page_number: int
+    chunk_type: str
+    element_type: str | None = None
+    bounding_box: BoundingBoxResponse | None = None
+    evidence_hash: str | None = None
+
+
 class MessageResponse(BaseModel):
     id: UUID
     conversation_id: UUID
@@ -51,3 +74,4 @@ class MessageResponse(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     finish_reason: str | None = None
+    citations: list[CitationResponse] = []

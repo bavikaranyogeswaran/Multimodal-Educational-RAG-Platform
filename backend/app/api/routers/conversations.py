@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.answer import get_answer_use_case
 from app.api.dependencies.scope import get_kb_scope
 from app.api.schemas.conversation import (
+    BoundingBoxResponse,
+    CitationResponse,
     ConversationResponse,
     CreateConversationRequest,
     MessageResponse,
@@ -24,6 +26,7 @@ from app.api.schemas.conversation import (
 )
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.conversations.entities import Conversation, Message
+from app.infrastructure.database.models.conversation import MessageCitationModel
 from app.domain.errors import GenerationRejectedError
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
@@ -38,6 +41,13 @@ router = APIRouter(
 )
 
 _404_CONVERSATION = "Conversation not found"
+
+#: Shown when the material genuinely does not cover the question. The system is working
+#: correctly; the student should know the gap is in the uploaded material, not the system.
+_ABSTAINED_MESSAGE = (
+    "The uploaded material does not contain enough information to answer this question. "
+    "Try asking something the documents cover, or upload more material."
+)
 
 #: Shown when an answer fails its grounding checks. Rejection means a citation was
 #: invented or the evidence contradicts the claim, so withholding it is the system
@@ -89,7 +99,31 @@ def _conv_response(conv: Conversation) -> ConversationResponse:
     )
 
 
-def _msg_response(msg: Message) -> MessageResponse:
+def _citation_response(c: MessageCitationModel) -> CitationResponse:
+    has_bbox = any(
+        v is not None
+        for v in (c.bounding_box_x0, c.bounding_box_y0, c.bounding_box_x1, c.bounding_box_y1)
+    )
+    return CitationResponse(
+        label=c.label,
+        document_id=c.document_id,
+        page_number=c.page_number,
+        chunk_type=c.chunk_type,
+        element_type=c.element_type,
+        bounding_box=BoundingBoxResponse(
+            x0=c.bounding_box_x0,  # type: ignore[arg-type]
+            y0=c.bounding_box_y0,  # type: ignore[arg-type]
+            x1=c.bounding_box_x1,  # type: ignore[arg-type]
+            y1=c.bounding_box_y1,  # type: ignore[arg-type]
+        ) if has_bbox else None,
+        evidence_hash=c.evidence_hash,
+    )
+
+
+def _msg_response(
+    msg: Message,
+    citations: list[MessageCitationModel] | None = None,
+) -> MessageResponse:
     return MessageResponse(
         id=msg.id,
         conversation_id=msg.conversation_id,
@@ -103,6 +137,7 @@ def _msg_response(msg: Message) -> MessageResponse:
         prompt_tokens=msg.prompt_tokens,
         completion_tokens=msg.completion_tokens,
         finish_reason=msg.finish_reason,
+        citations=[_citation_response(c) for c in (citations or [])],
     )
 
 
@@ -214,12 +249,15 @@ async def stream_response(
             try:
                 async for token in stream:
                     yield f"data: {token}\n\n"
-            except GenerationRejectedError:
+            except GenerationRejectedError as exc:
                 # Validation rejects an answer before its first token, by which point the
                 # 200 and its headers have already gone out — there is no status code left
                 # to fail with. Saying so on the open stream is the only way the student
                 # learns why nothing arrived, instead of the connection simply dropping.
-                yield f"event: error\ndata: {_REJECTED_MESSAGE}\n\n"
+                # Abstention and rejection are different outcomes and get different messages:
+                # one is about the material, the other about a quality failure.
+                msg = _ABSTAINED_MESSAGE if exc.abstained else _REJECTED_MESSAGE
+                yield f"event: error\ndata: {msg}\n\n"
             except Exception:
                 # A generation that failed rather than one that was refused: the provider
                 # died, the connection dropped, something broke. Logged in full, because a
@@ -249,4 +287,6 @@ async def list_messages(
     if conversation is None:
         raise HTTPException(status_code=404, detail=_404_CONVERSATION)
     messages = await repo.list_messages(scope, conversation_id, limit=limit)
-    return [_msg_response(m) for m in messages]
+    # Load all citations for the conversation in one query, then index them by message.
+    citation_map = await repo.list_citations_by_conversation(scope, conversation_id)
+    return [_msg_response(m, citation_map.get(m.id)) for m in messages]

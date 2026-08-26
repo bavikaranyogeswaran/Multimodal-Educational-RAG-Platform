@@ -245,6 +245,14 @@ class MessageStatus(StrEnum):
     #: answer, and the two call for different responses — one is a signal about the
     #: interface, the other about the answer.
     CANCELLED = "CANCELLED"
+    #: The model determined the uploaded material does not cover the question. Distinct
+    #: from FAILED because nothing went wrong — the system is working correctly by
+    #: declining to invent an answer. Shown with a muted banner rather than as an error.
+    ABSTAINED = "ABSTAINED"
+    #: Sources retrieved for the answer contradict each other on the same claim. Shown
+    #: with a conflict banner so the student is told the disagreement exists rather than
+    #: receiving a blended consensus no source actually states. Produced by Phase 13.
+    CONFLICTING = "CONFLICTING"
 
     @property
     def is_terminal(self) -> bool:
@@ -252,6 +260,8 @@ class MessageStatus(StrEnum):
             MessageStatus.COMPLETED,
             MessageStatus.FAILED,
             MessageStatus.CANCELLED,
+            MessageStatus.ABSTAINED,
+            MessageStatus.CONFLICTING,
         }
 
     @property
@@ -269,13 +279,19 @@ class MessageStatus(StrEnum):
 
 _MESSAGE_TRANSITIONS: Final[Mapping[MessageStatus, frozenset[MessageStatus]]] = {
     MessageStatus.RECEIVED: frozenset({MessageStatus.PROCESSING}),
-    MessageStatus.PROCESSING: frozenset(
-        {MessageStatus.COMPLETED, MessageStatus.FAILED, MessageStatus.CANCELLED}
-    ),
-    # Generation completed, failed or was abandoned — all three are absorbing.
+    MessageStatus.PROCESSING: frozenset({
+        MessageStatus.COMPLETED,
+        MessageStatus.FAILED,
+        MessageStatus.CANCELLED,
+        MessageStatus.ABSTAINED,
+        MessageStatus.CONFLICTING,
+    }),
+    # All terminal states are absorbing — no further transitions.
     MessageStatus.COMPLETED: frozenset(),
     MessageStatus.FAILED: frozenset(),
     MessageStatus.CANCELLED: frozenset(),
+    MessageStatus.ABSTAINED: frozenset(),
+    MessageStatus.CONFLICTING: frozenset(),
 }
 
 

@@ -331,6 +331,7 @@ class AnswerUseCase:
         async def _tracked() -> AsyncGenerator[str, None]:
             failed = False
             abandoned = False
+            abstained = False
             answer_text: str | None = None
             citations: tuple[Citation, ...] = ()
             usage: GenerationUsage | None = None
@@ -371,8 +372,16 @@ class AnswerUseCase:
 
                 answer = _returnable_answer(checked)
                 if answer is None:
+                    # Record whether this was a deliberate abstention or a quality
+                    # failure before raising, so the finally block can store the right
+                    # status. Insufficient evidence is a correct outcome; a fabricated
+                    # or unsupported citation is not.
+                    abstained = (
+                        checked.decision is ValidationDecision.INSUFFICIENT_EVIDENCE
+                    )
                     raise GenerationRejectedError(  # noqa: TRY301
-                        f"answer rejected after validation: {checked.decision}"
+                        f"answer rejected after validation: {checked.decision}",
+                        abstained=abstained,
                     )
 
                 answer_text = answer.answer
@@ -399,7 +408,7 @@ class AnswerUseCase:
                     conversation_id=conv_id,
                     assistant_message_id=assistant_id,
                     assistant_created_at=assistant_created_at,
-                    status=_outcome(failed=failed, abandoned=abandoned),
+                    status=_outcome(failed=failed, abandoned=abandoned, abstained=abstained),
                     answer_text=answer_text,
                     usage=usage,
                     evidence=evidence,
@@ -421,6 +430,7 @@ _PLACEHOLDER: dict[MessageStatus, str] = {
     MessageStatus.FAILED: "(generation failed)",
     MessageStatus.CANCELLED: "(cancelled before an answer was produced)",
     MessageStatus.COMPLETED: "(no answer produced)",
+    MessageStatus.ABSTAINED: "(no answer — the material does not address this question)",
 }
 
 
@@ -506,15 +516,19 @@ def _returnable_answer(checked: _Validation) -> GeneratedAnswer | None:
     )
 
 
-def _outcome(*, failed: bool, abandoned: bool) -> MessageStatus:
+def _outcome(*, failed: bool, abandoned: bool, abstained: bool) -> MessageStatus:
     """How the turn ended, in the order the reasons take precedence.
 
     Abandonment is checked first: a student who has already left cannot be told about a
-    failure, so what the record should say is that they left. A turn is only COMPLETED
-    when it neither failed nor was walked away from.
+    failure, so what the record should say is that they left. Abstention comes before
+    general failure: the two happen at the same time (both set their flags before the
+    exception propagates), but ABSTAINED is the more precise description and the one the
+    frontend renders differently.
     """
     if abandoned:
         return MessageStatus.CANCELLED
+    if abstained:
+        return MessageStatus.ABSTAINED
     if failed:
         return MessageStatus.FAILED
     return MessageStatus.COMPLETED

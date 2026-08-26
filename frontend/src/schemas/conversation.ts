@@ -42,6 +42,27 @@ export const streamRequest = z.object({
 });
 export type StreamRequest = z.input<typeof streamRequest>;
 
+/** The coordinates of one inline passage the model drew from. */
+export const boundingBox = z.object({
+  x0: z.number(),
+  y0: z.number(),
+  x1: z.number(),
+  y1: z.number(),
+});
+export type BoundingBox = z.infer<typeof boundingBox>;
+
+/** One source passage cited in an answer, identified by its label (e.g. "S1"). */
+export const citation = z.object({
+  label: z.string(),
+  document_id: uuid,
+  page_number: z.number().int(),
+  chunk_type: z.string(),
+  element_type: z.string().nullable().optional(),
+  bounding_box: boundingBox.nullable().optional(),
+  evidence_hash: z.string().nullable().optional(),
+});
+export type Citation = z.infer<typeof citation>;
+
 export const message = z.object({
   id: uuid,
   conversation_id: uuid,
@@ -56,6 +77,8 @@ export const message = z.object({
   prompt_tokens: z.number().int().nullable(),
   completion_tokens: z.number().int().nullable(),
   finish_reason: z.string().nullable(),
+  /** Source passages the model cited; empty when there are none. */
+  citations: z.array(citation).optional().default([]),
 });
 export type Message = z.infer<typeof message>;
 

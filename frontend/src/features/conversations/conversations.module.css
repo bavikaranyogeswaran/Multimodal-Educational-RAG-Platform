@@ -419,3 +419,51 @@
 .bottomAnchor {
   height: 0;
 }
+
+/* ── Citation chips ──────────────────────────────────────────────────────── */
+
+/* Inline superscript chip that marks one cited source passage. */
+.citationChip {
+  display: inline-block;
+  padding: 0 4px;
+  margin-left: 1px;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  color: var(--color-accent);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+  vertical-align: super;
+  cursor: default;
+  user-select: none;
+}
+
+/* ── Answer-state banners ────────────────────────────────────────────────── */
+
+/* Shown when the model could not answer because the material doesn't cover the question. */
+.abstentionMsg {
+  align-self: flex-start;
+  max-width: 80%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+/* Shown when the material contains contradictory evidence for the question. */
+.conflictMsg {
+  align-self: flex-start;
+  max-width: 80%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-conflict-soft);
+  border: 1px solid var(--color-conflict);
+  border-left: 4px solid var(--color-conflict);
+  border-radius: var(--radius-md);
+  color: var(--color-conflict);
+  font-size: 0.875rem;
+}

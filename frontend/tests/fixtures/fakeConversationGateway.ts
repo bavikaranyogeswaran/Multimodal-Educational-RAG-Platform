@@ -4,6 +4,7 @@ import type { ConversationGateway } from '@/features/conversations/gateway';
 import {
   conversation as convSchema,
   message as msgSchema,
+  type Citation,
   type Conversation,
   type CreateConversationRequest,
   type Message,
@@ -30,6 +31,7 @@ export const aMessage = (
     role: MessageRole;
     status: MessageStatus;
     content: string;
+    citations: Citation[];
   }> = {},
 ): Message =>
   msgSchema.parse({
@@ -45,6 +47,7 @@ export const aMessage = (
     prompt_tokens: null,
     completion_tokens: null,
     finish_reason: null,
+    citations: overrides.citations ?? [],
   });
 
 export interface FakeConversationGateway extends ConversationGateway {

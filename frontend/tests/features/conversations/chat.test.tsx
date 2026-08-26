@@ -92,6 +92,51 @@ describe('Chat page', () => {
     });
   });
 
+  it('shows an abstention banner for ABSTAINED messages', async () => {
+    renderChat([aMessage({ role: 'ASSISTANT', status: 'ABSTAINED', content: '' })]);
+    expect(
+      await screen.findByText(/does not contain enough information/i),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a conflict banner for CONFLICTING messages', async () => {
+    renderChat([aMessage({ role: 'ASSISTANT', status: 'CONFLICTING', content: '' })]);
+    expect(
+      await screen.findByText(/conflicting evidence/i),
+    ).toBeInTheDocument();
+  });
+
+  it('renders inline citation chips for COMPLETED assistant messages', async () => {
+    renderChat([
+      aMessage({
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        content: 'Gradient descent [S1] minimises loss [S2].',
+        citations: [
+          {
+            label: 'S1',
+            // Valid v4 UUID (version nibble = 4, variant nibble = 8).
+            document_id: '00000000-0000-4000-8000-000000000001',
+            page_number: 3,
+            chunk_type: 'text',
+          },
+          {
+            label: 'S2',
+            document_id: '00000000-0000-4000-8000-000000000002',
+            page_number: 7,
+            chunk_type: 'text',
+          },
+        ],
+      }),
+    ]);
+    // The markers should be replaced by chip elements, not rendered as raw text.
+    expect(await screen.findByRole('superscript', { name: /Citation S1/i })).toBeInTheDocument();
+    expect(screen.getByRole('superscript', { name: /Citation S2/i })).toBeInTheDocument();
+    // The surrounding plain text should still be present.
+    expect(screen.getByText(/Gradient descent/)).toBeInTheDocument();
+    expect(screen.getByText(/minimises loss/)).toBeInTheDocument();
+  });
+
   it('shows the response in history after the stream completes', async () => {
     renderChat();
     await screen.findByRole('button', { name: 'Send' });

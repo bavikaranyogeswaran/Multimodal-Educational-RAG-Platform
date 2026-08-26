@@ -52,6 +52,31 @@ class SqlConversationRepository(ScopedRepository):
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_conv_to_entity(row) for row in rows]
 
+    async def list_citations_by_conversation(
+        self, scope: ScopeContext, conversation_id: UUID
+    ) -> dict[UUID, list[MessageCitationModel]]:
+        """All citations for every message in a conversation, keyed by message_id.
+
+        Loads in one query by joining through messages to apply the scope filter — citations
+        are scoped through their message, not directly. Returns an empty dict when there are
+        no citations, not an error.
+        """
+        self._require_scope(scope)
+        stmt = (
+            select(MessageCitationModel)
+            .join(MessageModel, MessageCitationModel.message_id == MessageModel.id)
+            .where(
+                MessageModel.conversation_id == conversation_id,
+                self._scope_filter(MessageModel),
+            )
+            .order_by(MessageCitationModel.message_id, MessageCitationModel.citation_order)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        result: dict[UUID, list[MessageCitationModel]] = {}
+        for row in rows:
+            result.setdefault(row.message_id, []).append(row)
+        return result
+
     async def delete(self, scope: ScopeContext, conversation_id: UUID) -> None:
         self._require_scope(scope)
         stmt = sa_delete(ConversationModel).where(

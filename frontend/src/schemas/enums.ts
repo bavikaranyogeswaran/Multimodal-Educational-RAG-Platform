@@ -36,5 +36,9 @@ export const messageStatus = z.enum([
   'COMPLETED',
   'FAILED',
   'CANCELLED',
+  // The model deliberately withheld the answer because the material does not cover the question.
+  'ABSTAINED',
+  // Contradictory evidence was found; the answer cannot be trusted until resolved.
+  'CONFLICTING',
 ]);
 export type MessageStatus = z.infer<typeof messageStatus>;

@@ -28,12 +28,12 @@ system design specification.
 |---|---|
 | Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~30%, step 19.1 done â€" conversation rename and delete) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~55%, steps 19.1 and 19.2 done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 12, 13, 14, 15, 20 |
-| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 100 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **Phase 19** â€" step 19.2 (citation chips, answer states) or 19.3 (stop/cancel streaming) |
-| Last updated | 26 August 2026 (step 19.1 â€" Conversation rename and delete) |
+| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 112 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Next step | **Phase 19** â€" step 19.3 (stop/cancel streaming) |
+| Last updated | 26 August 2026 (step 19.2 â€" citation chips and answer states) |
 
 Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to

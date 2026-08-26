@@ -2,11 +2,52 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { Link, useLocation, useParams } from 'react-router';
 
 import { useSession } from '@/features/authentication/sessionContext';
+import { parseCitations } from '@/features/conversations/citationUtils';
 import { useMessages, useStreamMessage } from '@/features/conversations/hooks';
 import styles from '@/features/conversations/conversations.module.css';
+import type { Citation } from '@/schemas/conversation';
 import type { MessageStatus } from '@/schemas/enums';
 
 const STATUS_FAILED: MessageStatus[] = ['FAILED', 'CANCELLED'];
+
+/** Render assistant message text with inline citation chips replacing [S1]-style markers. */
+function MessageWithCitations({
+  content,
+  citations,
+}: {
+  content: string;
+  citations: Citation[];
+}) {
+  // Build a label → citation index so each chip can be looked up by its label.
+  const citationByLabel = new Map(citations.map((c) => [c.label, c]));
+  const parts = parseCitations(content);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 0 ? (
+          // Even indices are plain text segments — render as-is.
+          <span key={i}>{part}</span>
+        ) : (
+          // Odd indices are citation labels captured from [S1] markers.
+          // Clicking is a no-op for now; navigation to the source is added in a later step.
+          <sup
+            key={i}
+            className={styles.citationChip}
+            data-label={part}
+            aria-label={`Citation ${part}`}
+            title={
+              citationByLabel.has(part)
+                ? `Page ${String(citationByLabel.get(part)!.page_number)}`
+                : part
+            }
+          >
+            [{part}]
+          </sup>
+        ),
+      )}
+    </>
+  );
+}
 
 export function ChatPage() {
   const { kbId, convId } = useParams<{ kbId: string; convId: string }>();
@@ -91,9 +132,36 @@ export function ChatPage() {
               </div>
             );
           }
+          if (msg.status === 'ABSTAINED') {
+            // The model had material but it did not address the question. This is a
+            // deliberate outcome, so the banner frames it as a gap in the uploaded
+            // documents rather than a system failure.
+            return (
+              <div key={msg.id} className={styles.abstentionMsg} role="status">
+                The uploaded material does not contain enough information to answer this
+                question. Try asking something the documents cover, or upload more material.
+              </div>
+            );
+          }
+          if (msg.status === 'CONFLICTING') {
+            // Contradictory evidence was found. The answer exists but cannot be trusted
+            // without resolving the conflict. Named explicitly so the student knows this
+            // is about the content, not a technical failure.
+            return (
+              <div key={msg.id} className={styles.conflictMsg} role="status">
+                Conflicting evidence was found in your material. The documents may
+                contradict each other on this topic. Review the sources before relying on
+                any answer here.
+              </div>
+            );
+          }
           return (
             <div key={msg.id} className={styles.assistantMsg}>
-              {msg.content}
+              {msg.status === 'COMPLETED' ? (
+                <MessageWithCitations content={msg.content} citations={msg.citations ?? []} />
+              ) : (
+                msg.content
+              )}
             </div>
           );
         })}

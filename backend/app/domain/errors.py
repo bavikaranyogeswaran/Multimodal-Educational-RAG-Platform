@@ -157,4 +157,13 @@ class GenerationRejectedError(DomainError):
     answer still fails validation after a single repair attempt. The presentation layer
     should treat this as a recoverable failure and return an appropriate message to the
     student rather than a 5xx.
+
+    `abstained` is True when the model correctly determined the material does not cover
+    the question (INSUFFICIENT_EVIDENCE), and False when a citation was fabricated or the
+    evidence contradicts the claim (REJECTED). The two call for different messages: one
+    is about the material, the other is about a quality failure.
     """
+
+    def __init__(self, message: str, *, abstained: bool = False) -> None:
+        super().__init__(message)
+        self.abstained = abstained
