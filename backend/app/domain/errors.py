@@ -150,6 +150,17 @@ class GenerationParseError(DomainError):
     """
 
 
+class GraphExtractionError(DomainError):
+    """The model's graph extraction output could not be parsed or failed validation.
+
+    Raised by GraphExtractionPort implementations when the JSON is malformed,
+    a field is missing or the wrong type, a type string is unrecognised, or a
+    provenance invariant would be violated (blank evidence, self-referencing edge,
+    unresolved entity name). The BUILD_GRAPH worker catches this to skip the chunk
+    and continue with others rather than failing the entire job.
+    """
+
+
 class GenerationRejectedError(DomainError):
     """A generated answer could not be grounded in the retrieved evidence.
 

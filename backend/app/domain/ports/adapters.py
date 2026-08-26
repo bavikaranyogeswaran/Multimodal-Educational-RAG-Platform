@@ -270,6 +270,34 @@ class KeywordRetriever(Protocol):
         ...
 
 
+class GraphExtractionPort(Protocol):
+    """LLM-backed entity and relationship extraction from a parent chunk.
+
+    Converts raw passage text into provisional GraphEntity and GraphRelationship
+    objects. Provenance (chunk_id, page_number) is attached to every relationship
+    so the provenance invariant is satisfied before anything touches the repository.
+    Raises GraphExtractionError when the model output fails parsing or validation.
+    """
+
+    async def extract(
+        self,
+        scope: ScopeContext,
+        *,
+        text: str,
+        document_id: UUID,
+        chunk_id: UUID,
+        page_number: int,
+    ) -> tuple[list[GraphEntity], list[GraphRelationship]]:
+        """Return candidate entities and relationships extracted from `text`.
+
+        Every returned GraphRelationship carries source_chunk_id = chunk_id and
+        page_number = page_number. The entities are undeduped candidates; the
+        caller (BUILD_GRAPH worker) is responsible for deduplication via
+        GraphDeduplicator before writing to the repository.
+        """
+        ...
+
+
 class GraphPort(Protocol):
     """Graph traversal in vocabulary terms, never in a query language.
 
