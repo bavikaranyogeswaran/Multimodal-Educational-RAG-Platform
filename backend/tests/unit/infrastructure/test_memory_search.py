@@ -299,3 +299,65 @@ class TestKeywordSearch:
         with pytest.raises(ScopeViolationError):
             await repo.keyword_search(_make_scope(), "test", limit=5)
         session.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# list_expiring
+# ---------------------------------------------------------------------------
+
+
+class TestListExpiring:
+    async def test_applies_scope_filter(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_execute_scalars([]))
+        cutoff = datetime.now(UTC)
+
+        await _repo(scope, session).list_expiring(scope, before=cutoff)
+
+        compiled = str(session.execute.call_args[0][0].compile())
+        assert "user_id" in compiled
+        assert "knowledge_base_id" in compiled
+
+    async def test_filters_to_active_status(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_execute_scalars([]))
+        cutoff = datetime.now(UTC)
+
+        await _repo(scope, session).list_expiring(scope, before=cutoff)
+
+        compiled = str(
+            session.execute.call_args[0][0].compile(compile_kwargs={"literal_binds": True})
+        )
+        assert "ACTIVE" in compiled
+
+    async def test_includes_expires_at_filter(self) -> None:
+        scope = _make_scope()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_execute_scalars([]))
+        cutoff = datetime.now(UTC)
+
+        await _repo(scope, session).list_expiring(scope, before=cutoff)
+
+        compiled = str(session.execute.call_args[0][0].compile())
+        assert "expires_at" in compiled
+
+    async def test_returns_entities(self) -> None:
+        scope = _make_scope()
+        model = _make_model(scope)
+        model.expires_at = datetime.now(UTC)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_execute_scalars([model]))
+
+        results = await _repo(scope, session).list_expiring(scope, before=datetime.now(UTC))
+
+        assert len(results) == 1
+        assert results[0].key == model.key
+
+    async def test_rejects_foreign_scope(self) -> None:
+        session = AsyncMock()
+        repo = _repo(_make_scope(), session)
+        with pytest.raises(ScopeViolationError):
+            await repo.list_expiring(_make_scope(), before=datetime.now(UTC))
+        session.execute.assert_not_called()

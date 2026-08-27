@@ -131,6 +131,24 @@ class SqlMemoryRepository(ScopedRepository):
         rows = (await self._session.execute(stmt)).all()
         return [(_to_entity(row[0]), float(row[1])) for row in rows]
 
+    async def list_expiring(
+        self, scope: ScopeContext, *, before: datetime
+    ) -> Sequence[MemoryFact]:
+        """ACTIVE facts whose expires_at is set and falls on or before `before`."""
+        self._require_scope(scope)
+        stmt = (
+            select(MemoryFactModel)
+            .where(
+                self._scope_filter(MemoryFactModel),
+                MemoryFactModel.status == MemoryStatus.ACTIVE.value,
+                MemoryFactModel.expires_at.isnot(None),
+                MemoryFactModel.expires_at <= before,
+            )
+            .order_by(MemoryFactModel.expires_at)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_to_entity(row) for row in rows]
+
 
 def _utc(dt: datetime) -> datetime:
     """Return dt unchanged if timezone-aware; attach UTC when SQLite strips it."""

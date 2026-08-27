@@ -331,6 +331,12 @@ class MemoryRepository(Protocol):
         """Return (fact, ts_rank_cd) pairs for ACTIVE facts matching query_text."""
         ...
 
+    async def list_expiring(
+        self, scope: ScopeContext, *, before: datetime
+    ) -> Sequence[MemoryFact]:
+        """ACTIVE facts whose expires_at is set and falls on or before `before`."""
+        ...
+
 
 class GraphRepository(Protocol):
     """Persistence for GraphEntity and GraphRelationship."""
