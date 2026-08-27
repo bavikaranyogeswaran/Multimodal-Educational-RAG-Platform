@@ -171,6 +171,16 @@ class GraphExtractionError(DomainError):
     """
 
 
+class MemoryExtractionError(DomainError):
+    """The model's memory extraction output could not be parsed or failed validation.
+
+    Raised by MemoryExtractionPort implementations when the JSON is malformed,
+    a required field is missing, a type string is unrecognised, or an invariant
+    (blank key, confidence out of range) would be violated. The use case catches
+    this to skip extraction for the turn rather than failing the whole request.
+    """
+
+
 class GenerationRejectedError(DomainError):
     """A generated answer could not be grounded in the retrieved evidence.
 

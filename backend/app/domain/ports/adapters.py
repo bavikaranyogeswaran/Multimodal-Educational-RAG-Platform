@@ -25,6 +25,7 @@ from uuid import UUID
 
 from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
 from app.domain.graph.entities import GraphEntity, GraphRelationship
+from app.domain.memory.entities import MemoryFact
 from app.domain.retrieval.decomposition import SubQuestion
 from app.domain.retrieval.entities import Evidence, RetrievalFilters
 from app.domain.scope import ScopeContext
@@ -295,6 +296,35 @@ class GraphExtractionPort(Protocol):
         page_number = page_number. The entities are undeduped candidates; the
         caller (BUILD_GRAPH worker) is responsible for deduplication via
         GraphDeduplicator before writing to the repository.
+        """
+        ...
+
+
+class MemoryExtractionPort(Protocol):
+    """LLM-backed extraction of durable facts about the student from a conversation turn.
+
+    Analyzes the user's question and the assistant's answer together to identify
+    stable, reusable facts — goals, exam dates, topic gaps, preferences. Every
+    returned fact carries provenance ASSISTANT_INFERENCE and status UNCONFIRMED;
+    the use case upgrades these when merging with existing active facts.
+
+    Raises MemoryExtractionError when the model output cannot be parsed or fails
+    invariant validation before being returned.
+    """
+
+    async def extract(
+        self,
+        scope: ScopeContext,
+        *,
+        user_message: str,
+        assistant_message: str,
+        source_message_id: UUID,
+    ) -> list[MemoryFact]:
+        """Return candidate facts extracted from one conversation turn.
+
+        Each fact is a provisional entity with a fresh id. The use case determines
+        whether a fact is new (save as-is) or a correction for an existing key
+        (supersession via create_successor).
         """
         ...
 
