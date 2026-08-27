@@ -599,3 +599,37 @@ class TestParentSizeRules:
     def test_a_parent_target_of_zero_is_rejected(self) -> None:
         with pytest.raises(InvariantViolationError):
             _chunker(parent_target=0, parent_max=100)
+
+
+# ---------------------------------------------------------------------------
+# Source element linkage
+# ---------------------------------------------------------------------------
+
+
+class TestSourceElementId:
+    """Each draft records the element it came from when it was built from exactly one."""
+
+    def test_standalone_table_draft_carries_the_element_id(self) -> None:
+        element = _element("Value | 1", element_type=ElementType.TABLE)
+        draft = _chunk([element])[0]
+        assert draft.source_element_id == element.id
+
+    def test_standalone_figure_draft_carries_the_element_id(self) -> None:
+        element = _element("Growth curve shows an S-shape.", element_type=ElementType.FIGURE)
+        draft = _chunk([element])[0]
+        assert draft.source_element_id == element.id
+
+    def test_single_prose_element_draft_carries_the_element_id(self) -> None:
+        element = _element("ordinary prose here")
+        draft = _chunk([element])[0]
+        assert draft.source_element_id == element.id
+
+    def test_merged_prose_draft_has_no_source_element_id(self) -> None:
+        # Two prose elements fit into one group and flush together, so no single element owns it.
+        drafts = _chunk([
+            _element("first paragraph here", order=0),
+            _element("second paragraph here", order=1),
+        ])
+        merged = [d for d in drafts if "first" in d.text and "second" in d.text]
+        assert merged, "expected at least one merged draft"
+        assert all(d.source_element_id is None for d in merged)

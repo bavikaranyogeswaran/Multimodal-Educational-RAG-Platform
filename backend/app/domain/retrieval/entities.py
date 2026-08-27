@@ -125,6 +125,8 @@ class Evidence:
             element_type=self.chunk.element_type,
             bounding_box=self.chunk.bounding_box,
             evidence_hash=self.chunk.content_hash,
+            figure_id=self.chunk.figure_id,
+            table_id=self.chunk.table_id,
         )
 
 
@@ -250,6 +252,8 @@ class Citation:
     element_type: ElementType | None = None
     bounding_box: BoundingBox | None = None
     evidence_hash: str | None = None
+    figure_id: UUID | None = None
+    table_id: UUID | None = None
 
     def __post_init__(self) -> None:
         require_positive(self.page_number, "Citation.page_number")

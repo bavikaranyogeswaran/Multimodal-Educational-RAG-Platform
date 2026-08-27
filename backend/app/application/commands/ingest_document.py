@@ -150,6 +150,8 @@ class IngestDocumentUseCase:
             scope=scope,
             index_version=self._index_version,
             now=now,
+            figure_by_element={fig.source_element_id: fig.id for fig in figures},
+            table_by_element={tbl.source_element_id: tbl.id for tbl in tables},
         )
 
         if chunks:
@@ -500,6 +502,8 @@ def _to_chunks(
     scope: ScopeContext,
     index_version: int,
     now: datetime,
+    figure_by_element: dict[UUID, UUID] | None = None,
+    table_by_element: dict[UUID, UUID] | None = None,
 ) -> list[Chunk]:
     """Give each decided chunk an identity and the attributes storage needs.
 
@@ -519,6 +523,8 @@ def _to_chunks(
     """
     chunks: list[Chunk] = []
     child_ordinal = 0
+    fig_map = figure_by_element or {}
+    tbl_map = table_by_element or {}
 
     for parent_ordinal, family in enumerate(families):
         parent = _chunk_from(
@@ -529,6 +535,8 @@ def _to_chunks(
             scope=scope,
             index_version=index_version,
             now=now,
+            figure_id=fig_map.get(family.parent.source_element_id) if family.parent.source_element_id else None,
+            table_id=tbl_map.get(family.parent.source_element_id) if family.parent.source_element_id else None,
         )
         chunks.append(parent)
 
@@ -542,6 +550,8 @@ def _to_chunks(
                     scope=scope,
                     index_version=index_version,
                     now=now,
+                    figure_id=fig_map.get(draft.source_element_id) if draft.source_element_id else None,
+                    table_id=tbl_map.get(draft.source_element_id) if draft.source_element_id else None,
                 )
             )
             child_ordinal += 1
@@ -558,6 +568,8 @@ def _chunk_from(
     scope: ScopeContext,
     index_version: int,
     now: datetime,
+    figure_id: UUID | None = None,
+    table_id: UUID | None = None,
 ) -> Chunk:
     return Chunk(
         id=uuid4(),
@@ -565,6 +577,9 @@ def _chunk_from(
         knowledge_base_id=scope.knowledge_base_id,
         document_id=doc.id,
         parent_chunk_id=parent_chunk_id,
+        source_element_id=draft.source_element_id,
+        figure_id=figure_id,
+        table_id=table_id,
         chunk_type=draft.chunk_type,
         text=UntrustedText(draft.text),
         token_count=draft.token_count,

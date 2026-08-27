@@ -392,6 +392,26 @@ class TestCitationProvenance:
 
         assert evidence.to_citation(order=0).page_number == 67
 
+    def test_carries_figure_id_from_the_chunk(self, make_evidence: Builder[Evidence]) -> None:
+        fig_id = uuid4()
+        evidence = make_evidence(chunk_overrides={"figure_id": fig_id})
+
+        assert evidence.to_citation(order=0).figure_id == fig_id
+
+    def test_carries_table_id_from_the_chunk(self, make_evidence: Builder[Evidence]) -> None:
+        tbl_id = uuid4()
+        evidence = make_evidence(chunk_overrides={"table_id": tbl_id})
+
+        assert evidence.to_citation(order=0).table_id == tbl_id
+
+    def test_figure_id_and_table_id_are_none_for_a_prose_chunk(
+        self, make_evidence: Builder[Evidence]
+    ) -> None:
+        citation = make_evidence().to_citation(order=0)
+
+        assert citation.figure_id is None
+        assert citation.table_id is None
+
 
 class TestResolveCitations:
     """Turning a validated answer into the records that outlive the turn."""

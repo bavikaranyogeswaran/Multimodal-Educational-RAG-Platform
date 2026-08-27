@@ -47,6 +47,8 @@ class Chunk:
 
     parent_chunk_id: UUID | None = None
     source_element_id: UUID | None = None
+    figure_id: UUID | None = None
+    table_id: UUID | None = None
     chapter: str | None = None
     section: str | None = None
     heading_path: HeadingPath = field(default_factory=HeadingPath.root)

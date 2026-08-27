@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from uuid import UUID
 
 from app.domain.documents.entities import DocumentElement
 from app.domain.enums import ChunkType, ElementType
@@ -76,6 +77,7 @@ class ChunkDraft:
     page_end: int
     element_type: ElementType | None = None
     bounding_box: BoundingBox | None = None
+    source_element_id: UUID | None = None
 
     @property
     def chapter(self) -> str | None:
@@ -398,6 +400,7 @@ def _draft_from(
         # Only when every element agrees. A chunk of mixed kinds has no single one.
         element_type=next(iter(types)) if len(types) == 1 else None,
         bounding_box=_merged_box(elements),
+        source_element_id=elements[0].id if len(elements) == 1 else None,
     )
 
 

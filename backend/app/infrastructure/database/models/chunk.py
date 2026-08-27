@@ -67,6 +67,15 @@ class ChunkModel(Base):
         Uuid(as_uuid=True),
         ForeignKey("document_elements.id", ondelete="SET NULL"),
     )
+    # Direct links to the figure or table row when the chunk represents one.
+    figure_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("document_figures.id", ondelete="SET NULL"),
+    )
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("document_tables.id", ondelete="SET NULL"),
+    )
     chunk_type: Mapped[str] = mapped_column(String(20))
     text: Mapped[str] = mapped_column(Text)
     token_count: Mapped[int] = mapped_column(Integer)

@@ -1316,3 +1316,142 @@ class TestReplacingAnEarlierReading:
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
         assert storage.delete.await_args_list[-1].args[0] == second.crop_key
+
+
+# ---------------------------------------------------------------------------
+# Chunk → figure / table ID linkage
+# ---------------------------------------------------------------------------
+
+
+def _parser_and_table() -> tuple[AsyncMock, DocumentTable]:
+    """A parser yielding one page with a single table element; also returns the table object."""
+    element = DocumentElement(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=1,
+        element_type=ElementType.TABLE,
+        text=UntrustedText("Metal | Density\nAluminium | 2.70"),
+        reading_order=0,
+        processing_method=ProcessingMethod.NATIVE_TEXT,
+        created_at=_NOW,
+        bounding_box=_TABLE_BOX,
+    )
+    table = DocumentTable(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        source_element_id=element.id,
+        page_number=1,
+        headers=("Metal", "Density"),
+        rows=(("Aluminium", "2.70"),),
+        units=(None, "g/cm3"),
+        bounding_box=_TABLE_BOX,
+        created_at=_NOW,
+    )
+    parser = AsyncMock()
+    parser.parse = AsyncMock(
+        return_value=[ParsedPage(page=_page(1), elements=[element], tables=[table])]
+    )
+    return parser, table
+
+
+def _parser_and_figure() -> tuple[AsyncMock, DocumentFigure]:
+    """A parser yielding one page with a described figure; also returns the figure object."""
+    element = DocumentElement(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        page_number=1,
+        element_type=ElementType.FIGURE,
+        text=UntrustedText(""),
+        reading_order=0,
+        processing_method=ProcessingMethod.NATIVE_TEXT,
+        created_at=_NOW,
+        bounding_box=_FIGURE_BOX,
+    )
+    figure = DocumentFigure(
+        id=uuid.uuid4(),
+        user_id=_USER_ID,
+        knowledge_base_id=_KB_ID,
+        document_id=_DOC_ID,
+        source_element_id=element.id,
+        page_number=1,
+        kind=ElementType.FIGURE,
+        bounding_box=_FIGURE_BOX,
+        created_at=_NOW,
+        caption=UntrustedText("Growth curve"),
+        description="Shows an S-shaped growth curve over time.",
+    )
+    parser = AsyncMock()
+    parser.parse = AsyncMock(
+        return_value=[ParsedPage(page=_page(1), elements=[element], figures=[figure])]
+    )
+    return parser, figure
+
+
+class TestChunkFigureAndTableIds:
+    """Standalone-element chunks carry a direct pointer to the figure or table row."""
+
+    async def test_table_chunk_carries_the_table_id(self) -> None:
+        parser, table = _parser_and_table()
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        table_chunks = [c for c in written if c.chunk_type is ChunkType.TABLE]
+        assert table_chunks
+        assert all(c.table_id == table.id for c in table_chunks)
+
+    async def test_table_chunk_has_no_figure_id(self) -> None:
+        parser, _ = _parser_and_table()
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        table_chunks = [c for c in written if c.chunk_type is ChunkType.TABLE]
+        assert all(c.figure_id is None for c in table_chunks)
+
+    async def test_figure_chunk_carries_the_figure_id(self) -> None:
+        parser, figure = _parser_and_figure()
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        figure_chunks = [c for c in written if c.chunk_type is ChunkType.FIGURE]
+        assert figure_chunks
+        assert all(c.figure_id == figure.id for c in figure_chunks)
+
+    async def test_figure_chunk_has_no_table_id(self) -> None:
+        parser, _ = _parser_and_figure()
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        figure_chunks = [c for c in written if c.chunk_type is ChunkType.FIGURE]
+        assert all(c.table_id is None for c in figure_chunks)
+
+    async def test_prose_chunk_has_neither_figure_id_nor_table_id(self) -> None:
+        chunk_repo = _make_chunk_repo()
+        use_case = _make_use_case(
+            parser=_make_parser([(1, ["A prose paragraph about biology."])]),
+            chunk_repo=chunk_repo,
+        )
+
+        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+
+        written = chunk_repo.save_batch.await_args.args[1]
+        prose_chunks = [c for c in written if c.chunk_type is ChunkType.TEXT]
+        assert prose_chunks
+        assert all(c.figure_id is None and c.table_id is None for c in prose_chunks)
