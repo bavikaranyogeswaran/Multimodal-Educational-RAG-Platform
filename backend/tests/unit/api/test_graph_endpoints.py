@@ -11,12 +11,14 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.dependencies.scope import get_kb_scope
 from app.api.routers.graph import router as graph_router
 from app.domain.enums import GraphNodeType, RelationshipType
+from app.domain.errors import InvariantViolationError
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
@@ -218,9 +220,10 @@ class TestGetGraph:
             return m
 
         session = _session_for_queries(
-            [_entity_model(e1), _entity_model(e2)],   # list_entities_for_document
-            [_rel_model(rel)],                          # relationships query (concept_map_subgraph)
-            [_entity_model(e1), _entity_model(e2)],   # entity load (concept_map_subgraph)
+            [_entity_model(e1), _entity_model(e2)],  # list_entities_for_document
+            [e1.id, e2.id],                          # bounded walk — ids, not rows
+            [_entity_model(e1), _entity_model(e2)],  # entity load for the bounded set
+            [_rel_model(rel)],                       # edges inside the bounded set
         )
         client = TestClient(_make_app(session))
         resp = client.get(_graph_url(document_id=doc_id))
@@ -249,7 +252,8 @@ class TestGetGraph:
         m.created_at = entity.created_at
         m.updated_at = entity.updated_at
 
-        session = _session_for_queries([m], [], [m])  # seed list, rel query, entity load
+        # seed list, bounded walk (ids), entity load, edges
+        session = _session_for_queries([m], [entity.id], [m], [])
         client = TestClient(_make_app(session))
         resp = client.get(_graph_url(document_id=doc_id))
         assert resp.status_code == 200
@@ -301,7 +305,9 @@ class TestGetGraph:
         rm.created_at = rel.created_at
         rm.updated_at = rel.updated_at
 
-        session = _session_for_queries([_em(e1), _em(e2)], [rm], [_em(e1), _em(e2)])
+        session = _session_for_queries(
+            [_em(e1), _em(e2)], [e1.id, e2.id], [_em(e1), _em(e2)], [rm]
+        )
         client = TestClient(_make_app(session))
         resp = client.get(_graph_url(document_id=doc_id))
         body = resp.json()
@@ -458,3 +464,176 @@ class TestGetGraphEntity:
         client = TestClient(_make_app(session, scope_raises_404=True))
         resp = client.get(_entity_url(uuid.uuid4()))
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /graph/entities/{id}/prerequisites
+# ---------------------------------------------------------------------------
+
+
+def _entity_model(e: GraphEntity) -> MagicMock:
+    """A row shaped like the ORM model, for a session that never touches a database."""
+    from app.infrastructure.database.models.graph import GraphEntityModel
+
+    m = MagicMock(spec=GraphEntityModel)
+    m.id = e.id
+    m.user_id = e.user_id
+    m.knowledge_base_id = e.knowledge_base_id
+    m.entity_type = e.entity_type.value
+    m.name = e.name
+    m.description = e.description
+    m.source_document_id = e.source_document_id
+    m.source_chunk_id = e.source_chunk_id
+    m.page_number = e.page_number
+    m.created_at = e.created_at
+    m.updated_at = e.updated_at
+    return m
+
+
+def _rel_model(r: GraphRelationship) -> MagicMock:
+    from app.infrastructure.database.models.graph import GraphRelationshipModel
+
+    m = MagicMock(spec=GraphRelationshipModel)
+    m.id = r.id
+    m.user_id = r.user_id
+    m.knowledge_base_id = r.knowledge_base_id
+    m.source_entity_id = r.source_entity_id
+    m.target_entity_id = r.target_entity_id
+    m.relationship_type = r.relationship_type.value
+    m.source_chunk_id = r.source_chunk_id
+    m.page_number = r.page_number
+    m.evidence = r.evidence.value
+    m.weight = r.weight
+    m.extraction_confidence = r.extraction_confidence
+    m.created_at = r.created_at
+    m.updated_at = r.updated_at
+    return m
+
+
+def _prereq_url(entity_id: uuid.UUID) -> str:
+    return f"{_entity_url(entity_id)}/prerequisites"
+
+
+def _related_url(entity_id: uuid.UUID) -> str:
+    return f"{_entity_url(entity_id)}/related"
+
+
+class TestPrerequisiteView:
+    def test_splits_edges_by_direction(self) -> None:
+        """`A PREREQUISITE_OF B` puts A before B, so the direction decides the list."""
+        subject = _entity(name="Integration")
+        needed = _entity(name="Differentiation")
+        unlocked = _entity(name="Differential Equations")
+
+        # needed -> subject, and subject -> unlocked
+        rels = [
+            _rel(needed.id, subject.id, rel_type=RelationshipType.PREREQUISITE_OF),
+            _rel(subject.id, unlocked.id, rel_type=RelationshipType.PREREQUISITE_OF),
+        ]
+
+        session = _session_for_queries(
+            [_entity_model(subject)],                        # get_entity
+            [_rel_model(r) for r in rels],                   # typed edges
+            [_entity_model(needed), _entity_model(unlocked)],  # neighbour entities
+        )
+        resp = TestClient(_make_app(session)).get(_prereq_url(subject.id))
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert [e["name"] for e in body["prerequisites"]] == ["Differentiation"]
+        assert [e["name"] for e in body["unlocks"]] == ["Differential Equations"]
+
+    def test_carries_the_edges_so_every_claim_has_a_source(self) -> None:
+        """A bare list of names would be the model's opinion presented as fact."""
+        subject = _entity(name="Integration")
+        needed = _entity(name="Differentiation")
+        rel = _rel(needed.id, subject.id, rel_type=RelationshipType.PREREQUISITE_OF)
+
+        session = _session_for_queries(
+            [_entity_model(subject)],
+            [_rel_model(rel)],
+            [_entity_model(needed)],
+        )
+        resp = TestClient(_make_app(session)).get(_prereq_url(subject.id))
+
+        edges = resp.json()["relationships"]
+        assert len(edges) == 1
+        assert edges[0]["page_number"] == rel.page_number
+        assert edges[0]["evidence"] == "Some evidence text."
+
+    def test_entity_with_no_prerequisites_returns_empty_lists(self) -> None:
+        subject = _entity(name="Arithmetic")
+        session = _session_for_queries([_entity_model(subject)], [], [])
+        resp = TestClient(_make_app(session)).get(_prereq_url(subject.id))
+
+        body = resp.json()
+        assert body["prerequisites"] == []
+        assert body["unlocks"] == []
+        assert body["entity"]["name"] == "Arithmetic"
+
+    def test_unknown_entity_returns_404(self) -> None:
+        session = _session_for_queries([])
+        resp = TestClient(_make_app(session)).get(_prereq_url(uuid.uuid4()))
+        assert resp.status_code == 404
+
+    def test_missing_kb_returns_404(self) -> None:
+        client = TestClient(_make_app(AsyncMock(), scope_raises_404=True))
+        assert client.get(_prereq_url(uuid.uuid4())).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /graph/entities/{id}/related
+# ---------------------------------------------------------------------------
+
+
+class TestRelatedView:
+    def test_reports_the_other_endpoint_whichever_end_the_edge_started(self) -> None:
+        """Association reads the same both ways, unlike a prerequisite."""
+        subject = _entity(name="Momentum")
+        outgoing = _entity(name="Impulse")
+        incoming = _entity(name="Energy")
+
+        rels = [
+            _rel(subject.id, outgoing.id, rel_type=RelationshipType.RELATED_TO),
+            _rel(incoming.id, subject.id, rel_type=RelationshipType.COMPARES_WITH),
+        ]
+
+        session = _session_for_queries(
+            [_entity_model(subject)],
+            [_rel_model(r) for r in rels],
+            [_entity_model(incoming), _entity_model(outgoing)],
+        )
+        resp = TestClient(_make_app(session)).get(_related_url(subject.id))
+
+        assert resp.status_code == 200
+        names = {e["name"] for e in resp.json()["related"]}
+        assert names == {"Impulse", "Energy"}
+
+    def test_the_view_never_has_to_exclude_the_subject_itself(self) -> None:
+        """Why the endpoint takes the opposite endpoint without checking for the subject.
+
+        A concept cannot be related to itself: the entity refuses a self-link at
+        construction, so no such row can reach the view to be filtered out. Guarding
+        against it in the endpoint would be defending a case the domain has already
+        made unrepresentable — and this test is what keeps that true.
+        """
+        subject_id = uuid.uuid4()
+        with pytest.raises(InvariantViolationError):
+            _rel(subject_id, subject_id, rel_type=RelationshipType.RELATED_TO)
+
+    def test_entity_with_no_associations_returns_empty(self) -> None:
+        subject = _entity(name="Isolated")
+        session = _session_for_queries([_entity_model(subject)], [], [])
+        resp = TestClient(_make_app(session)).get(_related_url(subject.id))
+
+        assert resp.json()["related"] == []
+        assert resp.json()["entity"]["name"] == "Isolated"
+
+    def test_unknown_entity_returns_404(self) -> None:
+        session = _session_for_queries([])
+        resp = TestClient(_make_app(session)).get(_related_url(uuid.uuid4()))
+        assert resp.status_code == 404
+
+    def test_missing_kb_returns_404(self) -> None:
+        client = TestClient(_make_app(AsyncMock(), scope_raises_404=True))
+        assert client.get(_related_url(uuid.uuid4())).status_code == 404

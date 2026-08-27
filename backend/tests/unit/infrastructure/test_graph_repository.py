@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.enums import GraphNodeType, RelationshipType
@@ -736,3 +737,132 @@ class TestConceptMapSubgraph:
         for rel in included_rels:
             assert rel.source_entity_id in entity_ids
             assert rel.target_entity_id in entity_ids
+
+
+# ---------------------------------------------------------------------------
+# concept_map_subgraph — the walk and the bound both happen in SQL
+# ---------------------------------------------------------------------------
+
+
+class TestConceptMapIsBoundedInTheDatabase:
+    async def test_traversal_is_a_recursive_walk_with_a_limit(self) -> None:
+        """Capping in Python would read every edge touching a seed before discarding.
+
+        That makes a capped view cost whatever the seed's connectivity happens to be,
+        which is the thing the cap exists to avoid.
+        """
+        session = AsyncMock()
+        captured: list[object] = []
+
+        async def _execute(stmt, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            captured.append(stmt)
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = []
+            return result
+
+        session.execute = _execute
+        scope = _make_scope()
+
+        await _repo(scope, session)._bounded_node_set(
+            frozenset([uuid.uuid4()]), max_nodes=30
+        )
+
+        sql = str(captured[0].compile(dialect=postgresql.dialect()))
+        assert "WITH RECURSIVE" in sql
+        assert "LIMIT" in sql
+
+    async def test_scope_is_filtered_in_both_halves_of_the_walk(self) -> None:
+        """The recursive step joins relationships, and that join needs its own filter.
+
+        Filtering only the anchor would seed correctly and then walk out across another
+        student's edges.
+        """
+        session = AsyncMock()
+        captured: list[object] = []
+
+        async def _execute(stmt, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            captured.append(stmt)
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = []
+            return result
+
+        session.execute = _execute
+
+        await _repo(_make_scope(), session)._bounded_node_set(
+            frozenset([uuid.uuid4()]), max_nodes=30
+        )
+
+        sql = str(captured[0].compile(dialect=postgresql.dialect()))
+        anchor, _, recursive = sql.partition("UNION")
+        for half in (anchor, recursive):
+            assert "user_id" in half
+            assert "knowledge_base_id" in half
+
+    async def test_same_request_twice_returns_the_same_subgraph(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """Set iteration order used to decide which neighbours survived the cap."""
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        seed = _make_entity(scope, name="Seed")
+        neighbours = [_make_entity(scope, name=f"N{i}") for i in range(8)]
+        await repo.save_entities(scope, [seed, *neighbours])
+        await repo.save_relationships(
+            scope, [_make_relationship(scope, seed.id, n.id) for n in neighbours]
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        first, _ = await repo.concept_map_subgraph(scope, frozenset([seed.id]), max_nodes=4)
+        second, _ = await repo.concept_map_subgraph(scope, frozenset([seed.id]), max_nodes=4)
+
+        assert {e.id for e in first} == {e.id for e in second}
+
+    async def test_a_node_reachable_twice_is_counted_once(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """Two seeds sharing a neighbour must not spend two slots on it."""
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        seed_a = _make_entity(scope, name="SeedA")
+        seed_b = _make_entity(scope, name="SeedB")
+        shared = _make_entity(scope, name="Shared")
+        await repo.save_entities(scope, [seed_a, seed_b, shared])
+        await repo.save_relationships(
+            scope,
+            [
+                _make_relationship(scope, seed_a.id, shared.id),
+                _make_relationship(scope, seed_b.id, shared.id),
+            ],
+        )
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        entities, _ = await repo.concept_map_subgraph(
+            scope, frozenset([seed_a.id, seed_b.id]), max_nodes=10
+        )
+
+        ids = [e.id for e in entities]
+        assert len(ids) == len(set(ids))
+        assert set(ids) == {seed_a.id, seed_b.id, shared.id}
+
+    async def test_zero_cap_returns_nothing_rather_than_everything(
+        self, sqlite_session: AsyncSession
+    ) -> None:
+        """A limit of zero is a degenerate request, not an absent one."""
+        scope = _make_scope()
+        await _save_kb(scope, sqlite_session)
+        repo = _repo(scope, sqlite_session)
+        seed = _make_entity(scope, name="Seed")
+        await repo.save_entities(scope, [seed])
+        await sqlite_session.flush()
+        sqlite_session.expire_all()
+
+        entities, rels = await repo.concept_map_subgraph(
+            scope, frozenset([seed.id]), max_nodes=0
+        )
+
+        assert entities == []
+        assert rels == []

@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.application.commands.build_graph import BuildGraphCommand, BuildGraphUseCase
 from app.application.commands.delete_document import (
     DeleteDocumentCommand,
     DeleteDocumentUseCase,
@@ -42,18 +43,26 @@ from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
 from app.configuration.wire import build_container
 from app.domain.documents.chunker import Chunker
-from app.domain.enums import DocumentStatus, JobStatus, JobType
+from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
+from app.infrastructure.database.repositories.graph import SqlGraphRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
 from app.infrastructure.database.repositories.knowledge_base import (
     SqlKnowledgeBaseRepository,
 )
+from app.infrastructure.graph.extractor import LlmGraphExtractor
 from app.runtime import loop_factory
 
 _log = structlog.get_logger(__name__)
+
+#: Graph extraction is a long chain of model calls, and a transient provider failure
+#: partway through is the ordinary case rather than the exceptional one. The use case
+#: deletes the document's existing graph before re-extracting, so a retry rebuilds
+#: cleanly instead of doubling what a half-finished attempt already wrote.
+_GRAPH_BUILD_MAX_ATTEMPTS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +106,12 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
     if job.job_type is JobType.REINDEX_KNOWLEDGE_BASE:
         await _run_reindex(container, settings, job)
         return
+    if job.job_type is JobType.BUILD_GRAPH:
+        await _run_build_graph(container, settings, job)
+        return
+    if job.job_type is JobType.SYNC_GRAPH_PROJECTION:
+        await _run_sync_graph_projection(container, job)
+        return
     await _run_ingestion(container, settings, job)
 
 
@@ -128,6 +143,57 @@ async def _run_deletion(container: Container, job: ProcessingJob) -> None:
         await session.commit()
 
     log.info("document_deletion_completed")
+
+
+async def _run_build_graph(
+    container: Container, settings: Settings, job: ProcessingJob
+) -> None:
+    """Extract the concept graph for one completed document.
+
+    Leased like ingestion rather than run bare: extraction calls the model once per
+    parent section, so a textbook chapter is minutes of work and a lease that lapsed
+    partway would hand the same document to a second worker.
+
+    The use case decides whether there is anything to do — it returns early when the
+    Knowledge Base has graphing switched off or the document never finished ingesting.
+    Checking here as well would put the same rule in two places.
+    """
+    scope = _scope_from(job)
+    document_id = uuid.UUID(job.payload["document_id"])
+    log = _log.bind(job_id=str(job.id), document_id=str(document_id))
+
+    log.info("graph_build_started")
+
+    async with _leased(container, settings, job), container.session_factory() as session:
+        use_case = BuildGraphUseCase(
+            kb_repo=SqlKnowledgeBaseRepository(scope, session),
+            document_repo=SqlDocumentRepository(scope, session),
+            chunk_repo=SqlChunkRepository(scope, session),
+            graph_repo=SqlGraphRepository(scope, session),
+            extractor=LlmGraphExtractor(container.model_gateway),
+            job_repo=SqlJobRepository(session),
+        )
+        await use_case.execute(BuildGraphCommand(scope=scope, document_id=document_id))
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
+
+    log.info("graph_build_completed")
+
+
+async def _run_sync_graph_projection(container: Container, job: ProcessingJob) -> None:
+    """Complete the projection job without doing anything, which is the whole design.
+
+    The graph lives in PostgreSQL alongside everything else, so there is no second store
+    to synchronise. The job type is kept because the specification names it and because
+    a projection into a graph database is the documented escape hatch if one hop stops
+    being enough. Claiming and completing it is what stops it accumulating as PENDING
+    rows that look like a backlog.
+    """
+    async with container.session_factory() as session:
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
+
+    _log.info("graph_projection_noop", job_id=str(job.id))
 
 
 @contextlib.asynccontextmanager
@@ -293,9 +359,55 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
         )
         await SqlDocumentRepository(scope, session).save(scope, completed_doc)
         await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        queued_graph = await _enqueue_graph_build(scope, session, doc_id, now=datetime.now(UTC))
         await session.commit()
 
-    log.info("document_ingestion_completed")
+    log.info("document_ingestion_completed", graph_build_queued=queued_graph)
+
+
+async def _enqueue_graph_build(
+    scope: ScopeContext,
+    session: AsyncSession,
+    document_id: uuid.UUID,
+    *,
+    now: datetime,
+) -> bool:
+    """Queue graph extraction for a document that has just finished ingesting.
+
+    Enqueued in the transaction that completes the document, so the two cannot disagree:
+    a document that reports itself indexed always has its graph job waiting, and one
+    whose ingestion rolled back never leaves an orphan job pointing at content that was
+    never written.
+
+    Graphing is opt-in per Knowledge Base because extraction costs a model call per
+    parent section — hundreds for a textbook. A Knowledge Base that never asked for a
+    concept graph should not pay for one, so the flag is read here rather than queueing
+    unconditionally and discovering the answer in the worker.
+    """
+    kb = await SqlKnowledgeBaseRepository(scope, session).get(scope)
+    if kb is None or not kb.graph_enabled:
+        return False
+
+    await SqlJobRepository(session).save(
+        ProcessingJob(
+            id=uuid.uuid4(),
+            job_type=JobType.BUILD_GRAPH,
+            # Behind anything a student is waiting on. Nothing reads the graph until it
+            # exists, and a missing graph degrades an answer rather than breaking it.
+            priority=JobPriority.BACKGROUND,
+            status=JobStatus.PENDING,
+            attempt_count=0,
+            max_attempts=_GRAPH_BUILD_MAX_ATTEMPTS,
+            created_at=now,
+            updated_at=now,
+            payload={
+                "document_id": str(document_id),
+                "knowledge_base_id": str(scope.knowledge_base_id),
+                "user_id": str(scope.user_id),
+            },
+        )
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +439,10 @@ async def _main() -> None:
             JobType.DOCUMENT_INGESTION,
             JobType.DELETE_DOCUMENT,
             JobType.REINDEX_KNOWLEDGE_BASE,
+            JobType.BUILD_GRAPH,
+            # Claimed so it can be completed. A job type nothing claims is not idle,
+            # it is a queue that grows for ever.
+            JobType.SYNC_GRAPH_PROJECTION,
         }
     )
 

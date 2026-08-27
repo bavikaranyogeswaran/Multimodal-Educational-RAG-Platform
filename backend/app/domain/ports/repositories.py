@@ -28,7 +28,7 @@ from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
 from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.tables import DocumentTable
-from app.domain.enums import JobType
+from app.domain.enums import JobType, RelationshipType
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.knowledge_base.entities import KnowledgeBase
@@ -387,6 +387,26 @@ class GraphRepository(Protocol):
         self, scope: ScopeContext, entity_ids: frozenset[UUID]
     ) -> Sequence[GraphRelationship]:
         """All relationships where either endpoint is in entity_ids."""
+        ...
+
+    async def list_relationships_of_type(
+        self,
+        scope: ScopeContext,
+        entity_ids: frozenset[UUID],
+        *,
+        types: frozenset[RelationshipType],
+    ) -> Sequence[GraphRelationship]:
+        """Relationships touching entity_ids whose type is one of `types`.
+
+        Narrowing in the query rather than filtering the full neighbourhood in the
+        caller: a well-connected concept has far more edges than any one view wants.
+        """
+        ...
+
+    async def list_entities_by_ids(
+        self, scope: ScopeContext, entity_ids: frozenset[UUID]
+    ) -> Sequence[GraphEntity]:
+        """The named entities that exist within scope, ordered by name."""
         ...
 
     async def concept_map_subgraph(

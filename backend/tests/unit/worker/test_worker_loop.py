@@ -16,6 +16,7 @@ import pytest
 from app.domain.documents.entities import Document, DocumentPage, ParsedPage
 from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType, PageKind
 from app.domain.jobs.entities import ProcessingJob
+from app.domain.knowledge_base.entities import KnowledgeBase
 from app.domain.scope import ScopeContext
 from app.worker.__main__ import _run_job
 
@@ -95,6 +96,24 @@ def _make_container(doc: Document) -> MagicMock:
     container.storage = storage
     container.embedder = embedder
     return container
+
+
+def _kb(*, graph_enabled: bool = False) -> KnowledgeBase:
+    """The Knowledge Base ingestion reads on its way out to decide about graphing."""
+    return KnowledgeBase(
+        id=_KB_ID,
+        user_id=_USER_ID,
+        name="Knowledge base",
+        graph_enabled=graph_enabled,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+def _kb_repo(*, graph_enabled: bool = False) -> AsyncMock:
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=_kb(graph_enabled=graph_enabled))
+    return repo
 
 
 def _make_settings() -> MagicMock:
@@ -187,6 +206,7 @@ class TestRunJobHappyPath:
             patch("app.worker.__main__.SqlDocumentRepository", return_value=doc_repo_mock),
             patch("app.worker.__main__.SqlChunkRepository", return_value=chunk_repo_mock),
             patch("app.worker.__main__.SqlJobRepository", return_value=job_repo_mock),
+            patch("app.worker.__main__.SqlKnowledgeBaseRepository", return_value=_kb_repo()),
         ):
             await _run_job(container, settings, job)
 

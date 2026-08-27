@@ -26,16 +26,16 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **8 of 21** â€" Phase 0, 1, 2, 3, 4, 8, 11, 19 âœ… |
+| Phases complete | **9 of 21** â€" Phase 0, 1, 2, 3, 4, 8, 11, 12, 19 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
 | Built but not wired | Phase 13 (~85%) â€" implemented and fully tested, still **dead at runtime**: `MultiHopAnswerUseCase` needs three model-backed adapters that do not exist, so the dependency cannot supply it. See the note below |
-| Partly built | Phase 12 (~80%, graph RAG now reachable; `BUILD_GRAPH` still undispatched) Â· Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 14 (~60%, memory context now reaching the prompt; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 14 (~60%, memory context now reaching the prompt; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 15, 20 |
-| Tests | **3,335 backend passing** â€" 3,213 unit Â· 122 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 11 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Tests | **3,358 backend** â€" 3,238 unit Â· 120 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 11 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test, which is the only failure in a full run |
 | Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
-| Next step | **Dispatch `BUILD_GRAPH` in the worker**, so the graph path now wired into the answer has a graph to traverse. Then the three multi-hop adapters |
-| Last updated | 27 August 2026 (Phase 4 closed â€" signed-URL expiry test, and the TTL setting it found unread) |
+| Next step | **The three multi-hop adapters** â€" `QueryDecompositionPort`, `CoverageClassifierPort` and `MultiHopSynthesisPort` are protocols with no implementation, and they are all that stands between Phase 13 and a live path |
+| Last updated | 27 August 2026 (Phase 12 closed â€" `BUILD_GRAPH` dispatch, the walk bounded in SQL, prerequisite and related views) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -109,14 +109,22 @@ have been written since: `0017` (citation chunk_id SET NULL), `0018` (chunk figu
 `0017â€”0020` have been applied against Supabase is not recorded** â€” confirm with
 `alembic current` on a tethered connection before assuming head.
 
-**Neither ruff nor mypy is clean across `app/`.** ruff reports 25 findings and mypy 3, all of
-them predating this session's work and none in a file it touched â€” line lengths and unused `noqa`
-directives in the Gemini and Anthropic stubs, an over-long `execute` in the answer use case, two
-`TRY300`s in the gateway, and an unused argument in the job repository. Both counts were verified
-against the previous commit; ruff was 27 there, so this session reduced it. The long-standing
-"ruff and mypy clean" line had been carried forward without either being re-run against the whole
-package, and re-running it on individual files is what kept the claim looking true (A-672, A-694).
-The test tree is held to neither standard and carries a little lint debt of its own (A-655).
+**Neither ruff nor mypy is clean across `app/`, and the gap has widened sharply.** Measured on
+27 August 2026: **ruff reports 79 findings and mypy 28, across 10 files.** The figures carried
+here until then were 25 and 3, from before phases 12, 13 and 14 landed — the same unlogged work
+this plan had to be reconciled against. Roughly fifty ruff findings and twenty-five mypy errors
+arrived with those phases and were never counted, because the counting happens in a step write-up
+and no step was written up.
+
+Both numbers were re-measured against the previous commit and are identical to the working tree,
+so the phase-12 completion added none of them. The long-standing “ruff and mypy clean” line had
+been carried forward without either being re-run against the whole package, and re-running it on
+individual files is what kept the claim looking true (A-672, A-694). The test tree is held to
+neither standard and carries a little lint debt of its own (A-655).
+
+**Clearing this deserves its own step.** Twenty-eight mypy errors in the layers that are meant to
+be `strict` is not lint noise; two of them are in `conversations.py`, one an unused `type: ignore`
+and one a genuine “not iterable” on a list of tuples.
 
 The `message_citations` row-level security policy is verified against PostgreSQL rather than
 argued for: SQLite cannot express row-level security, so until the migration was applied the
@@ -2241,23 +2249,31 @@ belongs to Phase 15.
 
 Covers Â§21, Â§22, Â§34, Â§57 API side. Postgres-backed per D-10.
 
-**Status: ~75% â€” built and tested, but not reachable at runtime.** Seven commits landed the whole
-vertical: `GraphExtractionAdapter` over the model gateway, a name-normalisation and deduplication
-service, `BuildGraphUseCase`, graph repository query extensions, Selective Graph RAG inside the
-answer pipeline, both concept-graph endpoints, and a security suite whose twelve `gate`-marked
-tests enforce the provenance rule. The 501 skeletons are gone.
+**Status: complete.** The whole vertical is built, wired and reachable: `LlmGraphExtractor` over
+the model gateway, a name-normalisation and deduplication service, `BuildGraphUseCase`, graph
+repository query extensions, Selective Graph RAG inside the answer pipeline, four concept-graph
+endpoints, and a security suite whose `gate`-marked tests enforce the provenance rule.
 
-**One of its two wiring gaps is closed.** `get_answer_use_case` now passes `graph_repo` and
-`kb_repo` on the request session, so the graph path runs whenever the Knowledge Base has
-`graph_enabled` set. The second gap remains: nothing enqueues or consumes a `BUILD_GRAPH` job â€”
-the worker’s dispatch handles `DOCUMENT_INGESTION`, `DELETE_DOCUMENT` and
-`REINDEX_KNOWLEDGE_BASE` only â€” so no graph is extracted for that path to traverse. Until it is,
-`_load_graph_context` finds no seed entities and returns `None`, which is correct behaviour on an
-empty graph and indistinguishable from the feature being off.
+**Both wiring gaps are closed.** `get_answer_use_case` passes `graph_repo` and `kb_repo` on the
+request session, so the graph path runs whenever the Knowledge Base has `graph_enabled` set. And
+the worker now dispatches `BUILD_GRAPH`, queued in the same transaction that completes a
+document’s ingestion, so a graph exists for that path to traverse. `SYNC_GRAPH_PROJECTION` is
+claimed and completed as the no-op it is designed to be, rather than accumulating as PENDING rows
+that look like a backlog.
 
-- [~] Extraction over parent sections, **only when `graph_enabled`**, plus a backfill job (D-19) â€”
-      `BuildGraphUseCase` checks `graph_enabled` and no-ops when off, but **no job enqueues it and
-      the worker does not dispatch `BUILD_GRAPH`**; the backfill path does not exist
+**`GraphPort` stays deliberately unimplemented, and this is not an oversight.** Traversal runs
+against PostgreSQL through the repository, so nothing reads that container slot. The port is kept
+because it is the seam a graph database would arrive through: it speaks traversal â€” neighbours,
+subgraphs â€” rather than a query language, so filling it later would not touch a caller. Deleting
+it would convert a reversible decision into a permanent one. Both the field and the wiring say so
+now, since an empty slot with no explanation reads as a missing wire-up.
+
+- [x] Extraction over parent sections, **only when `graph_enabled`**, plus a backfill job (D-19) â€”
+      `BuildGraphUseCase` checks the flag and no-ops when off, and the worker both queues and
+      dispatches `BUILD_GRAPH`. The job is enqueued inside the transaction that completes the
+      document, so a document that reports itself indexed always has its graph job waiting and a
+      rolled-back ingestion never leaves one pointing at content that was never written.
+      Enabling the flag later and reindexing is the backfill path
 - [x] Node types and all nine Â§21 relationship types â€” `RelationshipType` carries CONTAINS,
       PART_OF, DEFINED_IN, RELATED_TO, PREREQUISITE_OF, COMPARES_WITH, EXPLAINED_BY, SHOWN_IN,
       REFERENCES
@@ -2272,12 +2288,20 @@ empty graph and indistinguishable from the feature being off.
 - [x] One-hop traversal by join; entity resolution to canonical nodes; **original passages loaded
       from PostgreSQL** â€” triples alone are never sufficient evidence
 - [x] Graph result list fused via RRF
-- [~] Concept graph API: 30â€”50 node cap via bounded recursive CTE, node evidence, one-hop
-      expansion, source-page links, prerequisite and related views (Â§57) â€” both endpoints live and
-      the cap is enforced, but **in Python rather than a bounded recursive CTE**, and the
-      prerequisite and related views are not built
+- [x] Concept graph API: 30â€”50 node cap via bounded recursive CTE, node evidence, one-hop
+      expansion, source-page links, prerequisite and related views (Â§57) â€” the walk and the bound
+      both happen in SQL now, as a `WITH RECURSIVE` capped by `LIMIT`. Capping in Python meant
+      reading every edge touching a seed before discarding most of them, so a capped view cost
+      whatever the seed's connectivity happened to be â€” the thing the cap exists to prevent. The
+      walk also orders by depth then id, which makes seeds survive the cap ahead of their
+      neighbours and the same request twice return the same subgraph; set iteration order decided
+      both before. Prerequisite and related views are now built: the first splits by edge
+      direction, because `A PREREQUISITE_OF B` answers “what do I need first?” and “what does this
+      open up?” differently, and both carry their edges so every claimed dependency arrives with
+      the page and passage that asserted it
 - [x] `SYNC_NEO4J` retained in the Â§12 job-type enum as a documented no-op â€”
-      `JobType.SYNC_GRAPH_PROJECTION = “SYNC_NEO4J”`
+      `JobType.SYNC_GRAPH_PROJECTION = “SYNC_NEO4J”`, and the worker claims and completes it. A
+      no-op job type that nothing claims is not idle, it is a queue that grows for ever
 - [x] Security test: graph query without scope filters. Gate: zero edges without provenance â€”
       `tests/security/test_graph_security.py`, twelve `gate`-marked tests. **This closes the
       sixth release gate**

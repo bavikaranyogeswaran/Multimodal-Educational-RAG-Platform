@@ -236,6 +236,9 @@ def build_container(settings: Settings) -> Container:
         reranker=_build_reranker(settings),
         dense_retriever=cast(DenseRetriever, _u("DenseRetriever")),
         keyword_retriever=cast(KeywordRetriever, _u("KeywordRetriever")),
+        # Left empty on purpose — graph traversal runs against PostgreSQL through the
+        # repository, so nothing asks for this. Kept as the seam a graph database would
+        # arrive through; see the note on the Container field.
         graph=cast(GraphPort, _u("GraphPort")),
         observability=cast(ObservabilityPort, _u("ObservabilityPort")),
         # Model gateway

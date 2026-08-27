@@ -17,6 +17,12 @@ from app.domain.values import UntrustedText
 from app.infrastructure.database.models.graph import GraphEntityModel, GraphRelationshipModel
 from app.infrastructure.database.repository import ScopedRepository
 
+#: How far the concept map walks from its seeds. One hop keeps a view readable and the
+#: query a single join; the traversal is written as a recursive walk so raising this is
+#: a change of number rather than a change of shape, if evaluation ever shows one hop
+#: is not enough to answer a relationship question.
+_TRAVERSAL_DEPTH = 1
+
 
 class SqlGraphRepository(ScopedRepository):
     """Reads and writes GraphEntity and GraphRelationship aggregates via SQLAlchemy."""
@@ -134,6 +140,47 @@ class SqlGraphRepository(ScopedRepository):
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_rel_to_entity(row) for row in rows]
 
+    async def list_relationships_of_type(
+        self,
+        scope: ScopeContext,
+        entity_ids: frozenset[UUID],
+        *,
+        types: frozenset[RelationshipType],
+    ) -> list[GraphRelationship]:
+        """Relationships touching entity_ids whose type is one of `types`."""
+        self._require_scope(scope)
+        if not entity_ids or not types:
+            return []
+        ids = list(entity_ids)
+        stmt = select(GraphRelationshipModel).where(
+            sa.or_(
+                GraphRelationshipModel.source_entity_id.in_(ids),
+                GraphRelationshipModel.target_entity_id.in_(ids),
+            ),
+            GraphRelationshipModel.relationship_type.in_([t.value for t in types]),
+            self._scope_filter(GraphRelationshipModel),
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_rel_to_entity(row) for row in rows]
+
+    async def list_entities_by_ids(
+        self, scope: ScopeContext, entity_ids: frozenset[UUID]
+    ) -> list[GraphEntity]:
+        """The named entities that exist within scope, ordered by name."""
+        self._require_scope(scope)
+        if not entity_ids:
+            return []
+        stmt = (
+            select(GraphEntityModel)
+            .where(
+                GraphEntityModel.id.in_(list(entity_ids)),
+                self._scope_filter(GraphEntityModel),
+            )
+            .order_by(GraphEntityModel.name)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_entity_to_entity(row) for row in rows]
+
     async def concept_map_subgraph(
         self,
         scope: ScopeContext,
@@ -144,56 +191,103 @@ class SqlGraphRepository(ScopedRepository):
         self._require_scope(scope)
         if not seed_entity_ids:
             return [], []
+        if max_nodes < 1:
+            return [], []
 
-        seed_ids = list(seed_entity_ids)
+        capped_set = await self._bounded_node_set(seed_entity_ids, max_nodes=max_nodes)
+        if not capped_set:
+            return [], []
 
-        # One-hop expansion: all relationships touching any seed.
-        rel_stmt = (
-            select(GraphRelationshipModel)
-            .where(
-                sa.or_(
-                    GraphRelationshipModel.source_entity_id.in_(seed_ids),
-                    GraphRelationshipModel.target_entity_id.in_(seed_ids),
-                ),
-                self._scope_filter(GraphRelationshipModel),
-            )
-        )
-        rel_rows = (await self._session.execute(rel_stmt)).scalars().all()
-        relationships = [_rel_to_entity(row) for row in rel_rows]
+        node_ids = list(capped_set)
 
-        # Collect all entity IDs: seeds + every endpoint in the relationships.
-        all_ids: set[UUID] = set(seed_entity_ids)
-        for rel in relationships:
-            all_ids.add(rel.source_entity_id)
-            all_ids.add(rel.target_entity_id)
-
-        # Cap to max_nodes; seeds are always kept, neighbours fill remaining slots.
-        if len(all_ids) <= max_nodes:
-            capped = list(all_ids)
-        else:
-            non_seeds = [eid for eid in all_ids if eid not in seed_entity_ids]
-            capped = seed_ids + non_seeds[: max_nodes - len(seed_ids)]
-
-        capped_set = frozenset(capped)
-
-        # Load full entity objects for the capped set.
-        entity_stmt = (
-            select(GraphEntityModel)
-            .where(
-                GraphEntityModel.id.in_(list(capped_set)),
-                self._scope_filter(GraphEntityModel),
-            )
+        entity_stmt = select(GraphEntityModel).where(
+            GraphEntityModel.id.in_(node_ids),
+            self._scope_filter(GraphEntityModel),
         )
         entity_rows = (await self._session.execute(entity_stmt)).scalars().all()
         entities = [_entity_to_entity(row) for row in entity_rows]
 
-        # Trim relationships to those whose both endpoints survived the cap.
-        included_rels = [
-            rel for rel in relationships
-            if rel.source_entity_id in capped_set and rel.target_entity_id in capped_set
-        ]
+        # Only edges with both endpoints inside the view. An edge to a node the cap
+        # excluded would draw as a line to nothing.
+        rel_stmt = select(GraphRelationshipModel).where(
+            GraphRelationshipModel.source_entity_id.in_(node_ids),
+            GraphRelationshipModel.target_entity_id.in_(node_ids),
+            self._scope_filter(GraphRelationshipModel),
+        )
+        rel_rows = (await self._session.execute(rel_stmt)).scalars().all()
+        relationships = [_rel_to_entity(row) for row in rel_rows]
 
-        return entities, included_rels
+        return entities, relationships
+
+    async def _bounded_node_set(
+        self, seed_entity_ids: frozenset[UUID], *, max_nodes: int
+    ) -> frozenset[UUID]:
+        """Walk out from the seeds and return at most `max_nodes` entity ids.
+
+        The walk and the bound both happen in the database. Reading every edge that
+        touches a seed and then discarding most of them in Python would make the cost of
+        a capped view depend on how well connected the seed is, which is exactly what
+        the cap exists to prevent — a heavily linked concept would load thousands of rows
+        to render thirty.
+
+        Ordering by depth then id keeps two things true that the previous set-iteration
+        approach did not: seeds survive the cap ahead of their neighbours, and the same
+        request twice returns the same subgraph.
+        """
+        anchor = (
+            select(
+                GraphEntityModel.id.label("id"),
+                sa.literal(0).label("depth"),
+            )
+            .where(
+                GraphEntityModel.id.in_(list(seed_entity_ids)),
+                self._scope_filter(GraphEntityModel),
+            )
+        )
+        reachable = anchor.cte("reachable", recursive=True)
+
+        # An edge is undirected for traversal: whichever endpoint is already in the set,
+        # the other one is the neighbour.
+        neighbour = sa.case(
+            (
+                GraphRelationshipModel.source_entity_id == reachable.c.id,
+                GraphRelationshipModel.target_entity_id,
+            ),
+            else_=GraphRelationshipModel.source_entity_id,
+        )
+        step = (
+            select(
+                neighbour.label("id"),
+                (reachable.c.depth + 1).label("depth"),
+            )
+            .select_from(reachable)
+            .join(
+                GraphRelationshipModel,
+                sa.or_(
+                    GraphRelationshipModel.source_entity_id == reachable.c.id,
+                    GraphRelationshipModel.target_entity_id == reachable.c.id,
+                ),
+            )
+            .where(
+                reachable.c.depth < _TRAVERSAL_DEPTH,
+                self._scope_filter(GraphRelationshipModel),
+            )
+        )
+
+        # UNION rather than UNION ALL: a cycle would otherwise walk for ever, and a node
+        # reachable by two paths needs counting once against the cap.
+        walk = reachable.union(step)
+
+        bounded = (
+            select(walk.c.id)
+            .group_by(walk.c.id)
+            # A node found at two depths is kept at its shortest, so a seed that is also
+            # someone's neighbour is still ordered as a seed.
+            .order_by(sa.func.min(walk.c.depth), walk.c.id)
+            .limit(max_nodes)
+        )
+        rows = (await self._session.execute(bounded)).scalars().all()
+        return frozenset(rows)
 
 
 def _utc(dt: datetime) -> datetime:

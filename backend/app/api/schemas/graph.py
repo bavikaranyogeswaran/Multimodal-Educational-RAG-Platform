@@ -62,3 +62,33 @@ class GraphEntityDetailResponse(BaseModel):
 
     entity: GraphEntityResponse
     relationships: list[GraphRelationshipResponse]
+
+
+class PrerequisiteViewResponse(BaseModel):
+    """What a concept rests on, and what rests on it.
+
+    Both directions are returned because the edge answers two different questions and
+    a view that picked one would silently be the wrong view for the other. "What do I
+    need first?" reads `prerequisites`; "what does this open up?" reads `unlocks`.
+
+    `relationships` carries the edges themselves, so every claim of dependency arrives
+    with the page and the passage that asserted it. A list of names alone would be the
+    model's opinion presented as fact.
+    """
+
+    entity: GraphEntityResponse
+    prerequisites: list[GraphEntityResponse]
+    unlocks: list[GraphEntityResponse]
+    relationships: list[GraphRelationshipResponse]
+
+
+class RelatedViewResponse(BaseModel):
+    """Concepts sitting alongside this one rather than beneath or above it.
+
+    Association and comparison only. Containment and explanation are structure, not
+    relatedness, and mixing them here would put a chapter next to its own sections.
+    """
+
+    entity: GraphEntityResponse
+    related: list[GraphEntityResponse]
+    relationships: list[GraphRelationshipResponse]

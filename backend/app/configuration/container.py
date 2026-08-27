@@ -83,6 +83,12 @@ class Container:
     reranker: RerankerPort
     dense_retriever: DenseRetriever
     keyword_retriever: KeywordRetriever
+    #: Deliberately unimplemented, and not an oversight. Graph traversal is served by
+    #: the repository against PostgreSQL, so nothing reads this slot. The port stays
+    #: because it is the seam a graph database would arrive through: it speaks
+    #: traversal — neighbours, subgraphs — rather than a query language, so filling it
+    #: later would not touch a single caller. Deleting it would quietly convert a
+    #: reversible decision into a permanent one.
     graph: GraphPort
     cache: CacheStore
     observability: ObservabilityPort
