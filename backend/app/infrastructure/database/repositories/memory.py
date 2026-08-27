@@ -6,13 +6,15 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import column, func, select, update
 
 from app.domain.enums import MemoryProvenance, MemoryStatus, MemoryType
 from app.domain.memory.entities import MemoryFact
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.models.conversation import MemoryFactModel
 from app.infrastructure.database.repository import ScopedRepository
+
+_TS_CONFIG = "english"
 
 
 class SqlMemoryRepository(ScopedRepository):
@@ -61,6 +63,73 @@ class SqlMemoryRepository(ScopedRepository):
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_to_entity(row) for row in rows]
+
+    async def update_embedding(
+        self, scope: ScopeContext, fact_id: UUID, embedding: Sequence[float]
+    ) -> None:
+        """Store the dense vector for a fact without touching any other field."""
+        self._require_scope(scope)
+        stmt = (
+            update(MemoryFactModel)
+            .where(
+                MemoryFactModel.id == fact_id,
+                self._scope_filter(MemoryFactModel),
+            )
+            .values(embedding=list(embedding))
+        )
+        await self._session.execute(stmt)
+
+    async def dense_search(
+        self,
+        scope: ScopeContext,
+        query_embedding: Sequence[float],
+        *,
+        limit: int,
+    ) -> Sequence[tuple[MemoryFact, float]]:
+        """Cosine-distance nearest-neighbour search over ACTIVE fact embeddings."""
+        self._require_scope(scope)
+        distance_col = MemoryFactModel.embedding.cosine_distance(list(query_embedding))
+        stmt = (
+            select(MemoryFactModel, distance_col.label("distance"))
+            .where(
+                self._scope_filter(MemoryFactModel),
+                MemoryFactModel.status == MemoryStatus.ACTIVE.value,
+                MemoryFactModel.embedding.isnot(None),
+            )
+            .order_by(distance_col)
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(_to_entity(row[0]), float(row[1])) for row in rows]
+
+    async def keyword_search(
+        self,
+        scope: ScopeContext,
+        query_text: str,
+        *,
+        limit: int,
+    ) -> Sequence[tuple[MemoryFact, float]]:
+        """Full-text search over the trigger-maintained tsv column of ACTIVE facts."""
+        self._require_scope(scope)
+        # tsv is not declared on MemoryFactModel because it is PostgreSQL-specific and
+        # managed by a database trigger, not application code. column() references it
+        # by name without requiring an ORM mapping.
+        tsv_col = column("tsv")
+        ts_query = func.plainto_tsquery(_TS_CONFIG, query_text)
+        score_col = func.ts_rank_cd(tsv_col, ts_query)
+        stmt = (
+            select(MemoryFactModel, score_col.label("rank_score"))
+            .where(
+                self._scope_filter(MemoryFactModel),
+                MemoryFactModel.status == MemoryStatus.ACTIVE.value,
+                tsv_col.isnot(None),
+                tsv_col.op("@@")(ts_query),
+            )
+            .order_by(score_col.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(_to_entity(row[0]), float(row[1])) for row in rows]
 
 
 def _utc(dt: datetime) -> datetime:

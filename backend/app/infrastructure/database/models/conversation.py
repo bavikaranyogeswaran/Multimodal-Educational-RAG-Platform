@@ -3,10 +3,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base
+
+_MEMORY_EMBEDDING_DIM = 384
 
 
 class ConversationModel(Base):
@@ -174,6 +177,8 @@ class MemoryFactModel(Base):
     last_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Optional system-controlled expiry — a cron job marks the fact EXPIRED after this.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Populated by update_embedding() after a fact is written; NULL until then.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(_MEMORY_EMBEDDING_DIM))
     # Stored as the integer ordinal of the MemoryProvenance IntEnum so that ordering
     # (USER_CORRECTION > APPLICATION_EVENT > USER_STATEMENT > ASSISTANT_INFERENCE) is
     # native to the column and sortable without a lookup table.

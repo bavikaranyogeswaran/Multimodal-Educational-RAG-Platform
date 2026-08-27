@@ -305,6 +305,32 @@ class MemoryRepository(Protocol):
         """All facts regardless of status, for compaction and review."""
         ...
 
+    async def update_embedding(
+        self, scope: ScopeContext, fact_id: UUID, embedding: Sequence[float]
+    ) -> None:
+        """Write the dense embedding for a single fact after it has been written."""
+        ...
+
+    async def dense_search(
+        self,
+        scope: ScopeContext,
+        query_embedding: Sequence[float],
+        *,
+        limit: int,
+    ) -> Sequence[tuple[MemoryFact, float]]:
+        """Return (fact, cosine_distance) pairs for the nearest ACTIVE fact embeddings."""
+        ...
+
+    async def keyword_search(
+        self,
+        scope: ScopeContext,
+        query_text: str,
+        *,
+        limit: int,
+    ) -> Sequence[tuple[MemoryFact, float]]:
+        """Return (fact, ts_rank_cd) pairs for ACTIVE facts matching query_text."""
+        ...
+
 
 class GraphRepository(Protocol):
     """Persistence for GraphEntity and GraphRelationship."""
