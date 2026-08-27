@@ -58,6 +58,32 @@ class NumericCheckResult:
 
 
 @dataclass(frozen=True, slots=True)
+class LengthCheckResult:
+    """Outcome of checking the answer prose length against configured limits.
+
+    Uses a character-based token estimate (character count // 4) rather than a tokenizer,
+    keeping the check purely deterministic and free of model calls or external weights.
+    """
+
+    word_count: int
+    estimated_tokens: int
+    max_words: int
+    max_tokens: int
+
+    @property
+    def exceeds_word_limit(self) -> bool:
+        return self.word_count > self.max_words
+
+    @property
+    def exceeds_token_limit(self) -> bool:
+        return self.estimated_tokens > self.max_tokens
+
+    @property
+    def is_too_long(self) -> bool:
+        return self.exceeds_word_limit or self.exceeds_token_limit
+
+
+@dataclass(frozen=True, slots=True)
 class EntailmentResult:
     """Outcome of checking one (claim, passage) pair for semantic support.
 
@@ -185,6 +211,7 @@ def decide(
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
     fidelity: AnswerFidelity | None = None,
     numeric_results: Sequence[NumericCheckResult] = (),
+    length_result: LengthCheckResult | None = None,
 ) -> ValidationDecision:
     """Collapse citation, entailment, faithfulness and figure results into one action.
 
@@ -207,8 +234,10 @@ def decide(
     # match what was actually established, which is a thing a second attempt can do.
     # A figure the passages do not contain is repairable for the same reason — the right
     # number is sitting in the evidence, and the model can be told to use it.
-    repairable = fidelity is AnswerFidelity.OVERSTATED or any(
-        result.has_unsupported_numbers for result in numeric_results
+    repairable = (
+        (length_result is not None and length_result.is_too_long)
+        or fidelity is AnswerFidelity.OVERSTATED
+        or any(result.has_unsupported_numbers for result in numeric_results)
     )
 
     for check, ent_results in zip(citation_results, entailment_by_claim, strict=True):
@@ -322,6 +351,7 @@ def build_repair_instructions(
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
     fidelity: AnswerFidelity | None = None,
     numeric_results: Sequence[NumericCheckResult] = (),
+    length_result: LengthCheckResult | None = None,
 ) -> str:
     """Return a feedback string the model can act on when revising its answer.
 
@@ -364,6 +394,22 @@ def build_repair_instructions(
             "Your answer states something none of your claims covers. Either rewrite the "
             "answer so it says only what the claims establish, or add a claim — with "
             "citations — for the statement you want to keep."
+        )
+
+    if length_result is not None and length_result.is_too_long:
+        actual = (
+            f"{length_result.word_count} words"
+            if length_result.exceeds_word_limit
+            else f"approximately {length_result.estimated_tokens} tokens"
+        )
+        limit = (
+            f"{length_result.max_words} words"
+            if length_result.exceeds_word_limit
+            else f"{length_result.max_tokens} estimated tokens"
+        )
+        bullets.append(
+            f"Your answer ({actual}) exceeds the {limit} limit. Rewrite it more concisely "
+            "while keeping every citation and all factual claims intact."
         )
 
     if not bullets:
@@ -436,6 +482,27 @@ def check_numeric_fidelity(
         )
 
     return tuple(results)
+
+
+def check_length_limits(
+    answer: GeneratedAnswer,
+    max_words: int,
+    max_tokens: int,
+) -> LengthCheckResult:
+    """Check that the answer prose fits within configured word and token limits.
+
+    An answer that exceeds either limit is REPAIRABLE — the model is asked to condense it
+    before the answer reaches the student. Runs deterministically on the prose text alone.
+    """
+    text = answer.answer
+    word_count = len(text.split())
+    estimated_tokens = len(text) // 4
+    return LengthCheckResult(
+        word_count=word_count,
+        estimated_tokens=estimated_tokens,
+        max_words=max_words,
+        max_tokens=max_tokens,
+    )
 
 
 def check_citation_existence(

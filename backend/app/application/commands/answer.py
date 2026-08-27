@@ -41,10 +41,12 @@ from app.domain.models.instructions import Instruction
 from app.domain.models.validation import (
     CitationCheckResult,
     EntailmentResult,
+    LengthCheckResult,
     NumericCheckResult,
     build_partial_answer,
     build_repair_instructions,
     check_citation_existence,
+    check_length_limits,
     check_numeric_fidelity,
     decide,
 )
@@ -222,6 +224,8 @@ class AnswerUseCase:
         kb_repo: KnowledgeBaseRepository | None = None,
         graph_repo: GraphRepository | None = None,
         multi_hop: MultiHopAnswerUseCase | None = None,
+        answer_max_words: int = 400,
+        answer_max_tokens: int = 600,
     ) -> None:
         self._retrieve = retrieve
         self._uow = conversation_uow
@@ -232,6 +236,8 @@ class AnswerUseCase:
         self._kb_repo = kb_repo
         self._graph_repo = graph_repo
         self._multi_hop = multi_hop
+        self._answer_max_words = answer_max_words
+        self._answer_max_tokens = answer_max_tokens
 
     async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:
         """Stream the answer for one turn.
@@ -369,7 +375,10 @@ class AnswerUseCase:
                     yield answer_text
                 else:
                     raw, usage = await _collect_stream(initial_stream)
-                    checked = await _validate(raw, labeled, entailment, faithfulness)
+                    checked = await _validate(
+                        raw, labeled, entailment, faithfulness,
+                        self._answer_max_words, self._answer_max_tokens,
+                    )
 
                     if checked.decision is ValidationDecision.REPAIRABLE:
                         repair = build_repair_instructions(
@@ -377,6 +386,7 @@ class AnswerUseCase:
                             checked.entailment_by_claim,
                             checked.fidelity,
                             checked.numeric_results,
+                            checked.length_result,
                         )
                         repair_request = context_builder.build(
                             ContextInputs(
@@ -400,7 +410,8 @@ class AnswerUseCase:
                             gateway.generate_stream(repair_request)
                         )
                         checked = await _validate(
-                            repair_raw, labeled, entailment, faithfulness
+                            repair_raw, labeled, entailment, faithfulness,
+                            self._answer_max_words, self._answer_max_tokens,
                         )
 
                     answer = _returnable_answer(checked)
@@ -604,6 +615,7 @@ class _Validation:
     entailment_by_claim: tuple[tuple[EntailmentResult, ...], ...] = ()
     fidelity: AnswerFidelity | None = None
     numeric_results: tuple[NumericCheckResult, ...] = ()
+    length_result: LengthCheckResult | None = None
 
 
 async def _validate(
@@ -611,20 +623,29 @@ async def _validate(
     labeled: tuple[LabeledPassage, ...],
     entailment: ClaimEntailmentPort,
     faithfulness: AnswerFaithfulnessPort,
+    max_words: int,
+    max_tokens: int,
 ) -> _Validation:
     """Run the checks in increasing cost, stopping as soon as the answer is doomed.
 
     Parsing first, because a response that is not the required shape has nothing to
-    check. Then citations, which need no model call at all. Then entailment, one call per
-    cited passage. Faithfulness last, and only where it can still change something: it is
-    another model call, and both a rejection and an abstention are already settled — one
-    cannot be saved by the check and the other made no claims to overstate.
+    check. Then citations and length, which need no model call at all. Then entailment,
+    one call per cited passage. Faithfulness last, and only where it can still change
+    something: it is another model call, and both a rejection and an abstention are
+    already settled — one cannot be saved by the check and the other made no claims
+    to overstate.
     """
     try:
         answer = parse_generated_answer(raw)
     except GenerationParseError:
         return _Validation(ValidationDecision.REJECTED, None)
 
+    # Skipped when the model abstained — there is no prose to measure.
+    length_result = (
+        None
+        if answer.insufficient_evidence
+        else check_length_limits(answer, max_words, max_tokens)
+    )
     citation_results = check_citation_existence(answer, labeled)
     # Deterministic, so it runs alongside the citation check rather than after the model
     # calls — a figure the passages do not contain costs nothing to find.
@@ -632,21 +653,25 @@ async def _validate(
     ent_by_claim = await _check_entailment(citation_results, labeled, entailment)
 
     provisional = decide(
-        answer, citation_results, ent_by_claim, numeric_results=numeric_results
+        answer, citation_results, ent_by_claim, numeric_results=numeric_results,
+        length_result=length_result,
     )
     if provisional in _SETTLED_WITHOUT_FIDELITY:
         return _Validation(
-            provisional, answer, citation_results, ent_by_claim, None, numeric_results
+            provisional, answer, citation_results, ent_by_claim, None,
+            numeric_results, length_result,
         )
 
     fidelity = await faithfulness.check_answer(answer)
     return _Validation(
-        decide(answer, citation_results, ent_by_claim, fidelity, numeric_results),
+        decide(answer, citation_results, ent_by_claim, fidelity, numeric_results,
+               length_result),
         answer,
         citation_results,
         ent_by_claim,
         fidelity,
         numeric_results,
+        length_result,
     )
 
 

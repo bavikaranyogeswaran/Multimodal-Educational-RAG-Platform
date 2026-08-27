@@ -11,12 +11,14 @@ from app.domain.models.generation import Claim, GeneratedAnswer
 from app.domain.models.validation import (
     CitationCheckResult,
     EntailmentResult,
+    LengthCheckResult,
     NumericCheckResult,
     aggregate_claim_status,
     build_fidelity_query,
     build_partial_answer,
     build_repair_instructions,
     check_citation_existence,
+    check_length_limits,
     check_numeric_fidelity,
     decide,
     parse_entailment_status,
@@ -884,3 +886,181 @@ class TestBuildPartialAnswer:
 
         assert result is not None
         assert [c.text for c in result.claims] == ["First fact.", "Second fact."]
+
+
+# ---------------------------------------------------------------------------
+# check_length_limits
+# ---------------------------------------------------------------------------
+
+
+class TestCheckLengthLimits:
+    def _answer(self, text: str) -> GeneratedAnswer:
+        claim = _claim(text="A fact.", citations=("[S1]",))
+        return GeneratedAnswer(answer=text or "placeholder", claims=(claim,), insufficient_evidence=False)
+
+    def test_within_both_limits_not_too_long(self) -> None:
+        answer = self._answer("One two three.")
+        result = check_length_limits(answer, max_words=10, max_tokens=50)
+        assert not result.is_too_long
+        assert not result.exceeds_word_limit
+        assert not result.exceeds_token_limit
+
+    def test_word_count_is_exact_split_count(self) -> None:
+        answer = self._answer("alpha beta gamma")
+        result = check_length_limits(answer, max_words=100, max_tokens=500)
+        assert result.word_count == 3
+
+    def test_estimated_tokens_is_char_count_over_four(self) -> None:
+        text = "a" * 100
+        answer = self._answer(text)
+        result = check_length_limits(answer, max_words=1000, max_tokens=10000)
+        assert result.estimated_tokens == 25  # 100 // 4
+
+    def test_exceeds_word_limit_flags_repairable(self) -> None:
+        answer = self._answer(" ".join(["word"] * 10))
+        result = check_length_limits(answer, max_words=5, max_tokens=1000)
+        assert result.exceeds_word_limit
+        assert result.is_too_long
+
+    def test_exceeds_token_limit_only(self) -> None:
+        long_words = " ".join(["a" * 50] * 2)  # 2 words, 101 chars → ~25 estimated tokens
+        answer = self._answer(long_words)
+        result = check_length_limits(answer, max_words=100, max_tokens=10)
+        assert not result.exceeds_word_limit
+        assert result.exceeds_token_limit
+        assert result.is_too_long
+
+    def test_exactly_at_limit_not_flagged(self) -> None:
+        answer = self._answer(" ".join(["word"] * 5))
+        result = check_length_limits(answer, max_words=5, max_tokens=1000)
+        assert not result.exceeds_word_limit
+
+    def test_limits_stored_on_result(self) -> None:
+        answer = self._answer("hello")
+        result = check_length_limits(answer, max_words=42, max_tokens=99)
+        assert result.max_words == 42
+        assert result.max_tokens == 99
+
+    def test_single_word_answer_not_too_long(self) -> None:
+        answer = self._answer("Correct.")
+        result = check_length_limits(answer, max_words=10, max_tokens=10)
+        assert not result.is_too_long
+        assert result.word_count == 1
+
+
+# ---------------------------------------------------------------------------
+# decide() with length_result
+# ---------------------------------------------------------------------------
+
+
+class TestDecideWithLengthResult:
+    def _citation(
+        self, claim: Claim, fabricated: frozenset[str] = frozenset()
+    ) -> CitationCheckResult:
+        return CitationCheckResult(claim=claim, fabricated_labels=fabricated)
+
+    def _entailment(
+        self, claim: Claim, status: ClaimStatus, label: str = "[S1]"
+    ) -> list[EntailmentResult]:
+        return [EntailmentResult(claim=claim, passage_label=label, status=status)]
+
+    def test_length_too_long_makes_answer_repairable(self) -> None:
+        claim = _claim()
+        answer = _answer(claim)
+        citation = self._citation(claim)
+        ent = self._entailment(claim, ClaimStatus.ENTAILED)
+        long_result = LengthCheckResult(
+            word_count=500, estimated_tokens=700, max_words=400, max_tokens=600
+        )
+        decision = decide(answer, (citation,), [ent], length_result=long_result)
+        assert decision is ValidationDecision.REPAIRABLE
+
+    def test_length_within_limits_does_not_affect_valid_answer(self) -> None:
+        claim = _claim()
+        answer = _answer(claim)
+        citation = self._citation(claim)
+        ent = self._entailment(claim, ClaimStatus.ENTAILED)
+        ok_result = LengthCheckResult(
+            word_count=100, estimated_tokens=150, max_words=400, max_tokens=600
+        )
+        decision = decide(answer, (citation,), [ent], length_result=ok_result)
+        assert decision is ValidationDecision.VALID
+
+    def test_none_length_result_does_not_affect_decision(self) -> None:
+        claim = _claim()
+        answer = _answer(claim)
+        citation = self._citation(claim)
+        ent = self._entailment(claim, ClaimStatus.ENTAILED)
+        decision = decide(answer, (citation,), [ent], length_result=None)
+        assert decision is ValidationDecision.VALID
+
+    def test_rejected_answer_stays_rejected_even_when_too_long(self) -> None:
+        claim = _claim()
+        answer = _answer(claim)
+        citation = self._citation(claim, fabricated=frozenset({"[S1]"}))
+        ent = self._entailment(claim, ClaimStatus.NOT_SUPPORTED)
+        long_result = LengthCheckResult(
+            word_count=500, estimated_tokens=700, max_words=400, max_tokens=600
+        )
+        decision = decide(answer, (citation,), [ent], length_result=long_result)
+        assert decision is ValidationDecision.REJECTED
+
+
+# ---------------------------------------------------------------------------
+# build_repair_instructions() with length_result
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRepairInstructionsWithLength:
+    def _no_issues(self, claim: Claim) -> tuple[tuple[CitationCheckResult, ...], list[list[EntailmentResult]]]:
+        citation = CitationCheckResult(claim=claim, fabricated_labels=frozenset())
+        ent = [EntailmentResult(claim=claim, passage_label="[S1]", status=ClaimStatus.ENTAILED)]
+        return (citation,), [ent]
+
+    def test_length_bullet_added_when_word_limit_exceeded(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        long_result = LengthCheckResult(
+            word_count=500, estimated_tokens=600, max_words=400, max_tokens=700
+        )
+        repair = build_repair_instructions(citations, ents, length_result=long_result)
+        assert "500 words" in repair
+        assert "400 words" in repair
+
+    def test_length_bullet_added_when_token_limit_exceeded(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        long_result = LengthCheckResult(
+            word_count=100, estimated_tokens=700, max_words=400, max_tokens=600
+        )
+        repair = build_repair_instructions(citations, ents, length_result=long_result)
+        assert "700" in repair
+        assert "600" in repair
+
+    def test_no_length_bullet_when_within_limits(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        ok_result = LengthCheckResult(
+            word_count=100, estimated_tokens=150, max_words=400, max_tokens=600
+        )
+        repair = build_repair_instructions(citations, ents, length_result=ok_result)
+        assert repair == ""
+
+    def test_no_length_bullet_when_result_is_none(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        repair = build_repair_instructions(citations, ents, length_result=None)
+        assert repair == ""
+
+    def test_length_bullet_combined_with_other_issues(self) -> None:
+        claim = _claim(text="Bad claim.", citations=("[S99]",))
+        citation = CitationCheckResult(claim=claim, fabricated_labels=frozenset({"[S99]"}))
+        ent = [EntailmentResult(claim=claim, passage_label="[S99]", status=ClaimStatus.NOT_SUPPORTED)]
+        long_result = LengthCheckResult(
+            word_count=500, estimated_tokens=700, max_words=400, max_tokens=600
+        )
+        repair = build_repair_instructions(
+            (citation,), [ent], length_result=long_result
+        )
+        assert "[S99]" in repair
+        assert "500 words" in repair

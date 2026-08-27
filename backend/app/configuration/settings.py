@@ -426,6 +426,30 @@ class MultiHopSettings(BaseSettings):
 
 
 # ---------------------------------------------------------------------------
+# Generation validation
+# ---------------------------------------------------------------------------
+class GenerationSettings(BaseSettings):
+    model_config = _config("GENERATION_")
+
+    #: Answers longer than this are REPAIRABLE — the model is asked to condense before
+    #: the answer reaches the student.
+    answer_max_words: int = 400
+
+    #: Character-based token ceiling (length // 4 heuristic). Larger than answer_max_words
+    #: to accommodate punctuation-heavy and technical text.
+    answer_max_tokens: int = 600
+
+    @model_validator(mode="after")
+    def _token_limit_exceeds_word_limit(self) -> GenerationSettings:
+        if self.answer_max_tokens < self.answer_max_words:
+            raise ValueError(
+                "GENERATION_ANSWER_MAX_TOKENS must be >= GENERATION_ANSWER_MAX_WORDS — "
+                "tokens are always more numerous than words under sub-word tokenization"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
 class MemorySettings(BaseSettings):
@@ -525,6 +549,7 @@ class Settings(BaseSettings):
     retrieval: Annotated[RetrievalSettings, Field(default_factory=RetrievalSettings)]
     evidence: Annotated[EvidenceSettings, Field(default_factory=EvidenceSettings)]
     multihop: Annotated[MultiHopSettings, Field(default_factory=MultiHopSettings)]
+    generation: Annotated[GenerationSettings, Field(default_factory=GenerationSettings)]
     memory: Annotated[MemorySettings, Field(default_factory=MemorySettings)]
     job: Annotated[JobSettings, Field(default_factory=JobSettings)]
     cache: Annotated[CacheSettings, Field(default_factory=CacheSettings)]

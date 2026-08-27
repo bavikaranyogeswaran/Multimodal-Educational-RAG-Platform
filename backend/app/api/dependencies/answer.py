@@ -43,4 +43,6 @@ async def get_answer_use_case(
         # of its own — each is the gateway plus a prompt, and the gateway is already wired.
         entailment=OllamaClaimEntailment(container.model_gateway),
         faithfulness=OllamaAnswerFaithfulness(container.model_gateway),
+        answer_max_words=settings.generation.answer_max_words,
+        answer_max_tokens=settings.generation.answer_max_tokens,
     )
