@@ -17,9 +17,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+
+import structlog
+
+_log = structlog.get_logger(__name__)
 
 from app.application.commands.multi_hop_answer import MultiHopAnswerCommand, MultiHopAnswerUseCase
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
@@ -229,6 +233,7 @@ class AnswerUseCase:
         graph_repo: GraphRepository | None = None,
         memory_repo: MemoryRepository | None = None,
         multi_hop: MultiHopAnswerUseCase | None = None,
+        post_turn_hook: Callable[[ScopeContext, uuid.UUID], Awaitable[None]] | None = None,
         answer_max_words: int = 400,
         answer_max_tokens: int = 600,
     ) -> None:
@@ -242,6 +247,7 @@ class AnswerUseCase:
         self._graph_repo = graph_repo
         self._memory_repo = memory_repo
         self._multi_hop = multi_hop
+        self._post_turn_hook = post_turn_hook
         self._answer_max_words = answer_max_words
         self._answer_max_tokens = answer_max_tokens
 
@@ -365,6 +371,7 @@ class AnswerUseCase:
         faithfulness = self._faithfulness
         query = command.query
         multi_hop = self._multi_hop
+        post_turn_hook = self._post_turn_hook
         is_multi_hop = retrieval.query_class.needs_decomposition and multi_hop is not None
 
         async def _tracked() -> AsyncGenerator[str, None]:
@@ -459,18 +466,27 @@ class AnswerUseCase:
                 failed = True
                 raise
             finally:
+                outcome = _outcome(failed=failed, abandoned=abandoned, abstained=abstained)
                 await _record_turn(
                     uow,
                     scope=scope,
                     conversation_id=conv_id,
                     assistant_message_id=assistant_id,
                     assistant_created_at=assistant_created_at,
-                    status=_outcome(failed=failed, abandoned=abandoned, abstained=abstained),
+                    status=outcome,
                     answer_text=answer_text,
                     usage=usage,
                     evidence=evidence,
                     citations=citations,
                 )
+                if outcome is MessageStatus.COMPLETED and post_turn_hook is not None:
+                    try:
+                        await post_turn_hook(scope, assistant_id)
+                    except Exception:
+                        _log.exception(
+                            "answer.post_turn_hook_error",
+                            assistant_message_id=str(assistant_id),
+                        )
 
         return _tracked()
 

@@ -13,11 +13,13 @@ import pytest
 from app.domain.enums import DataBoundary, ModelTask
 from app.domain.errors import InvariantViolationError
 from app.domain.models.entities import ModelRequest, ModelResponse
+from app.domain.models.entities import GenerationUsage
 from app.domain.ports.model_gateway import (
     ModelGatewayPort,
     ModelProfile,
     MultimodalCapability,
     TextGenerationCapability,
+    TokenStream,
 )
 
 
@@ -134,6 +136,18 @@ _MULTIMODAL_PROFILE = _profile(
 )
 
 
+class _StubTokenStream:
+    def __aiter__(self) -> "_StubTokenStream":
+        return self
+
+    async def __anext__(self) -> str:
+        raise StopAsyncIteration
+
+    @property
+    def usage(self) -> GenerationUsage | None:
+        return None
+
+
 class _StubTextGenerationCapability:
     @property
     def profile(self) -> ModelProfile:
@@ -141,6 +155,9 @@ class _StubTextGenerationCapability:
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         raise NotImplementedError
+
+    def generate_stream(self, request: ModelRequest) -> TokenStream:
+        return _StubTokenStream()  # type: ignore[return-value]
 
 
 class _StubMultimodalCapability:
@@ -150,6 +167,9 @@ class _StubMultimodalCapability:
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         raise NotImplementedError
+
+    def generate_stream(self, request: ModelRequest) -> TokenStream:
+        return _StubTokenStream()  # type: ignore[return-value]
 
     async def generate_with_image(
         self,
@@ -169,6 +189,9 @@ class _StubModelGatewayPort:
         image: bytes,
     ) -> ModelResponse:
         raise NotImplementedError
+
+    def generate_stream(self, request: ModelRequest) -> TokenStream:
+        return _StubTokenStream()  # type: ignore[return-value]
 
     def profile_for(self, task: ModelTask) -> ModelProfile:
         raise NotImplementedError

@@ -21,6 +21,7 @@ from app.domain.ports.adapters import (
     FigureCropperPort,
     GraphPort,
     KeywordRetriever,
+    MemoryExtractionPort,
     ObservabilityPort,
     OcrPort,
     PdfParserPort,
@@ -69,6 +70,9 @@ class Container:
     memory_repository: MemoryRepository
     graph_repository: GraphRepository
     job_repository: JobRepository
+
+    # Memory extraction — None until the LLM extractor adapter is implemented
+    memory_extractor: MemoryExtractionPort | None
 
     # Adapter ports
     storage: StoragePort

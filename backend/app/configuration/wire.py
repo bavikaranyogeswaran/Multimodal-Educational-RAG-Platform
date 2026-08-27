@@ -216,6 +216,8 @@ def build_container(settings: Settings) -> Container:
             ttl_seconds=settings.storage.page_render_ttl_seconds,
         ),
         figure_cropper=_figure_cropper,
+        # Memory extractor — wired when the LLM extraction adapter is built
+        memory_extractor=None,
         # Repository ports — wired in Phase 2 (SQLAlchemy adapters)
         knowledge_base_repository=cast(KnowledgeBaseRepository, _u("KnowledgeBaseRepository")),
         document_repository=cast(DocumentRepository, _u("DocumentRepository")),
