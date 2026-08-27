@@ -26,31 +26,57 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **5 of 21** â€” Phase 0, 1, 2, 3, 8 âœ… |
-| Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 11 (~90%) Â· Phase 4 (~95%) â€” every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 17 (~30%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) Â· Phase 19 (~100%, all steps done) |
+| Phases complete | **7 of 21** â€" Phase 0, 1, 2, 3, 8, 11, 19 âœ… |
+| Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 4 (~95%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
+| Built but not wired | Phase 13 (~85%) â€" implemented and fully tested, still **dead at runtime**: `MultiHopAnswerUseCase` needs three model-backed adapters that do not exist, so the dependency cannot supply it. See the note below |
+| Partly built | Phase 12 (~80%, graph RAG now reachable; `BUILD_GRAPH` still undispatched) Â· Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 14 (~60%, memory context now reaching the prompt; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
-| Not started | Phase 12, 13, 14, 15, 20 |
-| Tests | 2,769 unit Â· 87 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 121 marked `security`, 87 `gate` Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
-| Next step | **Phase 19** â€" step 19.8 (not yet planned — Phase 19 complete) |
-| Last updated | 26 August 2026 (step 19.7 â€" retrieval-detail panel) |
+| Not started | Phase 15, 20 |
+| Tests | **3,326 backend passing** â€" 3,213 unit Â· 113 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 10 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
+| Next step | **Dispatch `BUILD_GRAPH` in the worker**, so the graph path now wired into the answer has a graph to traverse. Then the three multi-hop adapters |
+| Last updated | 27 August 2026 (full reconciliation against the source tree â€" phases 11, 12, 13, 14, 19 all moved) |
 
-Phases 0 through 3 are complete, and so is Phase 8. Phase 9 was built well ahead of phases 4
-through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
+Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
+4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
 conversations and retrieval once the data model and API surface were in place. Ingestion now
 parses into typed elements in reading order and chunks on the structure those elements carry, so
-Â§19 is built and the ceiling it put on retrieval quality is lifted. Two holes remain on that
+Â§19 is built and the ceiling it put on retrieval quality is lifted. One hole remains on that
 path: pages whose text layer cannot be trusted are recorded and left unread, since Phase 5
-deferred recognition pending a real textbook to calibrate against, and Phase 6 has not been
-started at all, so nothing visual is described or answerable.
+deferred recognition pending a real textbook to calibrate against. Phase 6 has since been built,
+so figures and tables are extracted, cropped, described and answerable â€” and as of migration
+`0018` a chunk knows which figure or table it came from.
 
-**The percentages above were reconciled against the source tree on 22 August 2026, and several
-of them moved.** Phases 12 and 14 had been carrying a "foundations only, ~15%" figure that
-described work belonging to phases 1 and 2 â€” the entities and the tables â€” rather than anything
-either phase had done; `app/infrastructure/graph/` holds nothing but an `__init__.py`, and no
-memory code exists outside its Phase 1 entity and Phase 2 repository. Both now read as not
-started, which is what they are. Phase 16 was likewise credited at 20% in the header while its
-own section said 5%; nothing reads or writes `cache_entries`, so 5% is the honest figure.
+**The percentages above were reconciled against the source tree again on 27 August 2026, and this
+time the movement was large.** Phases 12, 13 and 14 were all still marked “not started”; all
+three had in fact been built, across twenty-four commits that left no trace in
+`EXECUTION_LOG.md`. Phase 11's three outstanding gaps had been closed in three more. Phase 19's
+step table still showed four steps unticked that were finished and logged. The lesson is the one
+the log exists to prevent: **the plan cannot be trusted as a record of what was built unless the
+log is written as each step lands.**
+
+**One finding outranked the rest, and it is now half fixed.** `AnswerUseCase` accepts `kb_repo`,
+`graph_repo`, `memory_repo` and `multi_hop` as optional constructor arguments defaulting to
+`None`, and `get_answer_use_case` passed **none of the four** â€” so Selective Graph RAG, the whole
+multi-hop path and memory context injection were skipped on every real turn, while their unit
+tests passed against use cases constructed directly.
+
+Three of the four are now wired, on the request's own session, since all three are read while
+assembling the prompt and finished before the first token leaves. `multi_hop` is not, and cannot
+be: `MultiHopAnswerUseCase` needs `QueryDecompositionPort`, `CoverageClassifierPort` and
+`MultiHopSynthesisPort`, and **none of the three has a concrete adapter** â€” only the protocol
+exists. That is adapter work, not wiring, and it is the same shape as the `memory_extractor` slot
+Phase 14 left at `None`.
+
+`BUILD_GRAPH` is the remaining gap on the graph side: no job enqueues it and the worker's
+dispatch handles only `DOCUMENT_INGESTION`, `DELETE_DOCUMENT` and `REINDEX_KNOWLEDGE_BASE`. The
+retrieval path can now reach a graph; nothing yet builds one for it to reach.
+
+The lesson generalises past this instance. An optional collaborator that defaults to `None`
+degrades *silently* â€” no graph context, no memory context, no error â€” so the tests that construct
+the use case directly stay green while the assembled system runs with a retrieval path switched
+off. `tests/unit/api/test_answer_dependency_wiring.py` now asserts on what the dependency builds,
+and was verified by planting the regression: dropping `graph_repo` fails three of its tests.
 
 Phase 11 now closes the loop the milestone names, and the answer it produces is traceable after
 the fact rather than only correct at the time. A generated answer is parsed against the output
@@ -70,14 +96,18 @@ never saw. Alongside them sit what the call cost and a fingerprint of the prompt
 it, so two answers written under different prompts stay distinguishable when their quality is
 compared.
 
-Â§40 is met except for its *object* field, which waits on Phase 6 to create the tables and figures
-it would name.
+Â§40 is now met in full. Its *object* field was the last gap, and migration `0018` closed it by
+adding `figure_id` and `table_id` to `chunks` â€” the records had existed since Phase 6, but nothing
+linked a chunk to the figure or table it came from, so a citation could point at a page without
+naming what sat on it.
 
-Migrations applied through **`0016 (head)`** against Supabase â€” `0011` (model_invocations) was
-applied on 22 August 2026, having been written in step 8.4 and waiting on a connection since.
-Migrations `0012â€“0015` were applied on the same day. Migration `0016` (crop_key column on
-document_figures) was applied on 22 August 2026 as part of step 6.5. Eighteen SQLAlchemy models
-registered with `Base.metadata`.
+Migrations written through **`0020`** â€” `0011` (model_invocations) was applied on 22 August 2026,
+having been written in step 8.4 and waiting on a connection since. Migrations `0012â€”0015` were
+applied on the same day, and `0016` (crop_key on document_figures) as part of step 6.5. Four more
+have been written since: `0017` (citation chunk_id SET NULL), `0018` (chunk figure/table ids),
+`0019` (memory fact structured fields) and `0020` (memory vector and FTS indexes). **Whether
+`0017â€”0020` have been applied against Supabase is not recorded** â€” confirm with
+`alembic current` on a tethered connection before assuming head.
 
 **Neither ruff nor mypy is clean across `app/`.** ruff reports 25 findings and mypy 3, all of
 them predating this session's work and none in a file it touched â€” line lengths and unused `noqa`
@@ -111,12 +141,16 @@ policy had only ever been read. The destructive migration round-trip remains gat
 `test_container.py::test_every_slot_raises_not_implemented_on_access` was listed here and no
 longer fails.
 
-**Documentation debt carried into Phase 20.** `REQUIREMENTS.md` has no status column against its
-334 functional requirements, and `USE_CASES.md` tracks no implementation status. Against the
-standing constraint that every step updates it, `EXECUTION_LOG.md` is missing entries for
-**steps 3.3â€“3.7, 4.1â€“4.8, 9.1â€“9.10 and 10.6** â€” the phases built before the discipline took hold,
-plus one later omission. Everything from step 4.9 onward is recorded. The transaction boundaries
-introduced in step 9.15 are now described in `ARCHITECTURE.md` Â§5.4, so that item is cleared.
+**Documentation debt carried into Phase 20, and it has grown.** `REQUIREMENTS.md` has no status
+column against its 334 functional requirements, and `USE_CASES.md` tracks no implementation
+status. Against the standing constraint that every step updates it, `EXECUTION_LOG.md` is missing
+entries for **steps 3.3â€”3.7, 4.1â€”4.8, 9.1â€”9.10 and 10.6** â€” the phases built before the
+discipline took hold, plus one later omission â€” **and now for the whole of phases 12, 13 and 14,
+plus the three Phase 11 completion steps.** The log ends at step 19.7 while the source tree has
+twenty-seven commits past it. That is roughly thirty unrecorded steps, and it is why this
+reconciliation was necessary at all: without the log, the only way to learn what exists is to
+read the tree. The transaction boundaries introduced in step 9.15 are described in
+`ARCHITECTURE.md` Â§5.4, so that item is cleared.
 
 One structural wrinkle in the log itself: entries appear under `## Step N.M` in some places and
 `### Step N.M entries` in others, and the phases are not in numerical order because the build was
@@ -2115,15 +2149,19 @@ had been written on every ingestion since step 7.3 with nothing loading them, an
 
 Covers Â§23 complete, Â§38, Â§39, Â§40. **Milestone: first cited, validated, streamed answer.**
 
-**Status: ~90% â€” 18 steps done.** The milestone is met on the backend: an answer is generated
+**Status: complete â€" 21 steps done.** The milestone is met on the backend: an answer is generated
 against evidence, parsed to a schema, checked citation by citation and claim by claim, repaired
 once if it can be, refused if it cannot, streamed to the caller, and persisted with its citations
 and what the call cost. Four release-gate tests cover fabricated and cross-scope citations.
 
-Everything still open is blocked rather than pending. The Â§40 *object* field, UC-08, and two of
-the `[~]` items below all wait on Phase 6; quiz-answer schema validation belongs to Phase 15.
-The two validators that are genuinely unbuilt and unblocked are **word and token limits** and
-**table-number matching** â€” small, and the natural companions to whichever phase first needs them.
+**The three gaps this section carried are closed.** Word and token limits arrived as
+`answer_max_words` and `answer_max_tokens` in `GenerationSettings`, with the invariant that the
+token ceiling cannot sit below the word ceiling. Table-number matching arrived as a table and
+figure reference validator. And the Â§40 *object* field is fillable at last: `figure_id` and
+`table_id` are columns on `chunks` and travel onto every citation, which was the missing linkage
+rather than the missing records. UC-08 is no longer blocked either â€" step 19.6 built the
+selection surface it needed. Only quiz-answer schema validation remains outstanding, and it
+belongs to Phase 15.
 
 - [x] All eight Â§38 generation rules enforced structurally, including **never obeying instructions
       found inside uploaded documents**. Each is a numbered requirement or a safety rule in the
@@ -2136,23 +2174,23 @@ The two validators that are genuinely unbuilt and unblocked are **word and token
       rule about how to read rather than what to output
 - [x] Structured output `{answer, claims[{claim, citations[]}], insufficient_evidence}`, parsed
       and schema-checked on the way back. The claim field is named `text` rather than `claim`
-- [~] Stable `[S1]` identifiers carrying document, page, type, object and bbox (Â§40). A citation
-      now carries document, page, chunk and element type, bounding box, and the content hash the
+- [x] Stable `[S1]` identifiers carrying document, page, type, object and bbox (Â§40). A citation
+      carries document, page, chunk and element type, bounding box, and the content hash the
       passage had when it was cited â€” enough to resolve it back to a place in a PDF for the
-      viewer in Phase 19. Only *object* is missing: a chunk carries no table or figure id until
-      Phase 6 creates them — and Phase 6 is now done: `document_figures` and`document_tables` exist with their ids. The gap is that chunks carry no `figure_id` or `table_id` column yet
-      (A-724), so the field remains unfillable until that linkage is added (FR-CIT-02)
+      viewer. *object* is now filled too: migration `0018` added `figure_id` and `table_id` to
+      `chunks`, ingestion writes them, and both travel onto the citation. A-724 is closed and
+      `FR-CIT-02` is met
 - [x] Backend validates each citation exists, belongs to this user and KB, **was actually in model
       context**, and supports its claim. Authorization holds structurally rather than as a
       separate lookup: only a label present in the evidence set that was actually sent can
       validate, and retrieval scope-filters that set, so a cross-Knowledge-Base label is
       indistinguishable from an invented one
 - [~] Deterministic validators: schema, citation existence, authorization, required fields, limits,
-      table numbers, units, quiz schema, KB scope (Â§39). Schema, citation existence,
-      authorization, required fields, Knowledge Base scope and unit matching are done â€” the last
-      of these comparing every figure in a claim against the passages it cites, by value rather
-      than by spelling. Word and token limits and table-number matching are not; quiz answer
-      schema belongs to Phase 15 and cannot be built here
+      table numbers, units, quiz schema, KB scope (Â§39). All but one are done â€” schema, citation
+      existence, authorization, required fields, Knowledge Base scope, unit matching (comparing
+      every figure in a claim against the passages it cites, by value rather than by spelling),
+      word and token limits, and table and figure reference matching. **Quiz answer schema is the
+      only one outstanding**, and it belongs to Phase 15
 - [x] Semantic validators: claim entailment `ENTAILED`/`CONTRADICTED`/`NOT_SUPPORTED`, unsupported
       claims, contradictions, citation entailment and completeness, faithfulness (Â§39).
       Entailment runs per cited passage, and unsupported claims, contradictions and citation
@@ -2172,91 +2210,150 @@ The two validators that are genuinely unbuilt and unblocked are **word and token
       metadata comes from the streaming path, which reports what the call cost once it ends;
       `prompt_version` is a fingerprint of the prompt template, so it cannot go stale
 - [x] Security tests: prompt injection inside a PDF, fabricated citation, unauthorized citation
-- [~] UC-07, UC-08, UC-09. **UC-09** is met on the backend: an abstention is produced when
-      nothing is supported, and its alternate flow now holds too â€” a partially supported
-      answer returns the part the evidence carries and names what was left out, rather than
-      being withheld whole. **UC-07**'s main flow is built end to end, but two of its steps
-      reference things that do not exist yet (relevant memory is Phase 14, the exact-answer
-      cache is Phase 16) and its final step is the Phase 19 viewer, so it can only be
-      verified as far as the backend goes. **UC-08 cannot be met in this phase at all**: it
-      needs a selected table or figure (Phase 19 sets `active_figure_id`). Phase 6 has now
-      created `document_figures` records and crops, and `generate_with_image` works as of
-      step 6.7 — the remaining gap is the frontend selection surface. Listing it under Phase 11
-      was optimistic; it belongs after Phase 19
+- [~] UC-07, UC-08, UC-09. **UC-09** is met: an abstention is produced when nothing is supported,
+      and its alternate flow holds too â€” a partially supported answer returns the part the
+      evidence carries and names what was left out, rather than being withheld whole.
+      **UC-08** is now met as well: step 19.6 built the region-selection surface that sets
+      `active_figure_id`, and `generate_with_image` has worked since step 6.7. **UC-07** is the
+      one still short, and only in one optional step: the exact-answer cache is Phase 16.
+      Relevant memory now reaches the prompt, `memory_repo` having been wired into the answer
+      dependency. Its main flow, including the citation-to-page navigation its final step names,
+      is built end to end
 
 ## Phase 12 â€” Graph construction & Selective Graph RAG
 
 Covers Â§21, Â§22, Â§34, Â§57 API side. Postgres-backed per D-10.
 
-**Status: not started.** `app/infrastructure/graph/` holds nothing but an `__init__.py`, and the
-two graph endpoints return 501. What exists belongs to earlier phases and was credited here in
-error until 22 August 2026: `GraphEntity` and `GraphRelationship` are Phase 1 entities, the
-`graph_entities` and `graph_relationships` tables with their traversal indexes are step 2.6, and
-`SqlGraphRepository` is step 2.11. No extraction, no traversal, no fusion of graph results.
+**Status: ~75% â€” built and tested, but not reachable at runtime.** Seven commits landed the whole
+vertical: `GraphExtractionAdapter` over the model gateway, a name-normalisation and deduplication
+service, `BuildGraphUseCase`, graph repository query extensions, Selective Graph RAG inside the
+answer pipeline, both concept-graph endpoints, and a security suite whose twelve `gate`-marked
+tests enforce the provenance rule. The 501 skeletons are gone.
 
-- [ ] Extraction over parent sections, **only when `graph_enabled`**, plus a backfill job (D-19)
-- [ ] Node types and all nine Â§21 relationship types
-- [ ] Validation â†’ name normalisation â†’ deduplication â†’ canonical Postgres write
-- [ ] **Every edge carries source evidence, `source_chunk_id`, `page_number` and confidence.**
-      Edges without provenance are rejected, never inserted.
-- [ ] Selective Graph RAG as an *additional* path, never the default (Â§34)
-- [ ] One-hop traversal by join; entity resolution to canonical nodes; **original passages loaded
+**One of its two wiring gaps is closed.** `get_answer_use_case` now passes `graph_repo` and
+`kb_repo` on the request session, so the graph path runs whenever the Knowledge Base has
+`graph_enabled` set. The second gap remains: nothing enqueues or consumes a `BUILD_GRAPH` job â€”
+the worker’s dispatch handles `DOCUMENT_INGESTION`, `DELETE_DOCUMENT` and
+`REINDEX_KNOWLEDGE_BASE` only â€” so no graph is extracted for that path to traverse. Until it is,
+`_load_graph_context` finds no seed entities and returns `None`, which is correct behaviour on an
+empty graph and indistinguishable from the feature being off.
+
+- [~] Extraction over parent sections, **only when `graph_enabled`**, plus a backfill job (D-19) â€”
+      `BuildGraphUseCase` checks `graph_enabled` and no-ops when off, but **no job enqueues it and
+      the worker does not dispatch `BUILD_GRAPH`**; the backfill path does not exist
+- [x] Node types and all nine Â§21 relationship types â€” `RelationshipType` carries CONTAINS,
+      PART_OF, DEFINED_IN, RELATED_TO, PREREQUISITE_OF, COMPARES_WITH, EXPLAINED_BY, SHOWN_IN,
+      REFERENCES
+- [x] Validation â†’ name normalisation â†’ deduplication â†’ canonical Postgres write â€”
+      `GraphDeduplicator`, one instance per worker invocation
+- [x] **Every edge carries source evidence, `source_chunk_id`, `page_number` and confidence.**
+      Edges without provenance are rejected, never inserted â€” unrepresentable on the entity since
+      Phase 1, enforced NOT NULL since step 2.6, and now covered by the gate suite
+- [x] Selective Graph RAG as an *additional* path, never the default (Â§34) â€” gated on
+      `QueryClass.benefits_from_graph` and on the Knowledge Base's own `graph_enabled` flag, and
+      now reachable: `graph_repo` and `kb_repo` are supplied by the answer dependency
+- [x] One-hop traversal by join; entity resolution to canonical nodes; **original passages loaded
       from PostgreSQL** â€” triples alone are never sufficient evidence
-- [ ] Graph result list fused via RRF
-- [ ] Concept graph API: 30â€“50 node cap via bounded recursive CTE, node evidence, one-hop
-      expansion, source-page links, prerequisite and related views (Â§57)
-- [ ] `SYNC_NEO4J` retained in the Â§12 job-type enum as a documented no-op
-- [ ] Security test: graph query without scope filters. Gate: zero edges without provenance
+- [x] Graph result list fused via RRF
+- [~] Concept graph API: 30â€”50 node cap via bounded recursive CTE, node evidence, one-hop
+      expansion, source-page links, prerequisite and related views (Â§57) â€” both endpoints live and
+      the cap is enforced, but **in Python rather than a bounded recursive CTE**, and the
+      prerequisite and related views are not built
+- [x] `SYNC_NEO4J` retained in the Â§12 job-type enum as a documented no-op â€”
+      `JobType.SYNC_GRAPH_PROJECTION = “SYNC_NEO4J”`
+- [x] Security test: graph query without scope filters. Gate: zero edges without provenance â€”
+      `tests/security/test_graph_security.py`, twelve `gate`-marked tests. **This closes the
+      sixth release gate**
 
 ## Phase 13 â€” Multi-hop & multi-document retrieval
 
 Covers Â§35, and completes Â§68.
 
-**Status: not started.** No decomposition, coverage classification or hierarchical synthesis code
-exists. The four query classes that trigger this path are already classified correctly by Phase
-9's `QueryClassifier`, and `CoverageStatus` is a Phase 1 enum â€” so the entry points are there and
-lead nowhere. Partly blocked: the per-sub-question pipeline calls selective graph retrieval,
-which is Phase 12.
+**Status: ~85% â€” built and tested, but not reachable at runtime.** Nine commits landed the path
+end to end: a query decomposer with validated sub-question entities, a per-sub-question retrieval
+pipeline, document-level selection, a coverage classifier, an iterative retrieval loop, a
+coverage-aware evidence selector, a two-stage hierarchical synthesizer, the wiring into
+`AnswerUseCase`, and a scope-isolation security suite.
 
-- [ ] Triggered by `MULTI_DOCUMENT` / `MULTI_HOP` / `AGGREGATION` / `COMPARISON`
-- [ ] Dependency-aware decomposition with `depends_on`, topologically ordered
-- [ ] Full pipeline per sub-question: expansion, dense, keyword, selective graph, RRF, rerank
-- [ ] Document-level selection then chunk-level retrieval inside selected documents
-- [ ] Coverage classified `SUPPORTED`/`PARTIALLY_SUPPORTED`/`UNSUPPORTED`/`CONFLICTING`; only
-      unmet sub-questions trigger another round
-- [ ] **Max 3 rounds, max 8 sub-questions**; stop on full coverage or no new evidence
-- [ ] Coverage-aware selection optimising jointly for sub-question and document coverage,
+**Still unreachable, and unlike Phase 12 it is not a wiring fix.** `get_answer_use_case` cannot
+pass `multi_hop` because `MultiHopAnswerUseCase` cannot be constructed: it needs
+`QueryDecompositionPort`, `CoverageClassifierPort` and `MultiHopSynthesisPort`, and **all three
+are protocols with no implementation**. The other collaborators are ready â€” `SubQuestionPipeline`
+takes the retrieval orchestrator, `DocumentSelector` and `EvidenceSelector` take plain integers â€”
+so three model-backed adapters are the whole of what stands between this phase and a live path.
+The routing above them is already correct:
+`retrieval.query_class.needs_decomposition and multi_hop is not None`.
+
+- [x] Triggered by `MULTI_DOCUMENT` / `MULTI_HOP` / `AGGREGATION` / `COMPARISON` â€”
+      `QueryClass.needs_decomposition` names exactly these four, and `AnswerUseCase` branches on it
+- [x] Dependency-aware decomposition with `depends_on`, topologically ordered â€” dangling
+      references and self-dependencies both refused at construction
+- [~] Full pipeline per sub-question: expansion, dense, keyword, selective graph, RRF, rerank â€”
+      every stage but **selective graph**, which the sub-question pipeline does not call
+- [x] Document-level selection then chunk-level retrieval inside selected documents
+- [x] Coverage classified `SUPPORTED`/`PARTIALLY_SUPPORTED`/`UNSUPPORTED`/`CONFLICTING`; only
+      unmet sub-questions trigger another round â€” CONFLICTING deliberately stops re-retrieval,
+      since more searching will not resolve sources that genuinely disagree
+- [x] **Max 3 rounds, max 8 sub-questions**; stop on full coverage or no new evidence â€”
+      `max_rounds = 3` and `max_sub_questions = 8` as named configuration
+- [x] Coverage-aware selection optimising jointly for sub-question and document coverage,
       relevance, provenance, diversity, redundancy and token cost
-- [ ] Hierarchical synthesis preserving original citations; completeness and bridge-claim validation
-- [ ] **Conflicting sources reported explicitly**, never blended into false consensus
-- [ ] UC-10, UC-11
+- [~] Hierarchical synthesis preserving original citations; completeness and bridge-claim
+      validation â€” two-stage synthesis preserves citations, but **no completeness or bridge-claim
+      validator is built**
+- [x] **Conflicting sources reported explicitly**, never blended into false consensus â€”
+      CONFLICTING surfaces the disagreement in synthesis rather than averaging it away
+- [~] UC-10, UC-11 â€” the code path satisfies both, but neither can be verified end to end until
+      `multi_hop` is wired into the dependency
 
 ## Phase 14 â€” Scalable long-term memory
 
 Covers Â§42, Â§43, Â§44, Â§45.
 
-**Status: not started.** The three memory endpoints return 501. As with Phase 12, what exists is
-earlier work: `MemoryFact` with its six statuses and the supersession rule is a Phase 1 entity,
-the `memory_facts` table is step 2.5, and `SqlMemoryRepository` is step 2.11. Nothing writes a
-fact, nothing compacts, nothing retrieves. Phase 9's `rolling_summary` gap and Phase 10's empty
-memory slots both wait here.
+**Status: ~60% â€" 8 steps done, and the read path is now live.** The memory foundation, retrieval
+indexes, API surface, and answer-pipeline wiring are complete. Facts are written, queried,
+expired, disputed and deleted, and `memory_repo` is supplied by the answer dependency, so active
+facts reach the prompt on every turn â€" pinned or relevant according to their provenance.
 
-- [ ] Six tiers (Â§42); history lives in the database and is **queried**, never pasted
-- [ ] Canonical history preserved permanently
-- [ ] Structured durable facts with `memory_type`, `key`, JSON `value`, `status`,
-      `source_message_id`, `confidence`
+**The write path is still dormant.** The post-turn hook is built and wired, but it is only
+constructed when `container.memory_extractor is not None`, and that slot holds `None` until an
+LLM extraction adapter exists. So memory is read but never written automatically; the CRUD
+endpoints are currently the only way a fact gets in. What else remains is the summarisation tier
+(episodes, monthly, KB-level), threshold-triggered compaction, exact-key lookup before vector
+search, and the security tests.
+
+- [x] Six tiers (Â§42); history lives in the database and is **queried**, never pasted â€"
+      canonical messages are permanent; durable facts are the queryable tier; higher-level
+      summaries and compaction are below
+- [x] Canonical history preserved permanently â€" `messages` table, never deleted
+- [x] Structured durable facts with `memory_type`, `key`, JSON `value`, `status`,
+      `confidence` â€" `MemoryFact` extended with `key`, `value`, `confidence`, `provenance`,
+      `expires_at`; HNSW and rum indexes on `memory_facts` for dense and keyword retrieval
 - [ ] Episodes and hierarchical summaries: raw â†’ episode â†’ monthly â†’ KB â†’ optional user level
-- [ ] Statuses `ACTIVE`/`SUPERSEDED`/`DISPUTED`/`UNCONFIRMED`/`EXPIRED`/`DELETED` (Â§43)
-- [ ] Priority: recent explicit correction > verified application event > earlier user statement >
-      assistant inference. **Assistant guesses never stored as confirmed.**
-- [ ] `valid_from`, `valid_until`, `last_confirmed_at`, `expires_at`, `source_message_id`
+- [x] Statuses `ACTIVE`/`SUPERSEDED`/`DISPUTED`/`UNCONFIRMED`/`EXPIRED`/`DELETED` (Â§43) â€"
+      all transitions on the entity; `ExpireMemoryUseCase` moves ACTIVE â†’ EXPIRED on schedule
+- [x] Priority: recent explicit correction > verified application event > earlier user statement >
+      assistant inference. **Assistant guesses never stored as confirmed.** â€" `MemoryProvenance`
+      IntEnum; USER_CORRECTION/USER_STATEMENT â†’ pinned context; ASSISTANT_INFERENCE â†’ relevant
+- [x] `valid_from`, `valid_until`, `last_confirmed_at`, `expires_at`, `source_message_id`
 - [ ] Threshold-triggered compaction (Â§44), not per-message. **Original messages never deleted.**
-- [ ] Retrieval: exact keyed lookup first, then dense + keyword + RRF + rerank + conflict
-      resolution, scoped to `ACTIVE` (Â§45). Separate index from document retrieval.
-- [ ] Memory management API; `COMPACT_MEMORY` and `REBUILD_SUMMARY` jobs
+      `COMPACT_MEMORY` and `REBUILD_SUMMARY` jobs not yet built
+- [~] Retrieval: exact keyed lookup first, then dense + keyword + RRF + rerank + conflict
+      resolution, scoped to `ACTIVE` (Â§45). `list_active` now reaches the prompt â€" `memory_repo`
+      is supplied by the answer dependency, so pinned and relevant facts are routed into their
+      context slots on every turn. Exact-key lookup and memory-specific RRF/rerank not yet built
+- [~] Memory management API â€" `GET /memory` (list active), `PATCH /memory/{id}` (dispute/delete),
+      `DELETE /memory/{id}` done; `COMPACT_MEMORY` and `REBUILD_SUMMARY` job endpoints not yet built
+- [x] Post-turn extraction + embedding â€" `MemoryExtractionPort`, `ExtractMemoryUseCase`,
+      `EmbedMemoryUseCase` built; `post_turn_hook` wired into `AnswerUseCase`; fires on every
+      COMPLETED turn; `container.memory_extractor` is `None` until the LLM adapter is built
 - [ ] Security tests: malicious memory-writing instruction in a document; deleted memory never
-      retrieved
-- [ ] UC-12, UC-13, UC-14
+      retrieved (open release gate)
+- [~] UC-12, UC-13, UC-14 â€" UC-13 and UC-14 covered by the PATCH/DELETE API. UC-12 (resume a
+      long-dormant conversation with memory context) now runs end to end for facts that exist:
+      `_load_memory_context` routes them into the pinned and relevant slots on a live turn. Its
+      acceptance criteria still cannot be checked in full, because nothing writes a fact
+      automatically until the extraction adapter lands
 
 ## Phase 15 â€” Study-content generation & learning progress
 
@@ -2348,15 +2445,16 @@ to replace the derived latency budgets with measured p95 is unmet.
 - [ ] Multi-hop evaluation: all seven Â§63 metrics
 - [ ] Memory evaluation: all seven Â§63 metrics
 - [ ] Instruction-following evaluation: all five Â§63 metrics
-- [~] **All ten Â§64 security tests** in one suite â€” eight files exist under `tests/security/`
+- [~] **All ten Â§64 security tests** in one suite â€” ten files exist under `tests/security/`
       covering KB access, RLS through the API, upload, document deletion, retrieval scope, the
-      evidence record, the generation pipeline and the data boundary; the rest await the phases
-      they test
+      evidence record, the generation pipeline, the data boundary, the graph and multi-hop scope
+      isolation; the rest await the phases they test
 - [~] **Six release gates as failing tests:** cross-user leakage 0 âœ… Â· cross-KB leakage 0 âœ… Â·
       fabricated citation acceptance 0 âœ… (`test_generation_security.py`, four tests, resting on
-      the evidence record) Â· deleted memory retrieval 0 (Phase 14) Â· unauthorized cache reuse 0
-      (Phase 16) Â· graph edge without provenance 0 (Phase 12). Three of six are enforced; the
-      three that are not each name a phase that has not started
+      the evidence record) Â· graph edge without provenance 0 âœ… (`test_graph_security.py`, twelve
+      `gate`-marked tests, landed with Phase 12) Â· deleted memory retrieval 0 (Phase 14, no
+      `test_memory_security.py` exists yet) Â· unauthorized cache reuse 0 (Phase 16). **Four of six
+      are enforced**; the two that are not each name work still outstanding
 - [ ] Threshold calibration; latency NFRs recalibrated against measured p95 (D-23)
 - [ ] `evaluation_results` persisted; results written into `REQUIREMENTS.md`
 
@@ -2403,22 +2501,23 @@ D-01 put the backend first deliberately, so this is on plan rather than behind i
 
 Covers §7 chat, streaming, PDF, citations and selection; §40 frontend contract.
 
-**Status: ~20% — conversation list, create and basic SSE chat were pulled forward into step 18.5.**
-Phase 18 unblocked this phase. Two items are additionally blocked on Phase 6: table and figure
-region selection has nothing to select, and citation navigation can highlight a bounding box but
-cannot name the object it belongs to until §40’s *object* field is fillable (chunks carrying
-`figure_id` / `table_id` is the outstanding gap there).
+**Status: complete — all seven steps done.** Both blockers named here are gone: Phase 6 created
+the figure and table records, and migration `0018` added the `figure_id` / `table_id` linkage that
+makes §40's *object* field fillable, so citation navigation can name the object it lands on. A
+student can now hold a streaming conversation, stop it, retry it, read structured citation chips,
+click one through to the right PDF page with a bounding-box overlay, select a table or figure
+region to ask about, and open a panel showing what retrieval actually found.
 
-The steps build in dependency order: conversation management before the viewer, citation chips
+The steps built in dependency order: conversation management before the viewer, citation chips
 before navigation, the viewer before anything that opens it.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
 | 19.1 | Conversation rename and delete | S | ☑ |
-| 19.2 | Structured citation rendering and answer states | M | ☐ |
-| 19.3 | Stop streaming and error recovery | S | ☐ |
-| 19.4 | Presigned-URL endpoint and PDF.js viewer | L · risky | ☐ |
-| 19.5 | Citation navigation — chip → PDF page → bounding-box overlay | M | ☐ |
+| 19.2 | Structured citation rendering and answer states | M | ☑ |
+| 19.3 | Stop streaming and error recovery | S | ☑ |
+| 19.4 | Presigned-URL endpoint and PDF.js viewer | L · risky | ☑ |
+| 19.5 | Citation navigation — chip → PDF page → bounding-box overlay | M | ☑ |
 | 19.6 | Table and figure region selection | M | ☑ |
 | 19.7 | Retrieval-detail panel | S | ☑ |
 
@@ -2569,8 +2668,11 @@ why the system abstained if it did.
 
 Covers Â§7 complete, Â§57 UI, Â§68 verified end to end.
 
-**Status: not started.** Blocked on Phase 18 and on every backend phase it renders â€” 12 for the
-graph, 14 for memory, 15 for study content. Cytoscape.js is not installed.
+**Status: not started.** Neither Cytoscape.js nor Playwright is installed, and `src/features/`
+holds authentication, conversations, documents and knowledge-bases only â€” no graph, memory or
+study surface. Phase 18 no longer blocks it, and the backend it renders is now largely there:
+the concept-graph API and the memory management API both exist. Study content (Phase 15) is the
+one backend dependency still entirely absent.
 
 - [ ] Cytoscape.js concept graph: 30â€“50 node initial view, node evidence and source page, one-hop
       expansion, ask-about-this-node, prerequisite and related views. **Never renders the whole

@@ -311,12 +311,16 @@ class TestAnswerUseCaseWiring:
     Overriding it is what the route tests need and also what let the constructor and its
     caller drift apart unnoticed: adding a required parameter to AnswerUseCase broke this
     function without failing a single test, because nothing here ever called it.
+
+    These two cover the required collaborators, which fail loudly when missing. The
+    optional ones fail silently instead, and are covered in test_answer_dependency_wiring.
     """
 
     async def test_builds_a_use_case_with_every_required_collaborator(self) -> None:
         use_case = await get_answer_use_case(
             retrieve=MagicMock(),
             scope=_SCOPE,
+            session=MagicMock(),
             container=MagicMock(),
         )
 
@@ -327,6 +331,7 @@ class TestAnswerUseCaseWiring:
         use_case = await get_answer_use_case(
             retrieve=MagicMock(),
             scope=_SCOPE,
+            session=MagicMock(),
             container=MagicMock(),
         )
 

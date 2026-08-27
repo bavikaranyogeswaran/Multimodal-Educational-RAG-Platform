@@ -3,13 +3,17 @@
 The use case is handed a unit of work rather than a repository, because its writes
 straddle the end of the request. Retrieval still runs on the request's own session —
 it is finished before the response starts streaming, and it only reads.
+
+The knowledge base, graph and memory repositories are handed over on that same
+request session, for the same reason: all three are read once while assembling the
+prompt, before the first token leaves. Only the post-turn hook needs a session of its
+own, because it runs after the response has been delivered and the request session is
+long closed.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
@@ -29,7 +33,10 @@ from app.configuration.settings import get_settings
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
+from app.infrastructure.database.repositories.graph import SqlGraphRepository
+from app.infrastructure.database.repositories.knowledge_base import SqlKnowledgeBaseRepository
 from app.infrastructure.database.repositories.memory import SqlMemoryRepository
+from app.infrastructure.database.session import get_session
 from app.infrastructure.database.unit_of_work import build_conversation_unit_of_work
 from app.infrastructure.models.entailment import OllamaClaimEntailment
 from app.infrastructure.models.faithfulness import OllamaAnswerFaithfulness
@@ -48,8 +55,10 @@ def _build_post_turn_hook(
     fresh session for embedding reads and updates them. Splitting the commits
     avoids a long-lived transaction that would hold locks across LLM calls.
     """
+    # The caller checks this before building the hook; narrowing it again here is what
+    # lets the closure below hold a non-optional extractor.
     extractor = container.memory_extractor
-    assert extractor is not None  # caller guards this with `if container.memory_extractor is not None`
+    assert extractor is not None
     embedder = container.embedder
 
     async def _hook(hook_scope: ScopeContext, assistant_id: UUID) -> None:
@@ -85,6 +94,7 @@ def _build_post_turn_hook(
 async def get_answer_use_case(
     retrieve: Annotated[RetrievalOrchestrator, Depends(get_retrieval_orchestrator)],
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
     container: Annotated[Container, Depends(get_container)],
 ) -> AnswerUseCase:
     settings = get_settings()
@@ -107,6 +117,12 @@ async def get_answer_use_case(
         ),
         entailment=OllamaClaimEntailment(container.model_gateway),
         faithfulness=OllamaAnswerFaithfulness(container.model_gateway),
+        # The knowledge base repository is what gates graph retrieval: the answer path
+        # reads graph_enabled from it and skips the whole graph step when it is off, so
+        # a student who never asked for a concept graph pays nothing for one existing.
+        kb_repo=SqlKnowledgeBaseRepository(scope, session),
+        graph_repo=SqlGraphRepository(scope, session),
+        memory_repo=SqlMemoryRepository(scope, session),
         answer_max_words=settings.generation.answer_max_words,
         answer_max_tokens=settings.generation.answer_max_tokens,
         post_turn_hook=post_turn_hook,
