@@ -27,6 +27,7 @@ from app.domain.conversations.entities import Message
 from app.domain.enums import (
     AnswerFidelity,
     InstructionCategory,
+    MemoryProvenance,
     MessageRole,
     MessageStatus,
     ModelTask,
@@ -56,7 +57,8 @@ from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
 from app.domain.ports.model_gateway import ModelGatewayPort
-from app.domain.ports.repositories import ConversationUnitOfWork, GraphRepository, KnowledgeBaseRepository
+from app.domain.memory.entities import MemoryFact
+from app.domain.ports.repositories import ConversationUnitOfWork, GraphRepository, KnowledgeBaseRepository, MemoryRepository
 from app.domain.retrieval.entities import (
     Citation,
     Evidence,
@@ -225,6 +227,7 @@ class AnswerUseCase:
         faithfulness: AnswerFaithfulnessPort,
         kb_repo: KnowledgeBaseRepository | None = None,
         graph_repo: GraphRepository | None = None,
+        memory_repo: MemoryRepository | None = None,
         multi_hop: MultiHopAnswerUseCase | None = None,
         answer_max_words: int = 400,
         answer_max_tokens: int = 600,
@@ -237,6 +240,7 @@ class AnswerUseCase:
         self._faithfulness = faithfulness
         self._kb_repo = kb_repo
         self._graph_repo = graph_repo
+        self._memory_repo = memory_repo
         self._multi_hop = multi_hop
         self._answer_max_words = answer_max_words
         self._answer_max_tokens = answer_max_tokens
@@ -327,6 +331,10 @@ class AnswerUseCase:
                 ),
             )
 
+        pinned_memory, relevant_memory = await _load_memory_context(
+            command.scope, self._memory_repo
+        )
+
         request = self._context_builder.build(
             ContextInputs(
                 model_task=ModelTask.ANSWER_GENERATION,
@@ -339,6 +347,8 @@ class AnswerUseCase:
                 evidence=labeled,
                 output_schema=OUTPUT_SCHEMA,
                 knowledge_base_state=graph_context,
+                pinned_memory=pinned_memory,
+                relevant_memory=relevant_memory,
             )
         )
 
@@ -702,6 +712,36 @@ async def _check_entailment(
 # ---------------------------------------------------------------------------
 # Graph context
 # ---------------------------------------------------------------------------
+
+
+async def _load_memory_context(
+    scope: ScopeContext,
+    memory_repo: MemoryRepository | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return (pinned_memory, relevant_memory) tuples from the student's active facts.
+
+    Facts from explicit user statements or corrections go into pinned_memory — they are
+    kept until only the essentials remain. Model-inferred facts go into relevant_memory,
+    which is shed before pinned_memory when the prompt budget is tight.
+
+    Returns empty tuples when no memory repository is wired in or no active facts exist.
+    """
+    if memory_repo is None:
+        return (), ()
+
+    active_facts = await memory_repo.list_active(scope)
+    if not active_facts:
+        return (), ()
+
+    pinned: list[str] = []
+    relevant: list[str] = []
+    for fact in active_facts:
+        if fact.provenance in {MemoryProvenance.USER_STATEMENT, MemoryProvenance.USER_CORRECTION}:
+            pinned.append(fact.content)
+        else:
+            relevant.append(fact.content)
+
+    return tuple(pinned), tuple(relevant)
 
 
 async def _load_graph_context(
