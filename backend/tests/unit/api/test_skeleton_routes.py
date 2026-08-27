@@ -152,31 +152,8 @@ class TestGraphSkeletons:
 
 
 # ---------------------------------------------------------------------------
-# Memory router
+# Memory router — implemented in Phase 14.7; covered in test_memory_endpoints.py
 # ---------------------------------------------------------------------------
-
-
-class TestMemorySkeletons:
-    @pytest.mark.parametrize(
-        "method,path_suffix",
-        [
-            ("GET", ""),
-            ("PATCH", f"/{uuid.uuid4()}"),
-            ("DELETE", f"/{uuid.uuid4()}"),
-        ],
-    )
-    def test_all_memory_endpoints_return_501(
-        self, method: str, path_suffix: str
-    ) -> None:
-        user_id = uuid.uuid4()
-        kb_id = uuid.uuid4()
-        app = _make_app(memory_router, user_id=user_id, kb_id=kb_id)
-        with TestClient(app) as client:
-            resp = client.request(
-                method, f"/api/v1/knowledge-bases/{kb_id}/memory{path_suffix}"
-            )
-        assert resp.status_code == 501
-        assert resp.json()["phase"] == "14"
 
 
 # ---------------------------------------------------------------------------
