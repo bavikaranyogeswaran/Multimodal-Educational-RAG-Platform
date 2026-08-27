@@ -196,6 +196,7 @@ class TestNewFactCreation:
         result = await uc.execute(ExtractMemoryCommand(scope=scope, message_id=assistant_msg.id))
         assert result.created == 1
         assert result.superseded == 0
+        assert candidate.id in result.embeddable_ids
         repo.save_batch.assert_awaited_once()
         saved = repo.save_batch.call_args[0][1]
         assert len(saved) == 1
@@ -266,6 +267,40 @@ class TestSupersession:
         statuses = {f.status for f in saved}
         assert MemoryStatus.SUPERSEDED in statuses
         assert MemoryStatus.ACTIVE in statuses
+
+    async def test_embeddable_ids_contains_successor_not_retired(self) -> None:
+        scope = _make_scope()
+        conv_id = uuid.uuid4()
+        user_msg = _make_message(scope, role=MessageRole.USER, conversation_id=conv_id)
+        assistant_msg = _make_message(scope, role=MessageRole.ASSISTANT, conversation_id=conv_id)
+        assistant_msg.status = MessageStatus.COMPLETED
+
+        existing = MemoryFact(
+            id=uuid.uuid4(),
+            user_id=scope.user_id,
+            knowledge_base_id=scope.knowledge_base_id,
+            memory_type=MemoryType.EXAM_DATE,
+            key="exam_date",
+            value={"date": "2026-11-01"},
+            confidence=0.8,
+            provenance=MemoryProvenance.USER_STATEMENT,
+            status=MemoryStatus.ACTIVE,
+            created_at=NOW,
+            updated_at=NOW,
+            valid_from=NOW,
+        )
+        candidate = _make_fact(scope, key="exam_date")
+
+        uc, repo, _ = _use_case(
+            assistant_msg=assistant_msg,
+            messages=[assistant_msg, user_msg],
+            active_facts=[existing],
+            candidates=[candidate],
+        )
+        result = await uc.execute(ExtractMemoryCommand(scope=scope, message_id=assistant_msg.id))
+        # The successor (candidate.id) must be embedded; the retired fact (existing.id) must not.
+        assert candidate.id in result.embeddable_ids
+        assert existing.id not in result.embeddable_ids
 
     async def test_successor_inherits_key_from_existing_fact(self) -> None:
         scope = _make_scope()

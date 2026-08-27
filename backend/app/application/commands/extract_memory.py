@@ -19,7 +19,8 @@ conditions should fail a request.
 from __future__ import annotations
 
 import structlog
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -43,6 +44,9 @@ class ExtractMemoryCommand:
 class ExtractMemoryResult:
     created: int
     superseded: int
+    # IDs of facts that were written and need an embedding (new facts + successors).
+    # Retired SUPERSEDED facts are excluded — they are no longer searched.
+    embeddable_ids: tuple[UUID, ...] = field(default_factory=tuple)
 
 
 class ExtractMemoryUseCase:
@@ -112,6 +116,7 @@ class ExtractMemoryUseCase:
         created = 0
         superseded = 0
         to_save = []
+        embeddable_ids: list[UUID] = []
 
         for candidate in candidates:
             existing_fact = existing_by_key.get(candidate.key)
@@ -124,9 +129,11 @@ class ExtractMemoryUseCase:
                     now=now,
                 )
                 to_save.extend([retired, successor])
+                embeddable_ids.append(successor.id)
                 superseded += 1
             else:
                 to_save.append(candidate)
+                embeddable_ids.append(candidate.id)
                 created += 1
 
         await self._memory_repo.save_batch(scope, to_save)
@@ -138,7 +145,11 @@ class ExtractMemoryUseCase:
             superseded=superseded,
         )
 
-        return ExtractMemoryResult(created=created, superseded=superseded)
+        return ExtractMemoryResult(
+            created=created,
+            superseded=superseded,
+            embeddable_ids=tuple(embeddable_ids),
+        )
 
 
 def _is_completed_assistant(msg: Message | None) -> bool:
