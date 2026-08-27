@@ -9,8 +9,10 @@ link between them is the superseded_by field. No service decides this — the en
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from app.domain.enums import MemoryProvenance, MemoryStatus, MemoryType
@@ -26,23 +28,36 @@ class MemoryFact:
     Status is a lifecycle, not a free label. The transition that matters most is
     supersession: a correction produces a (retired, successor) pair returned together,
     so the caller can store both atomically.
+
+    Every fact carries a key (the semantic identifier, e.g. "exam_date") and a
+    structured value (the payload, e.g. {"date": "2026-12-01"}). The key is invariant
+    across corrections — only the value, confidence, and provenance change.
     """
 
     id: UUID
     user_id: UUID
     knowledge_base_id: UUID
     memory_type: MemoryType
-    content: str
+    key: str
+    value: dict[str, Any]
+    confidence: float
     provenance: MemoryProvenance
     status: MemoryStatus
     created_at: datetime
     updated_at: datetime
     valid_from: datetime
+    source_message_id: UUID | None = None
+    last_confirmed_at: datetime | None = None
+    expires_at: datetime | None = None
     valid_until: datetime | None = None
     superseded_by: UUID | None = None
 
     def __post_init__(self) -> None:
-        require_non_blank(self.content, "content")
+        require_non_blank(self.key, "key")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise InvariantViolationError(
+                f"confidence must be in [0.0, 1.0]; got {self.confidence}"
+            )
         require_timezone_aware(self.created_at, "created_at")
         require_timezone_aware(self.updated_at, "updated_at")
         require_timezone_aware(self.valid_from, "valid_from")
@@ -64,6 +79,11 @@ class MemoryFact:
             )
 
     @property
+    def content(self) -> str:
+        """Human-readable representation used for full-text search indexing."""
+        return f"{self.key}: {json.dumps(self.value, ensure_ascii=False)}"
+
+    @property
     def scope(self) -> ScopeContext:
         return ScopeContext(user_id=self.user_id, knowledge_base_id=self.knowledge_base_id)
 
@@ -71,16 +91,16 @@ class MemoryFact:
         self,
         *,
         successor_id: UUID,
-        content: str,
+        value: dict[str, Any],
+        confidence: float,
         provenance: MemoryProvenance,
         now: datetime,
     ) -> tuple[MemoryFact, MemoryFact]:
         """Return (retired, successor).
 
-        The caller supplies the successor's identifier so both facts can be written
-        atomically without a database round-trip to discover the generated key. The
-        original entity is frozen — this fact is unchanged; the returned retired copy
-        is what gets persisted.
+        The key is inherited from the original — corrections update the value, not the
+        semantic identifier. The caller supplies the successor's id so both rows can be
+        written atomically without a round-trip to discover the generated key.
         """
         if self.status is not MemoryStatus.ACTIVE:
             raise InvariantViolationError(
@@ -99,7 +119,9 @@ class MemoryFact:
             user_id=self.user_id,
             knowledge_base_id=self.knowledge_base_id,
             memory_type=self.memory_type,
-            content=content,
+            key=self.key,
+            value=value,
+            confidence=confidence,
             provenance=provenance,
             status=MemoryStatus.ACTIVE,
             created_at=now,

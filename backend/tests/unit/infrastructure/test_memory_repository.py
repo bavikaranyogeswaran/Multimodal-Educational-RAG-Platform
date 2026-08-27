@@ -41,7 +41,8 @@ def _make_scope(
 def _make_fact(
     scope: ScopeContext,
     *,
-    content: str = "Student prefers concise answers.",
+    key: str = "preference",
+    value: dict | None = None,
     status: MemoryStatus = MemoryStatus.ACTIVE,
     age_seconds: int = 0,
 ) -> MemoryFact:
@@ -51,7 +52,9 @@ def _make_fact(
         user_id=scope.user_id,
         knowledge_base_id=scope.knowledge_base_id,
         memory_type=MemoryType.PREFERENCE,
-        content=content,
+        key=key,
+        value=value if value is not None else {"text": "Student prefers concise answers."},
+        confidence=0.9,
         provenance=MemoryProvenance.USER_STATEMENT,
         status=status,
         created_at=ts,
@@ -81,7 +84,9 @@ class TestGet:
 
         assert result is not None
         assert result.id == fact.id
-        assert result.content == fact.content
+        assert result.key == fact.key
+        assert result.value == fact.value
+        assert result.confidence == fact.confidence
         assert result.provenance == MemoryProvenance.USER_STATEMENT
 
     async def test_returns_none_when_absent(self, sqlite_session: AsyncSession) -> None:
@@ -132,7 +137,7 @@ class TestSave:
 class TestSaveBatch:
     async def test_saves_multiple_facts(self, sqlite_session: AsyncSession) -> None:
         scope = _make_scope()
-        facts = [_make_fact(scope, content=f"Fact {i}") for i in range(4)]
+        facts = [_make_fact(scope, key=f"fact_{i}") for i in range(4)]
         await _repo(scope, sqlite_session).save_batch(scope, facts)
         await sqlite_session.flush()
         sqlite_session.expire_all()
@@ -170,13 +175,13 @@ class TestListActive:
     async def test_orders_newest_first(self, sqlite_session: AsyncSession) -> None:
         scope = _make_scope()
         repo = _repo(scope, sqlite_session)
-        await repo.save(scope, _make_fact(scope, content="Older", age_seconds=60))
-        await repo.save(scope, _make_fact(scope, content="Newer", age_seconds=0))
+        await repo.save(scope, _make_fact(scope, key="older_key", age_seconds=60))
+        await repo.save(scope, _make_fact(scope, key="newer_key", age_seconds=0))
         await sqlite_session.flush()
         sqlite_session.expire_all()
 
         results = await repo.list_active(scope)
-        assert results[0].content == "Newer"
+        assert results[0].key == "newer_key"
 
     async def test_user_isolation(self, sqlite_session: AsyncSession) -> None:
         scope_a = _make_scope()

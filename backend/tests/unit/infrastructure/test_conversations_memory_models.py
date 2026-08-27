@@ -248,3 +248,41 @@ class TestMemoryFactModel:
         for name in ("memory_type", "status"):
             col = MemoryFactModel.__table__.c[name]
             assert isinstance(col.type, sa.String), f"{name} should be String"
+
+    def test_has_structured_fields(self) -> None:
+        from app.infrastructure.database.models.conversation import MemoryFactModel
+
+        cols = {c.name for c in MemoryFactModel.__table__.columns}
+        for name in ("key", "value", "confidence", "source_message_id"):
+            assert name in cols, f"MemoryFactModel is missing column '{name}'"
+
+    def test_key_is_varchar(self) -> None:
+        from app.infrastructure.database.models.conversation import MemoryFactModel
+
+        col = MemoryFactModel.__table__.c["key"]
+        assert isinstance(col.type, sa.String)
+
+    def test_value_is_json(self) -> None:
+        from app.infrastructure.database.models.conversation import MemoryFactModel
+
+        col = MemoryFactModel.__table__.c["value"]
+        assert isinstance(col.type, sa.JSON)
+
+    def test_confidence_is_float(self) -> None:
+        from app.infrastructure.database.models.conversation import MemoryFactModel
+
+        col = MemoryFactModel.__table__.c["confidence"]
+        assert isinstance(col.type, sa.Float)
+
+    def test_optional_timestamp_columns_are_nullable(self) -> None:
+        from app.infrastructure.database.models.conversation import MemoryFactModel
+
+        for name in ("last_confirmed_at", "expires_at", "source_message_id"):
+            col = MemoryFactModel.__table__.c[name]
+            assert col.nullable, f"{name} should be nullable"
+
+    def test_content_column_is_gone(self) -> None:
+        from app.infrastructure.database.models.conversation import MemoryFactModel
+
+        cols = {c.name for c in MemoryFactModel.__table__.columns}
+        assert "content" not in cols

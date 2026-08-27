@@ -17,11 +17,34 @@ from app.domain.memory.entities import MemoryFact
 
 from .conftest import LATER, NOW, Builder
 
+_CORRECTED_VALUE = {"text": "Student prefers review every two days, not every day."}
+_NEW_VALUE = {"text": "Updated preference."}
+
 
 class TestMemoryFactConstruction:
-    def test_rejects_blank_content(self, make_memory_fact: Builder[MemoryFact]) -> None:
-        with pytest.raises(InvariantViolationError, match="content"):
-            make_memory_fact(content="  ")
+    def test_rejects_blank_key(self, make_memory_fact: Builder[MemoryFact]) -> None:
+        with pytest.raises(InvariantViolationError, match="key"):
+            make_memory_fact(key="  ")
+
+    def test_rejects_confidence_above_one(self, make_memory_fact: Builder[MemoryFact]) -> None:
+        with pytest.raises(InvariantViolationError, match="confidence"):
+            make_memory_fact(confidence=1.01)
+
+    def test_rejects_confidence_below_zero(self, make_memory_fact: Builder[MemoryFact]) -> None:
+        with pytest.raises(InvariantViolationError, match="confidence"):
+            make_memory_fact(confidence=-0.01)
+
+    def test_boundary_confidence_zero_is_valid(
+        self, make_memory_fact: Builder[MemoryFact]
+    ) -> None:
+        fact = make_memory_fact(confidence=0.0)
+        assert fact.confidence == 0.0
+
+    def test_boundary_confidence_one_is_valid(
+        self, make_memory_fact: Builder[MemoryFact]
+    ) -> None:
+        fact = make_memory_fact(confidence=1.0)
+        assert fact.confidence == 1.0
 
     def test_rejects_a_naive_valid_from(self, make_memory_fact: Builder[MemoryFact]) -> None:
         with pytest.raises(InvariantViolationError):
@@ -51,6 +74,17 @@ class TestMemoryFactConstruction:
         fact = make_memory_fact()
         assert fact.valid_until is None
 
+    def test_source_message_id_is_optional(self, make_memory_fact: Builder[MemoryFact]) -> None:
+        fact = make_memory_fact()
+        assert fact.source_message_id is None
+
+    def test_content_property_combines_key_and_value(
+        self, make_memory_fact: Builder[MemoryFact]
+    ) -> None:
+        fact = make_memory_fact(key="exam_date", value={"date": "2026-12-01"})
+        assert "exam_date" in fact.content
+        assert "2026-12-01" in fact.content
+
     def test_scope_derives_from_the_stored_identifiers(
         self, make_memory_fact: Builder[MemoryFact]
     ) -> None:
@@ -69,7 +103,8 @@ class TestSupersession:
 
         retired, successor = fact.create_successor(
             successor_id=successor_id,
-            content="Corrected: student prefers review every two days, not every day.",
+            value=_CORRECTED_VALUE,
+            confidence=0.95,
             provenance=MemoryProvenance.USER_CORRECTION,
             now=LATER,
         )
@@ -83,33 +118,53 @@ class TestSupersession:
         self, make_memory_fact: Builder[MemoryFact]
     ) -> None:
         fact = make_memory_fact()
-        original_content = fact.content
+        original_key = fact.key
         original_status = fact.status
 
         fact.create_successor(
             successor_id=uuid4(),
-            content="new content",
+            value=_NEW_VALUE,
+            confidence=0.9,
             provenance=MemoryProvenance.USER_CORRECTION,
             now=LATER,
         )
 
-        assert fact.content == original_content
+        assert fact.key == original_key
         assert fact.status is original_status
 
-    def test_the_successor_inherits_scope_and_type(
+    def test_the_successor_inherits_key_and_scope_and_type(
         self, make_memory_fact: Builder[MemoryFact]
     ) -> None:
-        fact = make_memory_fact(memory_type=MemoryType.WEAK_TOPIC)
+        fact = make_memory_fact(
+            key="weak_topic",
+            memory_type=MemoryType.WEAK_TOPIC,
+        )
         _, successor = fact.create_successor(
             successor_id=uuid4(),
-            content="Thermodynamics is the weak topic, not kinematics.",
+            value={"topic": "thermodynamics"},
+            confidence=0.85,
             provenance=MemoryProvenance.USER_CORRECTION,
             now=LATER,
         )
 
+        assert successor.key == "weak_topic"
         assert successor.memory_type is MemoryType.WEAK_TOPIC
         assert successor.user_id == fact.user_id
         assert successor.knowledge_base_id == fact.knowledge_base_id
+
+    def test_the_successor_carries_the_new_value(
+        self, make_memory_fact: Builder[MemoryFact]
+    ) -> None:
+        fact = make_memory_fact(value={"text": "old"})
+        _, successor = fact.create_successor(
+            successor_id=uuid4(),
+            value={"text": "corrected"},
+            confidence=0.95,
+            provenance=MemoryProvenance.USER_CORRECTION,
+            now=LATER,
+        )
+
+        assert successor.value == {"text": "corrected"}
 
     def test_the_successor_has_fresh_timestamps(
         self, make_memory_fact: Builder[MemoryFact]
@@ -117,7 +172,8 @@ class TestSupersession:
         fact = make_memory_fact()
         _, successor = fact.create_successor(
             successor_id=uuid4(),
-            content="updated content",
+            value=_NEW_VALUE,
+            confidence=0.9,
             provenance=MemoryProvenance.USER_CORRECTION,
             now=LATER,
         )
@@ -132,7 +188,8 @@ class TestSupersession:
         with pytest.raises(InvariantViolationError, match="itself"):
             fact.create_successor(
                 successor_id=fact.id,
-                content="same content",
+                value=_NEW_VALUE,
+                confidence=0.9,
                 provenance=MemoryProvenance.USER_CORRECTION,
                 now=LATER,
             )
@@ -144,7 +201,8 @@ class TestSupersession:
         with pytest.raises(InvariantViolationError):
             expired.create_successor(
                 successor_id=uuid4(),
-                content="new content",
+                value=_NEW_VALUE,
+                confidence=0.9,
                 provenance=MemoryProvenance.USER_CORRECTION,
                 now=LATER,
             )
@@ -155,7 +213,8 @@ class TestSupersession:
         fact = make_memory_fact()
         retired, _ = fact.create_successor(
             successor_id=uuid4(),
-            content="corrected content",
+            value=_CORRECTED_VALUE,
+            confidence=0.95,
             provenance=MemoryProvenance.USER_CORRECTION,
             now=LATER,
         )
@@ -169,7 +228,8 @@ class TestSupersession:
         fact = make_memory_fact()
         retired, successor = fact.create_successor(
             successor_id=uuid4(),
-            content="corrected content",
+            value=_CORRECTED_VALUE,
+            confidence=0.95,
             provenance=MemoryProvenance.USER_CORRECTION,
             now=LATER,
         )

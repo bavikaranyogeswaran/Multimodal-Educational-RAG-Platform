@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base
@@ -162,7 +162,18 @@ class MemoryFactModel(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
     knowledge_base_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
     memory_type: Mapped[str] = mapped_column(String(30))
-    content: Mapped[str] = mapped_column(Text)
+    # Semantic identifier for the fact — invariant across corrections (e.g. "exam_date").
+    key: Mapped[str] = mapped_column(String(255))
+    # Structured payload as JSON (e.g. {"date": "2026-12-01"}).
+    value: Mapped[dict] = mapped_column(JSON)
+    # How certain the system is that this fact is correct; 0.0–1.0.
+    confidence: Mapped[float] = mapped_column(Float)
+    # The message that caused this fact to be written, if known.
+    source_message_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    # When the fact was last confirmed to still be true by an explicit user action.
+    last_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Optional system-controlled expiry — a cron job marks the fact EXPIRED after this.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Stored as the integer ordinal of the MemoryProvenance IntEnum so that ordering
     # (USER_CORRECTION > APPLICATION_EVENT > USER_STATEMENT > ASSISTANT_INFERENCE) is
     # native to the column and sortable without a lookup table.
