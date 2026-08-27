@@ -84,6 +84,22 @@ class LengthCheckResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TableReferenceCheckResult:
+    """Outcome of checking that table/figure references in the answer appear in the evidence.
+
+    A string in `unsupported_references` names a table or figure the answer mentions but
+    that does not appear in any passage the model received. The model cited a specific
+    object it had no basis for naming.
+    """
+
+    unsupported_references: tuple[str, ...]
+
+    @property
+    def has_unsupported_references(self) -> bool:
+        return bool(self.unsupported_references)
+
+
+@dataclass(frozen=True, slots=True)
 class EntailmentResult:
     """Outcome of checking one (claim, passage) pair for semantic support.
 
@@ -212,6 +228,7 @@ def decide(
     fidelity: AnswerFidelity | None = None,
     numeric_results: Sequence[NumericCheckResult] = (),
     length_result: LengthCheckResult | None = None,
+    table_ref_result: TableReferenceCheckResult | None = None,
 ) -> ValidationDecision:
     """Collapse citation, entailment, faithfulness and figure results into one action.
 
@@ -236,6 +253,7 @@ def decide(
     # number is sitting in the evidence, and the model can be told to use it.
     repairable = (
         (length_result is not None and length_result.is_too_long)
+        or (table_ref_result is not None and table_ref_result.has_unsupported_references)
         or fidelity is AnswerFidelity.OVERSTATED
         or any(result.has_unsupported_numbers for result in numeric_results)
     )
@@ -352,6 +370,7 @@ def build_repair_instructions(
     fidelity: AnswerFidelity | None = None,
     numeric_results: Sequence[NumericCheckResult] = (),
     length_result: LengthCheckResult | None = None,
+    table_ref_result: TableReferenceCheckResult | None = None,
 ) -> str:
     """Return a feedback string the model can act on when revising its answer.
 
@@ -396,6 +415,14 @@ def build_repair_instructions(
             "citations — for the statement you want to keep."
         )
 
+    if table_ref_result is not None and table_ref_result.has_unsupported_references:
+        refs = ", ".join(table_ref_result.unsupported_references)
+        verb = "do" if len(table_ref_result.unsupported_references) > 1 else "does"
+        bullets.append(
+            f"{refs} {verb} not appear in any of the reference passages. Remove the "
+            "reference or replace it with one that the passages actually contain."
+        )
+
     if length_result is not None and length_result.is_too_long:
         actual = (
             f"{length_result.word_count} words"
@@ -430,6 +457,34 @@ _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
 #: Citation labels are full of digits and are not quantities. Removed before any number is
 #: read out of a claim, or every `[S1]` would look like the figure 1.
 _LABEL = re.compile(r"\[[^\]]*\]")
+
+#: Canonical kind names, shared with caption_label._KINDS vocabulary. Multiple surface
+#: spellings (fig, figure, plate) normalise to the same key so "Fig. 3" and "Figure 3"
+#: are treated as the same reference when comparing answer text against evidence.
+_REF_KINDS: dict[str, str] = {
+    "fig": "figure",
+    "figure": "figure",
+    "plate": "figure",
+    "exhibit": "figure",
+    "table": "table",
+    "tbl": "table",
+    "chart": "chart",
+    "diagram": "diagram",
+    "scheme": "diagram",
+}
+
+#: Table/figure references that appear mid-prose: "Table 4.2", "Fig. 3", "Figure 2.1 a".
+#: The negative lookbehind stops "configure" matching on "fig"; the negative lookahead
+#: stops "Table 42nd" matching on "42" before "nd". A space is required between the
+#: kind word and the number so "tables" and "figures" (plurals) do not trigger it.
+_TABLE_REF = re.compile(
+    r"(?<!\w)"
+    r"(?P<kind>fig(?:ure)?|plate|exhibit|table|tbl|chart|diagram|scheme)"
+    r"\.?\s+"
+    r"(?P<number>[A-Z]?\.?\d+(?:[.\-]\d+)*[a-z]?)"
+    r"(?!\w)",
+    re.IGNORECASE,
+)
 
 
 def _numbers_in(text: str) -> list[tuple[str, float]]:
@@ -503,6 +558,47 @@ def check_length_limits(
         max_words=max_words,
         max_tokens=max_tokens,
     )
+
+
+def _extract_table_refs(text: str) -> frozenset[tuple[str, str]]:
+    """All (normalised-kind, number) pairs that appear as table/figure references in text."""
+    refs: set[tuple[str, str]] = set()
+    for match in _TABLE_REF.finditer(text):
+        canonical = _REF_KINDS.get(match.group("kind").lower())
+        if canonical is not None:
+            refs.add((canonical, match.group("number")))
+    return frozenset(refs)
+
+
+def check_table_references(
+    answer: GeneratedAnswer,
+    evidence: Sequence[LabeledPassage],
+) -> TableReferenceCheckResult:
+    """Check that every table/figure reference in the answer appears in at least one evidence passage.
+
+    Extracts labels like "Table 4.2" or "Fig. 3" from both the answer and the evidence
+    passages. A reference that appears in the answer but in none of the passages was not
+    in the evidence the model received — it named a specific object it could not have read.
+
+    An answer that references objects not in the evidence is REPAIRABLE: the model is
+    asked to remove or correct the reference.
+    """
+    answer_refs = _extract_table_refs(answer.answer)
+    if not answer_refs:
+        return TableReferenceCheckResult(unsupported_references=())
+
+    evidence_refs: frozenset[tuple[str, str]] = frozenset().union(
+        *(_extract_table_refs(p.text.value) for p in evidence)
+    )
+
+    unsupported = tuple(
+        sorted(
+            f"{kind.title()} {number}"
+            for kind, number in answer_refs
+            if (kind, number) not in evidence_refs
+        )
+    )
+    return TableReferenceCheckResult(unsupported_references=unsupported)
 
 
 def check_citation_existence(

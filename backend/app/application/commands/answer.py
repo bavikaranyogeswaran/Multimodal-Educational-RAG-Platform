@@ -43,11 +43,13 @@ from app.domain.models.validation import (
     EntailmentResult,
     LengthCheckResult,
     NumericCheckResult,
+    TableReferenceCheckResult,
     build_partial_answer,
     build_repair_instructions,
     check_citation_existence,
     check_length_limits,
     check_numeric_fidelity,
+    check_table_references,
     decide,
 )
 from app.domain.graph.entities import GraphEntity, GraphRelationship
@@ -387,6 +389,7 @@ class AnswerUseCase:
                             checked.fidelity,
                             checked.numeric_results,
                             checked.length_result,
+                            checked.table_ref_result,
                         )
                         repair_request = context_builder.build(
                             ContextInputs(
@@ -616,6 +619,7 @@ class _Validation:
     fidelity: AnswerFidelity | None = None
     numeric_results: tuple[NumericCheckResult, ...] = ()
     length_result: LengthCheckResult | None = None
+    table_ref_result: TableReferenceCheckResult | None = None
 
 
 async def _validate(
@@ -640,11 +644,13 @@ async def _validate(
     except GenerationParseError:
         return _Validation(ValidationDecision.REJECTED, None)
 
-    # Skipped when the model abstained — there is no prose to measure.
+    # Deterministic checks skipped when the model abstained — no prose to inspect.
+    is_abstention = answer.insufficient_evidence
     length_result = (
-        None
-        if answer.insufficient_evidence
-        else check_length_limits(answer, max_words, max_tokens)
+        None if is_abstention else check_length_limits(answer, max_words, max_tokens)
+    )
+    table_ref_result = (
+        None if is_abstention else check_table_references(answer, labeled)
     )
     citation_results = check_citation_existence(answer, labeled)
     # Deterministic, so it runs alongside the citation check rather than after the model
@@ -654,24 +660,25 @@ async def _validate(
 
     provisional = decide(
         answer, citation_results, ent_by_claim, numeric_results=numeric_results,
-        length_result=length_result,
+        length_result=length_result, table_ref_result=table_ref_result,
     )
     if provisional in _SETTLED_WITHOUT_FIDELITY:
         return _Validation(
             provisional, answer, citation_results, ent_by_claim, None,
-            numeric_results, length_result,
+            numeric_results, length_result, table_ref_result,
         )
 
     fidelity = await faithfulness.check_answer(answer)
     return _Validation(
         decide(answer, citation_results, ent_by_claim, fidelity, numeric_results,
-               length_result),
+               length_result, table_ref_result),
         answer,
         citation_results,
         ent_by_claim,
         fidelity,
         numeric_results,
         length_result,
+        table_ref_result,
     )
 
 

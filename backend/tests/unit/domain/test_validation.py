@@ -13,6 +13,7 @@ from app.domain.models.validation import (
     EntailmentResult,
     LengthCheckResult,
     NumericCheckResult,
+    TableReferenceCheckResult,
     aggregate_claim_status,
     build_fidelity_query,
     build_partial_answer,
@@ -20,6 +21,7 @@ from app.domain.models.validation import (
     check_citation_existence,
     check_length_limits,
     check_numeric_fidelity,
+    check_table_references,
     decide,
     parse_entailment_status,
     parse_fidelity,
@@ -1064,3 +1066,175 @@ class TestBuildRepairInstructionsWithLength:
         )
         assert "[S99]" in repair
         assert "500 words" in repair
+
+
+# ---------------------------------------------------------------------------
+# check_table_references
+# ---------------------------------------------------------------------------
+
+
+def _passage_with(text: str, label: str = "[S1]") -> LabeledPassage:
+    return LabeledPassage(label=label, text=UntrustedText(text))
+
+
+def _answer_with_text(text: str) -> GeneratedAnswer:
+    c = _claim(text="A fact.", citations=("[S1]",))
+    return GeneratedAnswer(answer=text, claims=(c,), insufficient_evidence=False)
+
+
+class TestCheckTableReferences:
+    def test_no_references_in_answer_passes(self) -> None:
+        answer = _answer_with_text("Entropy always increases over time.")
+        result = check_table_references(answer, [_passage_with("Entropy always increases.")])
+        assert not result.has_unsupported_references
+
+    def test_table_reference_found_in_evidence_passes(self) -> None:
+        answer = _answer_with_text("As Table 4.2 shows, entropy increases.")
+        passage = _passage_with("Table 4.2 summarises entropy values.")
+        result = check_table_references(answer, [passage])
+        assert not result.has_unsupported_references
+
+    def test_figure_reference_normalised_across_spellings(self) -> None:
+        answer = _answer_with_text("See Figure 3 for details.")
+        passage = _passage_with("Fig. 3 shows the circuit diagram.")
+        result = check_table_references(answer, [passage])
+        assert not result.has_unsupported_references
+
+    def test_fig_dot_matches_figure_in_answer(self) -> None:
+        answer = _answer_with_text("As shown in Fig. 2.1, the graph rises.")
+        passage = _passage_with("Figure 2.1 depicts the rise.")
+        result = check_table_references(answer, [passage])
+        assert not result.has_unsupported_references
+
+    def test_reference_absent_from_all_passages_flagged(self) -> None:
+        answer = _answer_with_text("Table 9.9 shows the result.")
+        passage = _passage_with("Table 4.2 shows the result.")
+        result = check_table_references(answer, [passage])
+        assert result.has_unsupported_references
+        assert "Table 9.9" in result.unsupported_references
+
+    def test_multiple_unsupported_references_all_reported(self) -> None:
+        answer = _answer_with_text("See Table 1.1 and Figure 99 for context.")
+        passage = _passage_with("No tables or figures here.")
+        result = check_table_references(answer, [passage])
+        refs = set(result.unsupported_references)
+        assert "Table 1.1" in refs
+        assert "Figure 99" in refs
+
+    def test_reference_found_in_second_passage(self) -> None:
+        answer = _answer_with_text("As Figure 5 shows.")
+        p1 = _passage_with("No figures here.", label="[S1]")
+        p2 = _passage_with("Figure 5 illustrates the point.", label="[S2]")
+        result = check_table_references(answer, [p1, p2])
+        assert not result.has_unsupported_references
+
+    def test_plural_tables_not_matched(self) -> None:
+        answer = _answer_with_text("The tables summarise the data.")
+        result = check_table_references(answer, [_passage_with("No tables here.")])
+        assert not result.has_unsupported_references
+
+    def test_no_evidence_flags_every_reference(self) -> None:
+        answer = _answer_with_text("As Table 3 shows.")
+        result = check_table_references(answer, [])
+        assert "Table 3" in result.unsupported_references
+
+    def test_chart_reference_recognised(self) -> None:
+        answer = _answer_with_text("Chart 2 confirms the trend.")
+        passage = _passage_with("Chart 2 presents the trend data.")
+        result = check_table_references(answer, [passage])
+        assert not result.has_unsupported_references
+
+    def test_diagram_scheme_recognised(self) -> None:
+        answer = _answer_with_text("As Scheme 1 depicts.")
+        passage = _passage_with("Scheme 1 outlines the synthesis.")
+        result = check_table_references(answer, [passage])
+        assert not result.has_unsupported_references
+
+    def test_unsupported_references_sorted(self) -> None:
+        answer = _answer_with_text("See Table 3 and Table 1.")
+        result = check_table_references(answer, [])
+        assert list(result.unsupported_references) == sorted(result.unsupported_references)
+
+    def test_case_insensitive_match(self) -> None:
+        answer = _answer_with_text("TABLE 4.2 confirms it.")
+        passage = _passage_with("table 4.2 shows the data.")
+        result = check_table_references(answer, [passage])
+        assert not result.has_unsupported_references
+
+
+# ---------------------------------------------------------------------------
+# decide() with table_ref_result
+# ---------------------------------------------------------------------------
+
+
+class TestDecideWithTableRefResult:
+    def _citation(self, claim: Claim) -> CitationCheckResult:
+        return CitationCheckResult(claim=claim, fabricated_labels=frozenset())
+
+    def _ent(self, claim: Claim) -> list[EntailmentResult]:
+        return [EntailmentResult(claim=claim, passage_label="[S1]", status=ClaimStatus.ENTAILED)]
+
+    def test_unsupported_table_ref_makes_answer_repairable(self) -> None:
+        claim = _claim()
+        answer = _answer(claim)
+        ref_result = TableReferenceCheckResult(unsupported_references=("Table 9.9",))
+        decision = decide(answer, (self._citation(claim),), [self._ent(claim)],
+                          table_ref_result=ref_result)
+        assert decision is ValidationDecision.REPAIRABLE
+
+    def test_supported_table_ref_does_not_affect_valid_answer(self) -> None:
+        claim = _claim()
+        answer = _answer(claim)
+        ref_result = TableReferenceCheckResult(unsupported_references=())
+        decision = decide(answer, (self._citation(claim),), [self._ent(claim)],
+                          table_ref_result=ref_result)
+        assert decision is ValidationDecision.VALID
+
+    def test_none_table_ref_result_does_not_affect_decision(self) -> None:
+        claim = _claim()
+        answer = _answer(claim)
+        decision = decide(answer, (self._citation(claim),), [self._ent(claim)],
+                          table_ref_result=None)
+        assert decision is ValidationDecision.VALID
+
+
+# ---------------------------------------------------------------------------
+# build_repair_instructions() with table_ref_result
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRepairInstructionsWithTableRef:
+    def _no_issues(self, claim: Claim) -> tuple[tuple[CitationCheckResult, ...], list[list[EntailmentResult]]]:
+        citation = CitationCheckResult(claim=claim, fabricated_labels=frozenset())
+        ent = [EntailmentResult(claim=claim, passage_label="[S1]", status=ClaimStatus.ENTAILED)]
+        return (citation,), [ent]
+
+    def test_table_ref_bullet_added_when_unsupported(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        ref_result = TableReferenceCheckResult(unsupported_references=("Table 9.9",))
+        repair = build_repair_instructions(citations, ents, table_ref_result=ref_result)
+        assert "Table 9.9" in repair
+
+    def test_multiple_refs_all_named_in_bullet(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        ref_result = TableReferenceCheckResult(
+            unsupported_references=("Figure 1", "Table 9.9")
+        )
+        repair = build_repair_instructions(citations, ents, table_ref_result=ref_result)
+        assert "Figure 1" in repair
+        assert "Table 9.9" in repair
+
+    def test_no_bullet_when_no_unsupported_refs(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        ref_result = TableReferenceCheckResult(unsupported_references=())
+        repair = build_repair_instructions(citations, ents, table_ref_result=ref_result)
+        assert repair == ""
+
+    def test_no_bullet_when_result_is_none(self) -> None:
+        claim = _claim()
+        citations, ents = self._no_issues(claim)
+        repair = build_repair_instructions(citations, ents, table_ref_result=None)
+        assert repair == ""
