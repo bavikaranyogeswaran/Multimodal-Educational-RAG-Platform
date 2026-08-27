@@ -19,6 +19,7 @@ from uuid import UUID
 import structlog
 
 from app.application.observability.timer import StageTimer
+from app.domain.enums import QueryClass
 from app.domain.models.entities import ConversationTurn
 from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, RerankerPort
 from app.domain.ports.repositories import ChunkRepository
@@ -49,6 +50,7 @@ class RetrievalResult:
     evidence: Sequence[Evidence]
     standalone_query: str
     was_rewritten: bool
+    query_class: QueryClass = QueryClass.DIRECT
 
 
 class RetrievalOrchestrator:
@@ -153,7 +155,12 @@ class RetrievalOrchestrator:
         )
 
         if not candidates:
-            return RetrievalResult(evidence=[], standalone_query=standalone, was_rewritten=was_rewritten)
+            return RetrievalResult(
+                evidence=[],
+                standalone_query=standalone,
+                was_rewritten=was_rewritten,
+                query_class=query_class,
+            )
 
         with StageTimer("rerank") as _timer:
             texts = [c.chunk.text.value for c in candidates]
@@ -215,7 +222,12 @@ class RetrievalOrchestrator:
             elapsed_ms=_timer.elapsed_ms(),
             compressed=sum(1 for e in fitted if e.compressed),
         )
-        return RetrievalResult(evidence=fitted, standalone_query=standalone, was_rewritten=was_rewritten)
+        return RetrievalResult(
+            evidence=fitted,
+            standalone_query=standalone,
+            was_rewritten=was_rewritten,
+            query_class=query_class,
+        )
 
     # -----------------------------------------------------------------------
 

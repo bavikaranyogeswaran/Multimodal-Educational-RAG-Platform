@@ -21,6 +21,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from app.application.commands.multi_hop_answer import MultiHopAnswerCommand, MultiHopAnswerUseCase
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.enums import (
@@ -220,6 +221,7 @@ class AnswerUseCase:
         faithfulness: AnswerFaithfulnessPort,
         kb_repo: KnowledgeBaseRepository | None = None,
         graph_repo: GraphRepository | None = None,
+        multi_hop: MultiHopAnswerUseCase | None = None,
     ) -> None:
         self._retrieve = retrieve
         self._uow = conversation_uow
@@ -229,6 +231,7 @@ class AnswerUseCase:
         self._faithfulness = faithfulness
         self._kb_repo = kb_repo
         self._graph_repo = graph_repo
+        self._multi_hop = multi_hop
 
     async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:
         """Stream the answer for one turn.
@@ -343,6 +346,8 @@ class AnswerUseCase:
         entailment = self._entailment
         faithfulness = self._faithfulness
         query = command.query
+        multi_hop = self._multi_hop
+        is_multi_hop = retrieval.query_class.needs_decomposition and multi_hop is not None
 
         async def _tracked() -> AsyncGenerator[str, None]:
             failed = False
@@ -352,61 +357,72 @@ class AnswerUseCase:
             citations: tuple[Citation, ...] = ()
             usage: GenerationUsage | None = None
             try:
-                raw, usage = await _collect_stream(initial_stream)
-                checked = await _validate(raw, labeled, entailment, faithfulness)
-
-                if checked.decision is ValidationDecision.REPAIRABLE:
-                    repair = build_repair_instructions(
-                        checked.citation_results,
-                        checked.entailment_by_claim,
-                        checked.fidelity,
-                        checked.numeric_results,
-                    )
-                    repair_request = context_builder.build(
-                        ContextInputs(
-                            model_task=ModelTask.ANSWER_GENERATION,
-                            system_preamble=_SYSTEM_PREAMBLE,
-                            safety_rules=_SAFETY_RULES,
-                            task_instructions=_TASK_INSTRUCTIONS,
+                if is_multi_hop:
+                    hop = await multi_hop.execute(  # type: ignore[union-attr]
+                        MultiHopAnswerCommand(
+                            scope=scope,
                             query=query,
-                            instructions=_INSTRUCTIONS,
-                            conversation_history=history,
-                            evidence=labeled,
-                            output_schema=OUTPUT_SCHEMA,
-                            knowledge_base_state=graph_context,
-                            critical_checklist=(repair,) if repair else (),
+                            history=history,
                         )
                     )
-                    # The repair call replaces the first one's usage rather than adding
-                    # to it. What is recorded is the generation that produced the answer
-                    # actually returned; the discarded attempt is not part of it.
-                    repair_raw, usage = await _collect_stream(
-                        gateway.generate_stream(repair_request)
-                    )
-                    checked = await _validate(
-                        repair_raw, labeled, entailment, faithfulness
-                    )
+                    answer_text = hop.answer
+                    yield answer_text
+                else:
+                    raw, usage = await _collect_stream(initial_stream)
+                    checked = await _validate(raw, labeled, entailment, faithfulness)
 
-                answer = _returnable_answer(checked)
-                if answer is None:
-                    # Record whether this was a deliberate abstention or a quality
-                    # failure before raising, so the finally block can store the right
-                    # status. Insufficient evidence is a correct outcome; a fabricated
-                    # or unsupported citation is not.
-                    abstained = (
-                        checked.decision is ValidationDecision.INSUFFICIENT_EVIDENCE
-                    )
-                    raise GenerationRejectedError(  # noqa: TRY301
-                        f"answer rejected after validation: {checked.decision}",
-                        abstained=abstained,
-                    )
+                    if checked.decision is ValidationDecision.REPAIRABLE:
+                        repair = build_repair_instructions(
+                            checked.citation_results,
+                            checked.entailment_by_claim,
+                            checked.fidelity,
+                            checked.numeric_results,
+                        )
+                        repair_request = context_builder.build(
+                            ContextInputs(
+                                model_task=ModelTask.ANSWER_GENERATION,
+                                system_preamble=_SYSTEM_PREAMBLE,
+                                safety_rules=_SAFETY_RULES,
+                                task_instructions=_TASK_INSTRUCTIONS,
+                                query=query,
+                                instructions=_INSTRUCTIONS,
+                                conversation_history=history,
+                                evidence=labeled,
+                                output_schema=OUTPUT_SCHEMA,
+                                knowledge_base_state=graph_context,
+                                critical_checklist=(repair,) if repair else (),
+                            )
+                        )
+                        # The repair call replaces the first one's usage rather than
+                        # adding to it. What is recorded is the generation that produced
+                        # the answer actually returned; the discarded attempt is not.
+                        repair_raw, usage = await _collect_stream(
+                            gateway.generate_stream(repair_request)
+                        )
+                        checked = await _validate(
+                            repair_raw, labeled, entailment, faithfulness
+                        )
 
-                answer_text = answer.answer
-                # Resolved before the first token leaves, while the evidence set that
-                # issued the labels is still in hand. Afterwards the labels are just
-                # numbers in a string nobody can resolve.
-                citations = resolve_citations(answer, evidence)
-                yield answer_text
+                    answer = _returnable_answer(checked)
+                    if answer is None:
+                        # Record whether this was a deliberate abstention or a quality
+                        # failure before raising, so the finally block can store the
+                        # right status. Insufficient evidence is a correct outcome; a
+                        # fabricated or unsupported citation is not.
+                        abstained = (
+                            checked.decision is ValidationDecision.INSUFFICIENT_EVIDENCE
+                        )
+                        raise GenerationRejectedError(  # noqa: TRY301
+                            f"answer rejected after validation: {checked.decision}",
+                            abstained=abstained,
+                        )
+
+                    answer_text = answer.answer
+                    # Resolved before the first token leaves, while the evidence set
+                    # that issued the labels is still in hand. Afterwards the labels
+                    # are just numbers in a string nobody can resolve.
+                    citations = resolve_citations(answer, evidence)
+                    yield answer_text
             except (asyncio.CancelledError, GeneratorExit):
                 # Both mean the student stopped listening: the first when the server
                 # cancels the response task on disconnect, the second when the consumer
