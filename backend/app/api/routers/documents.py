@@ -152,25 +152,29 @@ async def get_document_status(
     return DocumentStatusResponse.model_validate(doc)
 
 
-_URL_TTL_SECONDS = 300  # 5-minute window — long enough to load a PDF, short enough to limit exposure
-
-
 @router.get("/{document_id}/url")
 async def get_document_url(
     document_id: uuid.UUID,
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
     session: Annotated[AsyncSession, Depends(get_session)],
     container: Annotated[Container, Depends(get_container)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> DocumentUrlResponse:
+    """Issue a short-lived signed URL for the original PDF.
+
+    The lifetime comes from configuration rather than a literal here, because the
+    bound that keeps it defensible — no more than an hour — is enforced against the
+    setting at startup. A number written at this call site would sit outside that
+    check, and the invariant would be guarding a value nothing read.
+    """
     doc = await SqlDocumentRepository(scope, session).get(scope, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=_404_DOCUMENT)
-    url = await container.storage.presigned_get_url(
-        doc.storage_key, expires_in=_URL_TTL_SECONDS
-    )
+    ttl_seconds = settings.storage.signed_url_ttl_seconds
+    url = await container.storage.presigned_get_url(doc.storage_key, expires_in=ttl_seconds)
     return DocumentUrlResponse(
         url=url,
-        expires_at=datetime.now(UTC) + timedelta(seconds=_URL_TTL_SECONDS),
+        expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
     )
 
 

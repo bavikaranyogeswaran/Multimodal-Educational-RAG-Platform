@@ -99,7 +99,10 @@ class StorageSettings(BaseSettings):
     region: str = "auto"
 
     #: A leaked signed URL must have limited value. Capped at one hour; validated below.
-    signed_url_ttl_seconds: int = 900
+    #: Five minutes is long enough for a browser to fetch and open a large PDF, and short
+    #: enough that a URL copied out of a network log is stale before it is useful. The
+    #: viewer refreshes ahead of expiry rather than holding one URL for a whole session.
+    signed_url_ttl_seconds: int = 300
 
     #: Page renders feed OCR and are regenerable from the original, so they are cached
     #: rather than stored permanently. Crops are not — they are re-sent to the

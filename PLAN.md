@@ -26,16 +26,16 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **7 of 21** â€" Phase 0, 1, 2, 3, 8, 11, 19 âœ… |
-| Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) Â· Phase 4 (~95%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
+| Phases complete | **8 of 21** â€" Phase 0, 1, 2, 3, 4, 8, 11, 19 âœ… |
+| Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
 | Built but not wired | Phase 13 (~85%) â€" implemented and fully tested, still **dead at runtime**: `MultiHopAnswerUseCase` needs three model-backed adapters that do not exist, so the dependency cannot supply it. See the note below |
 | Partly built | Phase 12 (~80%, graph RAG now reachable; `BUILD_GRAPH` still undispatched) Â· Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 14 (~60%, memory context now reaching the prompt; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 15, 20 |
-| Tests | **3,326 backend passing** â€" 3,213 unit Â· 113 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 10 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
+| Tests | **3,335 backend passing** â€" 3,213 unit Â· 122 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 11 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test |
 | Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
 | Next step | **Dispatch `BUILD_GRAPH` in the worker**, so the graph path now wired into the answer has a graph to traverse. Then the three multi-hop adapters |
-| Last updated | 27 August 2026 (full reconciliation against the source tree â€" phases 11, 12, 13, 14, 19 all moved) |
+| Last updated | 27 August 2026 (Phase 4 closed â€" signed-URL expiry test, and the TTL setting it found unread) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1057,17 +1057,26 @@ directory name is what every later step follows (A-256).
 
 Covers Â§7 (worker), Â§11, Â§12, Â§60.
 
-**Status: ~95% â€” recovery gaps closed.** The job entity's retry lifecycle is now connected:
-a failed attempt schedules its own retry, a job whose worker died is reclaimed as a failed
-attempt, and a budget that runs out dead-letters. `max_attempts` means what it says.
+**Status: complete.** The job entity's retry lifecycle is connected: a failed attempt schedules
+its own retry, a job whose worker died is reclaimed as a failed attempt, and a budget that runs
+out dead-letters. `max_attempts` means what it says.
 
-Deletion completes. `DELETE /documents/{id}` still returns 202 and marks the document
-`DELETING`, and now a worker finishes the job â€” removing the stored original, the cached
-page renders, and the row, with chunks, elements and pages following by cascade.
+Deletion completes. `DELETE /documents/{id}` returns 202 and marks the document `DELETING`, and a
+worker finishes the job â€” removing the stored original, the cached page renders, and the row,
+with chunks, elements and pages following by cascade.
 
-What remains is small and mostly waiting on other phases: per-stage progress reporting
-needs the stages that phases 5 to 7 produce, and no endpoint issues a presigned URL yet,
-so there is nothing whose expiry a security test could check.
+The last open item, the signed-URL expiry test, was blocked on there being a signed URL to
+expire. Step 19.4 issued one, and the test written against it found that the endpoint had been
+ignoring the very setting whose bound made it defensible. Both are fixed below.
+
+Per-stage progress reporting is the one thing deliberately not built: the status endpoint reports
+one status rather than a stage breakdown. The stages it would name now exist, so this is a
+presentation choice rather than a blocked item, and it belongs with whichever phase gives the
+student somewhere to watch them.
+
+*(Historical note: both remaining items were described here as waiting on other phases. Both
+blockers dissolved without anyone noticing, which is the general hazard with a deferral written
+as a fact â€” it goes on reading as true after it stops being true.)*
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
@@ -1142,8 +1151,15 @@ so it is not mistaken for done.
 - [x] Status polling endpoint (per-stage progress still pending â€” there is one status, not a
       stage breakdown, because the stages it would report belong to phases 5â€“7)
 - [x] Security tests: upload into a foreign KB, storage-key isolation
-- [ ] Signed-URL expiry test â€” no endpoint issues a presigned URL yet, so there is nothing to
-      expire; the adapter method exists and is unit-tested
+- [x] **Signed-URL expiry test** â€” `tests/security/test_signed_url_security.py`, nine tests, eight
+      of them gates. Writing it found the reason it had been deferrable: the endpoint step 19.4
+      added was minting URLs on a hardcoded `_URL_TTL_SECONDS = 300` and never reading
+      `storage.signed_url_ttl_seconds`, so the startup invariant capping that lifetime at an hour
+      was validating a setting **nothing in `app/` read**. The endpoint now takes the configured
+      value, and the tests assert it does â€” verified by planting the literal back, which fails
+      the configuration test while correctly leaving the bound tests green, since 300 was safe
+      but ungoverned. The default moved 900 â†' 300 in both the schema and `.env.example` so the
+      configuration states the behaviour that was already shipping
 - [x] UC-04, UC-05 (subject to ingestion being a skeleton â€” see Phase 5)
 
 ## Phase 5 â€” PDF parsing, page classification & OCR
@@ -1710,8 +1726,9 @@ failure that says nothing about the network (A-390).
       ingested textbook (A-728)
 - [x] **First observation of retrieval quality on something other than fixtures** â€” three
       findings below, none of which the fixtures could have surfaced (A-729, A-730, A-731)
-- [ ] **Citations that open at the right page** â€” answers carry citation labels, but nothing
-      resolves a label to a page for a reader yet; that surface arrives with Phase 19
+- [x] **Citations that open at the right page** â€” delivered by step 19.5: a citation chip
+      navigates the PDF viewer to the cited page and draws the bounding box the passage
+      occupied. This box sat unticked after that shipped
 
 **What the first real queries found.** All three were invisible to the fixtures, and none is a
 tuning problem:

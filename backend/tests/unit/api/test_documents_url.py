@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.api.dependencies.container import get_container
 from app.api.dependencies.scope import get_kb_scope
 from app.api.routers.documents import router as documents_router
+from app.configuration.settings import get_settings
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import get_session
 
@@ -126,8 +127,12 @@ def test_url_calls_storage_with_document_storage_key() -> None:
     app.include_router(documents_router, prefix="/api/v1")
 
     TestClient(app).get(_url_path(row.id))
+    # The lifetime is whatever configuration says, not a number repeated here — pinning a
+    # literal would have this test pass while the endpoint ignored the setting entirely,
+    # which is exactly the state it was in before.
     mock_storage.presigned_get_url.assert_awaited_once_with(
-        row.storage_key, expires_in=300
+        row.storage_key,
+        expires_in=get_settings().storage.signed_url_ttl_seconds,
     )
 
 
