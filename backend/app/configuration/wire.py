@@ -43,6 +43,9 @@ from app.infrastructure.database.session import build_engine, build_session_fact
 from app.infrastructure.models.gateway import ModelGatewayFacade
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.models.providers.openai_compat import OpenAICompatibleGateway
+from app.infrastructure.multi_hop.coverage import LlmCoverageClassifier
+from app.infrastructure.multi_hop.decomposition import LlmQueryDecomposition
+from app.infrastructure.multi_hop.synthesis import LlmMultiHopSynthesis
 from app.infrastructure.rendering.figure_cropper import FigureCropper
 from app.infrastructure.rendering.page_renderer import PageRenderer
 from app.infrastructure.storage.r2 import build_r2_adapters
@@ -241,9 +244,13 @@ def build_container(settings: Settings) -> Container:
         # arrive through; see the note on the Container field.
         graph=cast(GraphPort, _u("GraphPort")),
         observability=cast(ObservabilityPort, _u("ObservabilityPort")),
-        # Model gateway
-        model_gateway=_build_model_gateway(
+        # Model gateway — built once, shared with all model-backed adapters
+        model_gateway=(_gw := _build_model_gateway(
             settings,
             session_factory=_session_factory if db_url else None,
-        ),
+        )),
+        # Multi-hop adapters
+        query_decomposition=LlmQueryDecomposition(_gw),
+        coverage_classifier=LlmCoverageClassifier(_gw),
+        multi_hop_synthesis=LlmMultiHopSynthesis(_gw),
     )

@@ -25,11 +25,14 @@ from app.domain.ports.adapters import (
     ObservabilityPort,
     OcrPort,
     PdfParserPort,
+    QueryDecompositionPort,
     RerankerPort,
     StoragePort,
     TokenCounterPort,
 )
+from app.domain.ports.coverage import CoverageClassifierPort
 from app.domain.ports.model_gateway import ModelGatewayPort
+from app.domain.ports.multi_hop import MultiHopSynthesisPort
 from app.domain.ports.repositories import (
     ChunkRepository,
     ConversationRepository,
@@ -95,3 +98,8 @@ class Container:
 
     # Model gateway
     model_gateway: ModelGatewayPort
+
+    # Multi-hop adapters (Phase 13)
+    query_decomposition: QueryDecompositionPort
+    coverage_classifier: CoverageClassifierPort
+    multi_hop_synthesis: MultiHopSynthesisPort
