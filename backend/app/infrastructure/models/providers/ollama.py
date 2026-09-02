@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from app.domain.enums import DataBoundary, ModelTask
-from app.domain.errors import ProviderError
+from app.domain.errors import ProviderError, UnsupportedCapabilityError
 from app.domain.models.entities import GenerationUsage, ModelRequest, ModelResponse
 from app.domain.ports.model_gateway import ModelProfile
 from app.domain.values import UntrustedText
