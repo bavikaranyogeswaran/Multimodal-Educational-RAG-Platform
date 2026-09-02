@@ -194,14 +194,12 @@ def _parse_and_validate(
             # Same: dangling target. Keep the entities, drop just this edge.
             continue
         if source_name == target_name:
-            raise GraphExtractionError(
-                f"relationship at index {i}: source and target are the same entity ({source_name!r})"
-            )
+            # Self-loop — no information content, drop silently.
+            continue
         if rel_type_str not in _VALID_REL_TYPES:
-            raise GraphExtractionError(
-                f"relationship at index {i} has unrecognised type {rel_type_str!r}; "
-                f"valid types: {sorted(_VALID_REL_TYPES)}"
-            )
+            # Model invented a relationship type (e.g. "PUBLISHED"). Drop the
+            # edge rather than failing the whole chunk.
+            continue
         if not isinstance(evidence_str, str) or not evidence_str.strip():
             raise GraphExtractionError(
                 f"relationship at index {i} has blank evidence (provenance invariant violated)"
