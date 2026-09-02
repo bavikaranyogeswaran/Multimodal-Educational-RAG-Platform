@@ -20,8 +20,6 @@ if sys.platform == "win32":
 import pytest
 from starlette.testclient import TestClient
 
-from app.main import app
-
 APP_ROOT = Path(__file__).resolve().parent.parent / "app"
 
 
@@ -34,5 +32,6 @@ def app_root() -> Path:
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     """Synchronous test client against the FastAPI application."""
+    from app.main import app  # lazy: keeps heavy deps out of unit-test imports
     with TestClient(app) as test_client:
         yield test_client
