@@ -43,6 +43,7 @@ from app.infrastructure.database.session import build_engine, build_session_fact
 from app.infrastructure.models.gateway import ModelGatewayFacade
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.models.providers.openai_compat import OpenAICompatibleGateway
+from app.infrastructure.memory.extractor import LlmMemoryExtractor
 from app.infrastructure.multi_hop.coverage import LlmCoverageClassifier
 from app.infrastructure.multi_hop.decomposition import LlmQueryDecomposition
 from app.infrastructure.multi_hop.synthesis import LlmMultiHopSynthesis
@@ -211,6 +212,11 @@ def build_container(settings: Settings) -> Container:
         _cache = cast(CacheStore, _u("CacheStore"))
         _figure_cropper = None
 
+    _gw = _build_model_gateway(
+        settings,
+        session_factory=_session_factory if db_url else None,
+    )
+
     return Container(
         session_factory=_session_factory,
         page_renderer=PageRenderer(
@@ -219,8 +225,8 @@ def build_container(settings: Settings) -> Container:
             ttl_seconds=settings.storage.page_render_ttl_seconds,
         ),
         figure_cropper=_figure_cropper,
-        # Memory extractor — wired when the LLM extraction adapter is built
-        memory_extractor=None,
+        # Memory extractor
+        memory_extractor=LlmMemoryExtractor(_gw),
         # Repository ports — wired in Phase 2 (SQLAlchemy adapters)
         knowledge_base_repository=cast(KnowledgeBaseRepository, _u("KnowledgeBaseRepository")),
         document_repository=cast(DocumentRepository, _u("DocumentRepository")),
@@ -244,11 +250,8 @@ def build_container(settings: Settings) -> Container:
         # arrive through; see the note on the Container field.
         graph=cast(GraphPort, _u("GraphPort")),
         observability=cast(ObservabilityPort, _u("ObservabilityPort")),
-        # Model gateway — built once, shared with all model-backed adapters
-        model_gateway=(_gw := _build_model_gateway(
-            settings,
-            session_factory=_session_factory if db_url else None,
-        )),
+        # Model gateway — shared with all model-backed adapters
+        model_gateway=_gw,
         # Multi-hop adapters
         query_decomposition=LlmQueryDecomposition(_gw),
         coverage_classifier=LlmCoverageClassifier(_gw),
