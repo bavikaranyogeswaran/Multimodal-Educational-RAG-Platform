@@ -21,7 +21,6 @@ from app.domain.memory.entities import MemoryFact
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.memory import SqlMemoryRepository
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

@@ -17,13 +17,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Awaitable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
-
-_log = structlog.get_logger(__name__)
 
 from app.application.commands.multi_hop_answer import MultiHopAnswerCommand, MultiHopAnswerUseCase
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
@@ -39,6 +37,7 @@ from app.domain.enums import (
     ValidationDecision,
 )
 from app.domain.errors import GenerationParseError, GenerationRejectedError
+from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
 from app.domain.models.entities import ConversationTurn, GenerationUsage, LabeledPassage
 from app.domain.models.generation import OUTPUT_SCHEMA, GeneratedAnswer, parse_generated_answer
@@ -57,12 +56,15 @@ from app.domain.models.validation import (
     check_table_references,
     decide,
 )
-from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
 from app.domain.ports.model_gateway import ModelGatewayPort
-from app.domain.memory.entities import MemoryFact
-from app.domain.ports.repositories import ConversationUnitOfWork, GraphRepository, KnowledgeBaseRepository, MemoryRepository
+from app.domain.ports.repositories import (
+    ConversationUnitOfWork,
+    GraphRepository,
+    KnowledgeBaseRepository,
+    MemoryRepository,
+)
 from app.domain.retrieval.entities import (
     Citation,
     Evidence,
@@ -71,6 +73,8 @@ from app.domain.retrieval.entities import (
 )
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
+
+_log = structlog.get_logger(__name__)
 
 #: Maximum nodes returned by concept_map_subgraph for the graph context slot.
 #: Keeps graph context concise; seeds always appear regardless of the cap.

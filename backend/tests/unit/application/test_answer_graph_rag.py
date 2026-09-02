@@ -14,8 +14,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from app.application.commands.answer import (
     AnswerCommand,
     AnswerUseCase,
@@ -23,11 +21,10 @@ from app.application.commands.answer import (
     _load_graph_context,
 )
 from app.application.queries.retrieve_evidence import RetrievalResult
+from app.domain.documents.chunks import Chunk
 from app.domain.enums import (
     ChunkType,
     GraphNodeType,
-    MessageRole,
-    MessageStatus,
     RelationshipType,
     RetrieverKind,
 )
@@ -37,7 +34,6 @@ from app.domain.models.entities import GenerationUsage
 from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
-from app.domain.documents.chunks import Chunk
 
 # ---------------------------------------------------------------------------
 # shared fixtures

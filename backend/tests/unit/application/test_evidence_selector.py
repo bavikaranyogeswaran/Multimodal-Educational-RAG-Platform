@@ -8,10 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.application.queries.coverage_classifier import SubQuestionCoverage
-from app.application.queries.evidence_selector import EvidenceSelector, SubQuestionEvidence
+from app.application.queries.evidence_selector import EvidenceSelector
 from app.domain.enums import CoverageStatus
 from app.domain.retrieval.decomposition import SubQuestion
-
 
 # ---------------------------------------------------------------------------
 # helpers

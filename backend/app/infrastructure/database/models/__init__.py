@@ -18,11 +18,11 @@ from app.infrastructure.database.models.conversation import (
     MessageModel,
 )
 from app.infrastructure.database.models.document import DocumentModel, DocumentPageModel
+from app.infrastructure.database.models.figure import DocumentFigureModel
 from app.infrastructure.database.models.graph import GraphEntityModel, GraphRelationshipModel
 from app.infrastructure.database.models.job import CacheEntryModel, ProcessingJobModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 from app.infrastructure.database.models.model_invocation import ModelInvocationModel
-from app.infrastructure.database.models.figure import DocumentFigureModel
 from app.infrastructure.database.models.table import DocumentTableModel
 
 __all__ = [

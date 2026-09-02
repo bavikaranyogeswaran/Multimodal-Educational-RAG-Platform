@@ -95,7 +95,7 @@ def test_migration_round_trip(test_db_url_raw: str) -> None:
         env=env,
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert down.returncode == 0, (
         f"alembic downgrade base failed (exit {down.returncode}):\n{down.stderr}"
@@ -106,7 +106,7 @@ def test_migration_round_trip(test_db_url_raw: str) -> None:
         env=env,
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert up.returncode == 0, (
         f"alembic upgrade head failed (exit {up.returncode}):\n{up.stderr}"

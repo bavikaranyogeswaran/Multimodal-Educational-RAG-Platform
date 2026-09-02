@@ -12,8 +12,7 @@ import pytest
 
 from app.domain.enums import DataBoundary, ModelTask
 from app.domain.errors import InvariantViolationError
-from app.domain.models.entities import ModelRequest, ModelResponse
-from app.domain.models.entities import GenerationUsage
+from app.domain.models.entities import GenerationUsage, ModelRequest, ModelResponse
 from app.domain.ports.model_gateway import (
     ModelGatewayPort,
     ModelProfile,
@@ -137,7 +136,7 @@ _MULTIMODAL_PROFILE = _profile(
 
 
 class _StubTokenStream:
-    def __aiter__(self) -> "_StubTokenStream":
+    def __aiter__(self) -> _StubTokenStream:
         return self
 
     async def __anext__(self) -> str:

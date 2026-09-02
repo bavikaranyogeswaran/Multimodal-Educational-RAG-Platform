@@ -21,8 +21,8 @@ from jwt.algorithms import RSAAlgorithm
 
 from app.configuration.settings import SupabaseSettings
 from app.domain.errors import AuthenticationError
-from app.infrastructure.auth.jwt import extract_user_id
 from app.infrastructure.auth.jwks import JwksClient
+from app.infrastructure.auth.jwt import extract_user_id
 
 _TEST_KID = "test-key-1"
 _TEST_AUDIENCE = "authenticated"

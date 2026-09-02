@@ -10,7 +10,7 @@ returned by list_expiring, so the use case never double-transitions a fact.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 
 from app.domain.ports.repositories import MemoryRepository
 from app.domain.scope import ScopeContext

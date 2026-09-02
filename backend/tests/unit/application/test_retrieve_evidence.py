@@ -15,8 +15,8 @@ import structlog.testing
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
 from app.domain.enums import MessageRole, QueryClass, RetrieverKind
 from app.domain.models.entities import ConversationTurn
-from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters
 from app.domain.retrieval.compression import EvidenceCompressor
+from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters
 from app.domain.retrieval.expansion import ExpansionRules
 from app.domain.retrieval.pruning import EvidencePruner
 from app.domain.retrieval.selector import EvidenceSelector

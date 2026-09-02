@@ -20,7 +20,7 @@ import pytest
 
 from app.domain.documents.chunks import Chunk
 from app.domain.enums import ChunkType, RetrieverKind
-from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters
+from app.domain.retrieval.entities import Evidence, EvidenceLabel
 from app.domain.retrieval.fusion import RRFusion
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText

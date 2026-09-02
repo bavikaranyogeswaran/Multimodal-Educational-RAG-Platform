@@ -21,7 +21,6 @@ from app.infrastructure.models.providers.prompt import (
     build_chat_messages,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -69,7 +68,7 @@ class TestPromptProfileDefaults:
         assert PromptProfile().use_acknowledged_exchange is True
 
     def test_default_prompt_profile_constant_is_default_profile(self) -> None:
-        assert DEFAULT_PROMPT_PROFILE == PromptProfile()
+        assert PromptProfile() == DEFAULT_PROMPT_PROFILE
 
     def test_profile_is_frozen(self) -> None:
         profile = PromptProfile()

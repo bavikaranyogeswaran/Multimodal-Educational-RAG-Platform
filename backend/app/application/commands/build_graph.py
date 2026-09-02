@@ -24,10 +24,11 @@ completes over the remaining chunks rather than failing the whole document.
 
 from __future__ import annotations
 
-import structlog
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
+
+import structlog
 
 from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
 from app.domain.errors import GraphExtractionError

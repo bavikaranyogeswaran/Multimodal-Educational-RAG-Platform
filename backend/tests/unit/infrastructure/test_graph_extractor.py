@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,7 +14,6 @@ from app.domain.models.entities import ModelResponse
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
 from app.infrastructure.graph.extractor import LlmGraphExtractor
-
 
 # ---------------------------------------------------------------------------
 # helpers

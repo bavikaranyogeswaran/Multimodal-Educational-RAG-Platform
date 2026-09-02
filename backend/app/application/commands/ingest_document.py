@@ -364,7 +364,7 @@ async def _describe_figures(
             image_bytes = await storage.get(figure.crop_key)
             response = await model_gateway.generate_with_image(request, image_bytes)
             updates = _parse_vision_response(response.content.value)
-            result.append(replace(figure, **updates) if updates else figure)
+            result.append(replace(figure, **updates) if updates else figure)  # type: ignore[arg-type]
         except Exception:
             _log.warning(
                 "figure_description_failed",

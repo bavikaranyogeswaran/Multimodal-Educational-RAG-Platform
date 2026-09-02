@@ -12,7 +12,6 @@ from typing import Annotated, Any
 from unittest.mock import MagicMock, patch
 
 import jwt as pyjwt
-import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from fastapi import Depends, FastAPI

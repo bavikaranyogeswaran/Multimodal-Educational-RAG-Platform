@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from app.domain.enums import ModelTask
 from app.domain.errors import ProviderError
 from app.infrastructure.models.warmup import warm_up_models

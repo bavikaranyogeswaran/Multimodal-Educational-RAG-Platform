@@ -56,20 +56,20 @@ class GeminiGateway:
             raise UnsupportedCapabilityError(self._model_id, task.value)
         return self._profile
 
-    async def generate(self, request: ModelRequest) -> ModelResponse:  # noqa: ARG002
+    async def generate(self, request: ModelRequest) -> ModelResponse:
         raise NotImplementedError(
             "GeminiGateway: credentials not configured — add GEMINI_API_KEY and implement the native SDK adapter"
         )
 
-    def generate_stream(self, request: ModelRequest) -> None:  # type: ignore[return]  # noqa: ARG002
+    def generate_stream(self, request: ModelRequest) -> None:
         raise NotImplementedError(
             "GeminiGateway: credentials not configured — add GEMINI_API_KEY and implement the native SDK adapter"
         )
 
     async def generate_with_image(
         self,
-        request: ModelRequest,  # noqa: ARG002
-        image: bytes,  # noqa: ARG002
+        request: ModelRequest,
+        image: bytes,
     ) -> ModelResponse:
         raise NotImplementedError(
             "GeminiGateway: credentials not configured — add GEMINI_API_KEY and implement the native SDK adapter"

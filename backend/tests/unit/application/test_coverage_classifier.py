@@ -5,8 +5,6 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from app.application.queries.coverage_classifier import (
     CoverageClassifier,
     SubQuestionCoverage,
@@ -14,7 +12,6 @@ from app.application.queries.coverage_classifier import (
 from app.application.queries.sub_question_pipeline import SubQuestionResult
 from app.domain.enums import CoverageStatus
 from app.domain.retrieval.decomposition import SubQuestion
-
 
 # ---------------------------------------------------------------------------
 # helpers

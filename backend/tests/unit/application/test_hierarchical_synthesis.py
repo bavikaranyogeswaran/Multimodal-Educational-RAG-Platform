@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, call
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from app.application.queries.evidence_selector import SubQuestionEvidence
 from app.application.queries.hierarchical_synthesis import HierarchicalSynthesizer, MultiHopAnswer
 from app.domain.enums import CoverageStatus
-from app.domain.ports.multi_hop import MultiHopSynthesisPort, SubAnswerItem
+from app.domain.ports.multi_hop import MultiHopSynthesisPort
 from app.domain.retrieval.decomposition import SubQuestion
-
 
 # ---------------------------------------------------------------------------
 # helpers

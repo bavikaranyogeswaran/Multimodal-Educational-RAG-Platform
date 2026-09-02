@@ -27,7 +27,10 @@ from app.application.queries.coverage_classifier import CoverageClassifier, SubQ
 from app.application.queries.document_selection import DocumentSelection, DocumentSelector
 from app.application.queries.evidence_selector import EvidenceSelector, SubQuestionEvidence
 from app.application.queries.hierarchical_synthesis import HierarchicalSynthesizer, MultiHopAnswer
-from app.application.queries.iterative_retrieval import IterativeRetrievalLoop, IterativeRetrievalResult
+from app.application.queries.iterative_retrieval import (
+    IterativeRetrievalLoop,
+    IterativeRetrievalResult,
+)
 from app.application.queries.sub_question_pipeline import SubQuestionPipeline, SubQuestionResult
 from app.domain.enums import CoverageStatus
 from app.domain.retrieval.decomposition import DecompositionPlan, SubQuestion

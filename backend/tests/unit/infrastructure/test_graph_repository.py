@@ -33,7 +33,6 @@ from app.domain.values import UntrustedText
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 from app.infrastructure.database.repositories.graph import SqlGraphRepository
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -754,7 +753,7 @@ class TestConceptMapIsBoundedInTheDatabase:
         session = AsyncMock()
         captured: list[object] = []
 
-        async def _execute(stmt, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        async def _execute(stmt, *args, **kwargs):
             captured.append(stmt)
             result = MagicMock()
             result.scalars.return_value.all.return_value = []
@@ -780,7 +779,7 @@ class TestConceptMapIsBoundedInTheDatabase:
         session = AsyncMock()
         captured: list[object] = []
 
-        async def _execute(stmt, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        async def _execute(stmt, *args, **kwargs):
             captured.append(stmt)
             result = MagicMock()
             result.scalars.return_value.all.return_value = []

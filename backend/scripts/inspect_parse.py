@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.configuration.settings import Settings
 from app.domain.documents.chunker import Chunker, ChunkFamily
 from app.domain.documents.element_classifier import ElementClassifier
-from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
+from app.domain.documents.entities import DocumentElement, ParsedPage
 from app.domain.documents.page_classifier import PageClassifier
 from app.domain.documents.reading_order import ReadingOrderResolver
 from app.domain.errors import UploadValidationError

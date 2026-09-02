@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from app.application.commands.decompose import DecomposeQueryCommand
 from app.application.commands.multi_hop_answer import MultiHopAnswerCommand, MultiHopAnswerUseCase
+from app.application.queries.coverage_classifier import SubQuestionCoverage
 from app.application.queries.evidence_selector import EvidenceSelector, SubQuestionEvidence
 from app.application.queries.hierarchical_synthesis import HierarchicalSynthesizer, MultiHopAnswer
-from app.application.queries.iterative_retrieval import IterativeRetrievalLoop, IterativeRetrievalResult
-from app.application.queries.coverage_classifier import SubQuestionCoverage
+from app.application.queries.iterative_retrieval import (
+    IterativeRetrievalLoop,
+    IterativeRetrievalResult,
+)
 from app.domain.enums import CoverageStatus
 from app.domain.retrieval.decomposition import DecompositionPlan, SubQuestion
 from app.domain.retrieval.entities import RetrievalFilters
 from app.domain.scope import ScopeContext
-
 
 # ---------------------------------------------------------------------------
 # helpers

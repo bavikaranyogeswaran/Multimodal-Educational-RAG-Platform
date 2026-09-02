@@ -93,7 +93,7 @@ class DecompositionPlan:
         # Kahn's algorithm: BFS topological sort with cycle detection.
         # in_degree[id] counts unsatisfied dependencies.
         # dependents[id] lists the ids that depend on id.
-        in_degree: dict[str, int] = {sq_id: 0 for sq_id in id_set}
+        in_degree: dict[str, int] = dict.fromkeys(id_set, 0)
         dependents: dict[str, list[str]] = {sq_id: [] for sq_id in id_set}
 
         for sq in sub_questions:

@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, call, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from app.application.commands.build_graph import BuildGraphCommand, BuildGraphUseCase
 from app.domain.enums import (
-    ChunkType,
     DocumentStatus,
     GraphNodeType,
     JobPriority,
@@ -22,7 +19,6 @@ from app.domain.errors import GraphExtractionError
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
-
 
 # ---------------------------------------------------------------------------
 # helpers

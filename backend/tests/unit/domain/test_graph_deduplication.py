@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,7 +13,6 @@ from app.domain.graph.deduplication import GraphDeduplicator, normalize_name
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.scope import ScopeContext
 from app.domain.values import UntrustedText
-
 
 # ---------------------------------------------------------------------------
 # helpers

@@ -18,11 +18,13 @@ conditions should fail a request.
 
 from __future__ import annotations
 
-import structlog
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import TypeGuard
 from uuid import UUID
+
+import structlog
 
 from app.domain.conversations.entities import Message
 from app.domain.enums import MessageRole, MessageStatus
@@ -152,7 +154,7 @@ class ExtractMemoryUseCase:
         )
 
 
-def _is_completed_assistant(msg: Message | None) -> bool:
+def _is_completed_assistant(msg: Message | None) -> TypeGuard[Message]:
     return (
         msg is not None
         and msg.role is MessageRole.ASSISTANT
@@ -161,7 +163,7 @@ def _is_completed_assistant(msg: Message | None) -> bool:
 
 
 def _preceding_user_message(
-    messages: list[Message] | tuple[Message, ...],  # type: ignore[type-arg]
+    messages: Sequence[Message],
     assistant_message_id: UUID,
 ) -> Message | None:
     """Return the USER message immediately before the given assistant message.

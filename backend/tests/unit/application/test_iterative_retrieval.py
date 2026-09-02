@@ -7,14 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.application.queries.coverage_classifier import CoverageClassifier, SubQuestionCoverage
+from app.application.queries.coverage_classifier import SubQuestionCoverage
 from app.application.queries.document_selection import DocumentSelection, DocumentSelector
 from app.application.queries.iterative_retrieval import IterativeRetrievalLoop
-from app.application.queries.sub_question_pipeline import SubQuestionPipeline, SubQuestionResult
+from app.application.queries.sub_question_pipeline import SubQuestionResult
 from app.domain.enums import CoverageStatus
 from app.domain.retrieval.decomposition import DecompositionPlan, SubQuestion
 from app.domain.retrieval.entities import RetrievalFilters
-
 
 # ---------------------------------------------------------------------------
 # helpers

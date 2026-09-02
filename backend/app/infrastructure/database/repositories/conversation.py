@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any, List  # noqa: UP035
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
@@ -56,7 +57,7 @@ class SqlConversationRepository(ScopedRepository):
 
     async def list_citations_by_conversation(
         self, scope: ScopeContext, conversation_id: UUID
-    ) -> dict[UUID, list[MessageCitationModel]]:
+    ) -> dict[UUID, List[MessageCitationModel]]:  # noqa: UP006
         """All citations for every message in a conversation, keyed by message_id.
 
         Loads in one query by joining through messages to apply the scope filter — citations
@@ -143,7 +144,7 @@ class SqlConversationRepository(ScopedRepository):
 
     async def list_retrieval_sources(
         self, scope: ScopeContext, conversation_id: UUID, message_id: UUID
-    ) -> list[tuple]:
+    ) -> List[tuple[Any, bool]]:  # noqa: UP006
         """Retrieval chunks for one message, joined with their document, ranked by position.
 
         Returns a list of (row, cited) pairs where each row carries document display

@@ -8,13 +8,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.application.queries.document_selection import (
-    DocumentScore,
-    DocumentSelection,
     DocumentSelector,
 )
 from app.application.queries.sub_question_pipeline import SubQuestionResult
 from app.domain.retrieval.decomposition import SubQuestion
-
 
 # ---------------------------------------------------------------------------
 # helpers

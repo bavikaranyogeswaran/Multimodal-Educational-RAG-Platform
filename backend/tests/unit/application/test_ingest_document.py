@@ -706,7 +706,6 @@ _FIGURE_BOX = BoundingBox(x0=50.0, y0=200.0, x1=400.0, y1=500.0)
 
 def _parser_with_a_figure() -> AsyncMock:
     """A parser returning one page holding a figure element and its visual record."""
-    from datetime import UTC, datetime
 
     element = DocumentElement(
         id=uuid.uuid4(),
@@ -923,7 +922,6 @@ def _make_vision_gateway(response_json: str = _FIGURE_JSON) -> AsyncMock:
 
 def _parser_with_cropped_figure() -> AsyncMock:
     """Parser returning a figure that already has a crop_key set."""
-    from datetime import UTC, datetime
 
     element = DocumentElement(
         id=uuid.uuid4(),

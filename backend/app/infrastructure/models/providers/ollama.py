@@ -221,7 +221,7 @@ class OllamaModelGateway:
         # schema and checklist messages that do not need the image.
         for i in reversed(range(len(messages))):
             if messages[i]["role"] == "user":
-                messages[i] = {**messages[i], "images": [image_b64]}
+                messages[i] = {**messages[i], "images": [image_b64]}  # type: ignore[dict-item]
                 break
 
         options: dict[str, object] = {}

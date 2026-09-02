@@ -19,7 +19,6 @@ import pytest
 
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.application.queries.retrieve_evidence import RetrievalResult
-from app.domain.enums import MessageRole, MessageStatus
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.scope import ScopeContext
 

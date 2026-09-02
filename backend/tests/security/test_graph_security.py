@@ -132,7 +132,7 @@ def _session_yielding_a_node() -> AsyncMock:
     The traversal returns early on an empty node set, which would leave the entity and
     relationship queries unexecuted and untested.
     """
-    def _result(rows: list) -> MagicMock:  # noqa: ANN001
+    def _result(rows: list) -> MagicMock:
         scalars = MagicMock()
         scalars.all.return_value = rows
         result = MagicMock()
@@ -146,7 +146,7 @@ def _session_yielding_a_node() -> AsyncMock:
 
     session = AsyncMock()
 
-    async def _execute(_stmt, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    async def _execute(_stmt, *args, **kwargs):
         return results.pop(0) if results else _result([])
 
     session.execute = AsyncMock(side_effect=_execute)

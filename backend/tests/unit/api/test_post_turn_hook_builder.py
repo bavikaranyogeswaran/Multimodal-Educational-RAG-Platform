@@ -10,15 +10,12 @@ Verifies the hook:
 from __future__ import annotations
 
 import uuid
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock, call, patch
-
-import pytest
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.dependencies.answer import _build_post_turn_hook
 from app.domain.scope import ScopeContext
-
 
 _SCOPE = ScopeContext(user_id=uuid.uuid4(), knowledge_base_id=uuid.uuid4())
 _ASSISTANT_ID = uuid.uuid4()

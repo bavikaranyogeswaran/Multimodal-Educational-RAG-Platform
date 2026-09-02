@@ -15,11 +15,11 @@ the round-trip count low.
 
 from __future__ import annotations
 
-import structlog
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from uuid import UUID
+
+import structlog
 
 from app.domain.ports.adapters import EmbeddingPort
 from app.domain.ports.repositories import MemoryRepository

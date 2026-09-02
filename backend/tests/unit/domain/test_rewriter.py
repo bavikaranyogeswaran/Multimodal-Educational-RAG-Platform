@@ -22,7 +22,6 @@ from app.domain.models.entities import ConversationTurn, ModelResponse
 from app.domain.retrieval.rewriter import QueryRewriter
 from app.domain.values import UntrustedText
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

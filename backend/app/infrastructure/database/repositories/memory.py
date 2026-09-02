@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import column, func, select, update
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.domain.enums import MemoryProvenance, MemoryStatus, MemoryType
 from app.domain.memory.entities import MemoryFact
@@ -114,7 +116,7 @@ class SqlMemoryRepository(ScopedRepository):
         # tsv is not declared on MemoryFactModel because it is PostgreSQL-specific and
         # managed by a database trigger, not application code. column() references it
         # by name without requiring an ORM mapping.
-        tsv_col = column("tsv")
+        tsv_col: ColumnElement[Any] = column("tsv")
         ts_query = func.plainto_tsquery(_TS_CONFIG, query_text)
         score_col = func.ts_rank_cd(tsv_col, ts_query)
         stmt = (

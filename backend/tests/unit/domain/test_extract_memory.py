@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
 from typing import Any
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from app.application.commands.extract_memory import (
     ExtractMemoryCommand,
@@ -27,7 +25,6 @@ from app.domain.enums import (
 from app.domain.errors import MemoryExtractionError
 from app.domain.memory.entities import MemoryFact
 from app.domain.scope import ScopeContext
-from app.domain.values import UntrustedText
 
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
 

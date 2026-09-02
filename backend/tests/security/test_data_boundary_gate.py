@@ -30,7 +30,6 @@ from app.domain.ports.model_gateway import ModelProfile, TokenStream
 from app.domain.values import UntrustedText
 from app.infrastructure.models.gateway import ModelGatewayFacade
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

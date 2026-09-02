@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base
@@ -168,7 +169,7 @@ class MemoryFactModel(Base):
     # Semantic identifier for the fact — invariant across corrections (e.g. "exam_date").
     key: Mapped[str] = mapped_column(String(255))
     # Structured payload as JSON (e.g. {"date": "2026-12-01"}).
-    value: Mapped[dict] = mapped_column(JSON)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON)
     # How certain the system is that this fact is correct; 0.0–1.0.
     confidence: Mapped[float] = mapped_column(Float)
     # The message that caused this fact to be written, if known.

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -17,10 +17,9 @@ from app.domain.enums import DataBoundary, ModelTask
 from app.domain.errors import ProviderError, UnsupportedCapabilityError
 from app.domain.models.entities import ModelRequest
 from app.infrastructure.models.providers.openai_compat import (
-    OpenAICompatTokenStream,
     OpenAICompatibleGateway,
+    OpenAICompatTokenStream,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

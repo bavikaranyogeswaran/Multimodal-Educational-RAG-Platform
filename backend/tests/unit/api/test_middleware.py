@@ -209,7 +209,7 @@ class TestCORSMiddleware:
 
     def test_the_application_itself_exposes_the_trace_header(self) -> None:
         """The check above proves the setting works; this proves the real app carries it."""
-        from app.main import app as real_app  # noqa: PLC0415
+        from app.main import app as real_app
 
         cors = next(m for m in real_app.user_middleware if m.cls is CORSMiddleware)
 

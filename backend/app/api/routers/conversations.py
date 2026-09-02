@@ -22,14 +22,14 @@ from app.api.schemas.conversation import (
     CreateConversationRequest,
     MessageResponse,
     RetrievalSourceResponse,
-    UpdateConversationRequest,
     StreamRequest,
+    UpdateConversationRequest,
 )
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
 from app.domain.conversations.entities import Conversation, Message
-from app.infrastructure.database.models.conversation import MessageCitationModel
 from app.domain.errors import GenerationRejectedError
 from app.domain.scope import ScopeContext
+from app.infrastructure.database.models.conversation import MessageCitationModel
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
 from app.infrastructure.database.session import get_session
 
@@ -112,10 +112,10 @@ def _citation_response(c: MessageCitationModel) -> CitationResponse:
         chunk_type=c.chunk_type,
         element_type=c.element_type,
         bounding_box=BoundingBoxResponse(
-            x0=c.bounding_box_x0,  # type: ignore[arg-type]
-            y0=c.bounding_box_y0,  # type: ignore[arg-type]
-            x1=c.bounding_box_x1,  # type: ignore[arg-type]
-            y1=c.bounding_box_y1,  # type: ignore[arg-type]
+            x0=c.bounding_box_x0,
+            y0=c.bounding_box_y0,
+            x1=c.bounding_box_x1,
+            y1=c.bounding_box_y1,
         ) if has_bbox else None,
         evidence_hash=c.evidence_hash,
     )

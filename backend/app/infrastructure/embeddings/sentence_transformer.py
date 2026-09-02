@@ -28,7 +28,7 @@ class SentenceTransformerEmbedder:
 
     def __init__(self, *, model_id: str, device: str, batch_size: int) -> None:
         try:
-            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+            from sentence_transformers import SentenceTransformer
         except ImportError as exc:
             raise ImportError(
                 "sentence-transformers is not installed. "

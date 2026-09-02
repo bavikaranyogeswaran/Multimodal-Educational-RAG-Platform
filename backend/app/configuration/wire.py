@@ -9,7 +9,7 @@ or an opaque AttributeError somewhere deeper in the call chain.
 
 from __future__ import annotations
 
-from typing import NoReturn, cast
+from typing import Any, NoReturn, cast
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -40,10 +40,10 @@ from app.domain.ports.repositories import (
     MemoryRepository,
 )
 from app.infrastructure.database.session import build_engine, build_session_factory
+from app.infrastructure.memory.extractor import LlmMemoryExtractor
 from app.infrastructure.models.gateway import ModelGatewayFacade
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.models.providers.openai_compat import OpenAICompatibleGateway
-from app.infrastructure.memory.extractor import LlmMemoryExtractor
 from app.infrastructure.multi_hop.coverage import LlmCoverageClassifier
 from app.infrastructure.multi_hop.decomposition import LlmQueryDecomposition
 from app.infrastructure.multi_hop.synthesis import LlmMultiHopSynthesis
@@ -57,7 +57,7 @@ def _build_model_gateway(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession] | None,
 ) -> ModelGatewayPort:
-    from app.domain.enums import DataBoundary  # noqa: PLC0415
+    from app.domain.enums import DataBoundary
 
     client = httpx.AsyncClient(base_url=settings.model.ollama_base_url)
     ollama = OllamaModelGateway(
@@ -65,7 +65,7 @@ def _build_model_gateway(
         model_id=settings.model.default_text_model,
         timeout_seconds=settings.model.request_timeout_seconds,
     )
-    providers: list[object] = [ollama]
+    providers: list[Any] = [ollama]
 
     oai_base_url = settings.model.openai_compatible_base_url
     if oai_base_url:
@@ -85,7 +85,7 @@ def _build_model_gateway(
 
 def _build_reranker(settings: Settings) -> RerankerPort:
     try:
-        from app.infrastructure.reranking.cross_encoder import (  # noqa: PLC0415
+        from app.infrastructure.reranking.cross_encoder import (
             CrossEncoderReranker,
         )
 
@@ -100,14 +100,14 @@ def _build_reranker(settings: Settings) -> RerankerPort:
 
 def _build_pdf_parser(settings: Settings) -> PdfParserPort:
     try:
-        from app.domain.documents.element_classifier import (  # noqa: PLC0415
+        from app.domain.documents.element_classifier import (
             ElementClassifier,
         )
-        from app.domain.documents.page_classifier import PageClassifier  # noqa: PLC0415
-        from app.domain.documents.reading_order import (  # noqa: PLC0415
+        from app.domain.documents.page_classifier import PageClassifier
+        from app.domain.documents.reading_order import (
             ReadingOrderResolver,
         )
-        from app.infrastructure.parsing.pdfplumber_parser import (  # noqa: PLC0415
+        from app.infrastructure.parsing.pdfplumber_parser import (
             PdfPlumberParser,
         )
 
@@ -150,7 +150,7 @@ def _build_token_counter(settings: Settings) -> TokenCounterPort:
 
 def _build_embedder(settings: Settings) -> EmbeddingPort:
     try:
-        from app.infrastructure.embeddings.sentence_transformer import (  # noqa: PLC0415
+        from app.infrastructure.embeddings.sentence_transformer import (
             SentenceTransformerEmbedder,
         )
 

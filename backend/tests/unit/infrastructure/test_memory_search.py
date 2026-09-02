@@ -17,7 +17,6 @@ import pytest
 
 from app.domain.enums import MemoryProvenance, MemoryStatus, MemoryType
 from app.domain.errors import ScopeViolationError
-from app.domain.memory.entities import MemoryFact
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.models.conversation import MemoryFactModel
 from app.infrastructure.database.repositories.memory import SqlMemoryRepository

@@ -11,8 +11,9 @@ number of sub-questions.
 
 from __future__ import annotations
 
-import structlog
 from dataclasses import dataclass
+
+import structlog
 
 from app.domain.ports.adapters import QueryDecompositionPort
 from app.domain.retrieval.decomposition import DecompositionPlan

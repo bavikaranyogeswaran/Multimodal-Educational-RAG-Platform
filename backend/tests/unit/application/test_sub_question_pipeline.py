@@ -5,20 +5,16 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Sequence
-from unittest.mock import AsyncMock, MagicMock, call
-
-import pytest
+from unittest.mock import AsyncMock
 
 from app.application.queries.retrieve_evidence import RetrievalResult
 from app.application.queries.sub_question_pipeline import (
     SubQuestionPipeline,
-    SubQuestionResult,
     _topological_levels,
 )
 from app.domain.retrieval.decomposition import DecompositionPlan, SubQuestion
 from app.domain.retrieval.entities import RetrievalFilters
 from app.domain.scope import ScopeContext
-
 
 # ---------------------------------------------------------------------------
 # helpers

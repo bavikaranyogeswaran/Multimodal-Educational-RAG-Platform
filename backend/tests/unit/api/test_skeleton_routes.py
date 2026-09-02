@@ -19,7 +19,6 @@ from app.api.dependencies.scope import get_kb_scope
 from app.api.routers.conversations import router as conversations_router
 from app.api.routers.documents import router as documents_router
 from app.api.routers.graph import router as graph_router
-from app.api.routers.memory import router as memory_router
 from app.api.routers.study_content import router as study_content_router
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import get_session

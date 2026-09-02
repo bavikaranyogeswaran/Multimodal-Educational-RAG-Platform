@@ -12,12 +12,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.domain.enums import DataBoundary, ModelTask
-from app.domain.errors import DataBoundaryViolationError, UnsupportedCapabilityError
+from app.domain.errors import DataBoundaryViolationError, ProviderError, UnsupportedCapabilityError
 from app.domain.models.entities import ModelRequest, ModelResponse
 from app.domain.ports.model_gateway import ModelProfile, TokenStream
 from app.domain.values import UntrustedText
 from app.infrastructure.models.gateway import ModelGatewayFacade
-
 
 # ---------------------------------------------------------------------------
 # Stub helpers
@@ -387,9 +386,6 @@ class TestPrivacyPreFlight:
 # ---------------------------------------------------------------------------
 
 
-from app.domain.errors import ProviderError
-
-
 def _retryable_error(provider: str = "test") -> ProviderError:
     return ProviderError(provider, "service unavailable", retryable=True)
 
@@ -495,7 +491,6 @@ class TestFallbackChain:
 # ---------------------------------------------------------------------------
 
 
-from unittest.mock import MagicMock, patch
 
 
 def _make_session_factory() -> tuple[MagicMock, MagicMock]:
