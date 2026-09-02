@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.auth import get_current_user
 from app.api.dependencies.scope import get_kb_scope
 from app.api.schemas.knowledge_base import (
+    BuildGraphResponse,
     CreateKnowledgeBaseRequest,
     KnowledgeBaseResponse,
     ReindexResponse,
@@ -181,4 +182,53 @@ async def reindex_knowledge_base(
         documents=len(documents),
         active_index_version=kb.active_index_version,
         target_index_version=settings.embedding.index_version,
+    )
+
+
+@router.post("/{kb_id}/build-graph", status_code=202)
+async def build_graph(
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> BuildGraphResponse:
+    """Queue a graph-extraction job for every completed document in this Knowledge Base.
+
+    Each job runs the LLM extractor over one document and merges the result into the
+    shared graph for the KB. Jobs run in the background at low priority; the existing
+    graph keeps answering questions while they work.
+    """
+    repo = SqlKnowledgeBaseRepository(scope, session)
+    kb = await repo.get(scope)
+    if kb is None:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    documents = [
+        doc
+        for doc in await SqlDocumentRepository(scope, session).list(scope)
+        if doc.status is DocumentStatus.COMPLETED
+    ]
+
+    now = datetime.now(UTC)
+    job_repo = SqlJobRepository(session)
+    for doc in documents:
+        job = ProcessingJob(
+            id=uuid4(),
+            job_type=JobType.BUILD_GRAPH,
+            priority=JobPriority.BACKGROUND,
+            status=JobStatus.PENDING,
+            attempt_count=0,
+            max_attempts=3,
+            payload={
+                "document_id": str(doc.id),
+                "knowledge_base_id": str(scope.knowledge_base_id),
+                "user_id": str(scope.user_id),
+            },
+            created_at=now,
+            updated_at=now,
+        )
+        await job_repo.save(job)
+
+    await session.commit()
+    return BuildGraphResponse(
+        knowledge_base_id=scope.knowledge_base_id,
+        jobs_queued=len(documents),
     )

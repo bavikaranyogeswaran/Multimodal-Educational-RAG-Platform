@@ -28,6 +28,7 @@ class UpdateKnowledgeBaseRequest(BaseModel):
     preferred_language: str | None = None
     explanation_level: ExplanationLevel | None = None
     exam_date: date | None = None
+    graph_enabled: bool | None = None
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -60,3 +61,10 @@ class ReindexResponse(BaseModel):
     #: landed by watching this number change.
     active_index_version: int
     target_index_version: int
+
+
+class BuildGraphResponse(BaseModel):
+    """How many graph-build jobs were queued."""
+
+    knowledge_base_id: UUID
+    jobs_queued: int

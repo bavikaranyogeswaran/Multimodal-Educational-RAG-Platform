@@ -81,7 +81,7 @@ class LlmGraphExtractor:
             task_instructions=_TASK_INSTRUCTIONS,
             query=text,
             output_schema=_OUTPUT_SCHEMA,
-            max_tokens=1024,
+            max_tokens=2048,
             temperature=0.0,
         )
         response = await self._gateway.generate(request)
@@ -142,10 +142,9 @@ def _parse_and_validate(
 
         type_str = raw_ent.get("type", "")
         if type_str not in _VALID_ENTITY_TYPES:
-            raise GraphExtractionError(
-                f"entity {name!r} has unrecognised type {type_str!r}; "
-                f"valid types: {sorted(_VALID_ENTITY_TYPES)}"
-            )
+            # Model returned an undeclared type (e.g. "Module"). The name is
+            # worth keeping; remap to Concept rather than dropping the chunk.
+            type_str = GraphNodeType.CONCEPT.value
 
         raw_desc = raw_ent.get("description")
         description: str | None = None
@@ -188,13 +187,12 @@ def _parse_and_validate(
         target_name = target_name.strip()
 
         if source_name not in name_to_entity:
-            raise GraphExtractionError(
-                f"relationship at index {i}: source {source_name!r} is not in the extracted entities"
-            )
+            # The model named a source it never declared as an entity. Drop this
+            # relationship rather than discarding all the entities from the chunk.
+            continue
         if target_name not in name_to_entity:
-            raise GraphExtractionError(
-                f"relationship at index {i}: target {target_name!r} is not in the extracted entities"
-            )
+            # Same: dangling target. Keep the entities, drop just this edge.
+            continue
         if source_name == target_name:
             raise GraphExtractionError(
                 f"relationship at index {i}: source and target are the same entity ({source_name!r})"
