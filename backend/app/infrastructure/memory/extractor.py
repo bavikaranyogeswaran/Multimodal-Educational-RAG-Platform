@@ -150,7 +150,7 @@ def _parse(
                 value=value,
                 confidence=confidence,
                 provenance=MemoryProvenance.ASSISTANT_INFERENCE,
-                status=MemoryStatus.UNCONFIRMED,
+                status=MemoryStatus.ACTIVE,
                 created_at=now,
                 updated_at=now,
                 valid_from=now,
