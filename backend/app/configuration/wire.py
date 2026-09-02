@@ -44,6 +44,7 @@ from app.infrastructure.memory.extractor import LlmMemoryExtractor
 from app.infrastructure.models.gateway import ModelGatewayFacade
 from app.infrastructure.models.providers.ollama import OllamaModelGateway
 from app.infrastructure.models.providers.openai_compat import OpenAICompatibleGateway
+from app.infrastructure.multi_hop.classifier import LlmQueryClassifier
 from app.infrastructure.multi_hop.coverage import LlmCoverageClassifier
 from app.infrastructure.multi_hop.decomposition import LlmQueryDecomposition
 from app.infrastructure.multi_hop.synthesis import LlmMultiHopSynthesis
@@ -252,7 +253,8 @@ def build_container(settings: Settings) -> Container:
         observability=cast(ObservabilityPort, _u("ObservabilityPort")),
         # Model gateway — shared with all model-backed adapters
         model_gateway=_gw,
-        # Multi-hop adapters
+        # Query routing and multi-hop adapters
+        query_classifier=LlmQueryClassifier(_gw),
         query_decomposition=LlmQueryDecomposition(_gw),
         coverage_classifier=LlmCoverageClassifier(_gw),
         multi_hop_synthesis=LlmMultiHopSynthesis(_gw),

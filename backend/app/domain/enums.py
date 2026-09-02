@@ -580,6 +580,7 @@ class ModelTask(StrEnum):
     MEMORY_EXTRACTION = "MEMORY_EXTRACTION"
     GRAPH_EXTRACTION = "GRAPH_EXTRACTION"
     FAITHFULNESS_CHECK = "FAITHFULNESS_CHECK"
+    QUERY_CLASSIFICATION = "QUERY_CLASSIFICATION"
 
     @property
     def requires_image_input(self) -> bool:

@@ -25,6 +25,7 @@ from app.domain.ports.adapters import (
     ObservabilityPort,
     OcrPort,
     PdfParserPort,
+    QueryClassificationPort,
     QueryDecompositionPort,
     RerankerPort,
     StoragePort,
@@ -98,6 +99,9 @@ class Container:
 
     # Model gateway
     model_gateway: ModelGatewayPort
+
+    # Query routing — classifies incoming queries before retrieval
+    query_classifier: QueryClassificationPort
 
     # Multi-hop adapters (Phase 13)
     query_decomposition: QueryDecompositionPort

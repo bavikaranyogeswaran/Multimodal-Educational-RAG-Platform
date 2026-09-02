@@ -21,9 +21,8 @@ import structlog
 from app.application.observability.timer import StageTimer
 from app.domain.enums import QueryClass
 from app.domain.models.entities import ConversationTurn
-from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, RerankerPort
+from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, QueryClassificationPort, RerankerPort
 from app.domain.ports.repositories import ChunkRepository
-from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.compression import EvidenceCompressor
 from app.domain.retrieval.entities import Evidence, RetrievalFilters, RetrievalPlan
 from app.domain.retrieval.expander import QueryExpander
@@ -59,7 +58,7 @@ class RetrievalOrchestrator:
     def __init__(
         self,
         *,
-        classifier: QueryClassifier,
+        classifier: QueryClassificationPort,
         rewriter: QueryRewriter,
         expander: QueryExpander,
         embedder: EmbeddingPort,
@@ -97,7 +96,7 @@ class RetrievalOrchestrator:
 
     async def execute(self, query: RetrieveEvidenceQuery) -> RetrievalResult:
         with StageTimer("classify") as _timer:
-            query_class = self._classifier.classify(query.query)
+            query_class = await self._classifier.classify(query.query)
         _log.info("retrieval_stage", stage="classify", elapsed_ms=_timer.elapsed_ms())
 
         with StageTimer("rewrite") as _timer:

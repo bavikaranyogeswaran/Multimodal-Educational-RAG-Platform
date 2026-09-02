@@ -24,6 +24,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.documents.entities import DocumentElement, DocumentPage, ParsedPage
+from app.domain.enums import QueryClass
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.memory.entities import MemoryFact
 from app.domain.retrieval.decomposition import SubQuestion
@@ -443,4 +444,25 @@ class QueryDecompositionPort(Protocol):
         decomposition. `depends_on` on each SubQuestion references other ids
         in the same list; the caller must sort them before execution.
         """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Query classification
+# ---------------------------------------------------------------------------
+
+
+class QueryClassificationPort(Protocol):
+    """Classifies a natural-language query into one of the thirteen QueryClass values.
+
+    The async signature accommodates both a stateless regex implementation (which
+    returns immediately) and an LLM-backed implementation (which awaits a model call).
+    Callers should not assume either implementation; the port is the only contract.
+
+    Raises nothing on unrecognised input — the contract is to return QueryClass.DIRECT
+    as a safe fallback rather than surfacing a classification error to the student.
+    """
+
+    async def classify(self, query: str) -> QueryClass:
+        """Return the QueryClass that best describes the intent of `query`."""
         ...

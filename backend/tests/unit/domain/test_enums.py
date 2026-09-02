@@ -27,8 +27,8 @@ class TestCompleteness:
     def test_thirteen_query_classes(self) -> None:
         assert len(QueryClass) == 13
 
-    def test_ten_model_tasks(self) -> None:
-        assert len(ModelTask) == 10
+    def test_eleven_model_tasks(self) -> None:
+        assert len(ModelTask) == 11
 
     def test_nine_relationship_types(self) -> None:
         assert len(RelationshipType) == 9

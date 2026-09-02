@@ -18,7 +18,6 @@ from app.api.dependencies.scope import get_kb_scope
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator
 from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
-from app.domain.retrieval.classifier import QueryClassifier
 from app.domain.retrieval.compression import EvidenceCompressor
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.expansion import ExpansionRules
@@ -54,7 +53,7 @@ def build_retrieval_orchestrator(
     system nobody uses, and would go on scoring it after this one changed.
     """
     return RetrievalOrchestrator(
-        classifier=QueryClassifier(),
+        classifier=container.query_classifier,
         rewriter=QueryRewriter(gateway=container.model_gateway),
         expander=QueryExpander(gateway=container.model_gateway),
         embedder=container.embedder,

@@ -185,3 +185,18 @@ class QueryClassifier:
             if pattern.search(query):
                 return query_class
         return QueryClass.DIRECT
+
+
+class AsyncQueryClassifier:
+    """Wraps the synchronous QueryClassifier to satisfy QueryClassificationPort.
+
+    Use this when you need the regex classifier in a context that expects the
+    async port — for example, wiring it as a fast fallback in local dev or tests
+    that do not want to spin up a model gateway.
+    """
+
+    def __init__(self, inner: QueryClassifier | None = None) -> None:
+        self._inner = inner if inner is not None else QueryClassifier()
+
+    async def classify(self, query: str) -> QueryClass:
+        return self._inner.classify(query)

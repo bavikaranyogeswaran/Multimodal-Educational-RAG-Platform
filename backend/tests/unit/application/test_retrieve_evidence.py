@@ -76,7 +76,7 @@ def _make_orchestrator(
     parents: list[object] | None = None,
 ) -> tuple[RetrievalOrchestrator, dict[str, MagicMock]]:
     classifier = MagicMock()
-    classifier.classify.return_value = classify_return
+    classifier.classify = AsyncMock(return_value=classify_return)
 
     rewriter = MagicMock()
     rewriter.rewrite = AsyncMock(return_value=(rewrite_text, False))

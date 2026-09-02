@@ -39,6 +39,7 @@ _ALL_TEXT_TASKS: frozenset[ModelTask] = frozenset(
         ModelTask.MEMORY_EXTRACTION,
         ModelTask.GRAPH_EXTRACTION,
         ModelTask.FAITHFULNESS_CHECK,
+        ModelTask.QUERY_CLASSIFICATION,
     }
 )
 
