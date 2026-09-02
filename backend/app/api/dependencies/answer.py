@@ -123,6 +123,7 @@ async def get_answer_use_case(
         kb_repo=SqlKnowledgeBaseRepository(scope, session),
         graph_repo=SqlGraphRepository(scope, session),
         memory_repo=SqlMemoryRepository(scope, session),
+        embedder=container.embedder,
         answer_max_words=settings.generation.answer_max_words,
         answer_max_tokens=settings.generation.answer_max_tokens,
         post_turn_hook=post_turn_hook,

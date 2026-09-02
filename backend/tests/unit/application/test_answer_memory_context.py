@@ -94,9 +94,13 @@ def _context_builder() -> ContextBuilder:
     return ContextBuilder(lambda t: len(t.split()), token_budget=100_000)
 
 
-def _mock_memory_repo(facts: list[MemoryFact]) -> AsyncMock:
+def _mock_memory_repo(
+    facts: list[MemoryFact],
+    dense_results: list[tuple[MemoryFact, float]] | None = None,
+) -> AsyncMock:
     repo = AsyncMock()
     repo.list_active = AsyncMock(return_value=facts)
+    repo.dense_search = AsyncMock(return_value=dense_results if dense_results is not None else [])
     return repo
 
 
@@ -104,6 +108,7 @@ def _make_use_case(
     *,
     memory_repo: AsyncMock | None = None,
     gateway: MagicMock | None = None,
+    embedder: AsyncMock | None = None,
 ) -> tuple[AnswerUseCase, MagicMock]:
     captured_gateway = gateway or _mock_gateway()
     conv_repo = _mock_conv_repo()
@@ -116,6 +121,7 @@ def _make_use_case(
         entailment=AsyncMock(),
         faithfulness=AsyncMock(),
         memory_repo=memory_repo,
+        embedder=embedder,
     )
     return uc, captured_gateway
 
@@ -255,3 +261,99 @@ class TestContentFormat:
         await uc.execute(cmd)
         request = gw.generate_stream.call_args[0][0]
         assert request.pinned_memory[0] == expected
+
+
+# ---------------------------------------------------------------------------
+# Semantic search path (embedder wired)
+# ---------------------------------------------------------------------------
+
+
+def _mock_embedder(embedding: list[float] | None = None) -> AsyncMock:
+    emb = AsyncMock()
+    emb.embed_query = AsyncMock(return_value=embedding or [0.1, 0.2, 0.3])
+    return emb
+
+
+class TestSemanticSearch:
+    async def test_embed_query_called_with_command_query(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        embedder = _mock_embedder()
+        repo = _mock_memory_repo([fact], dense_results=[(fact, 0.1)])
+        uc, _ = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="what is heat transfer?")
+        await uc.execute(cmd)
+        embedder.embed_query.assert_awaited_once_with("what is heat transfer?")
+
+    async def test_dense_search_called_with_embedding(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        embedding = [0.5, 0.6, 0.7]
+        embedder = _mock_embedder(embedding)
+        repo = _mock_memory_repo([fact], dense_results=[(fact, 0.1)])
+        uc, _ = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        repo.dense_search.assert_awaited_once()
+        call_args = repo.dense_search.call_args
+        assert call_args[0][1] == embedding
+
+    async def test_dense_results_go_to_relevant_memory(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        embedder = _mock_embedder()
+        repo = _mock_memory_repo([fact], dense_results=[(fact, 0.1)])
+        uc, gw = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        assert len(request.relevant_memory) == 1
+        assert "weak_topic" in request.relevant_memory[0]
+
+    async def test_pinned_facts_always_present_with_embedder(self) -> None:
+        pinned_fact = _make_fact(
+            key="exam_date",
+            value={"date": "2026-12-01"},
+            provenance=MemoryProvenance.USER_STATEMENT,
+        )
+        inferred_fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        embedder = _mock_embedder()
+        repo = _mock_memory_repo(
+            [pinned_fact, inferred_fact],
+            dense_results=[(inferred_fact, 0.1)],
+        )
+        uc, gw = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        assert len(request.pinned_memory) == 1
+        assert len(request.relevant_memory) == 1
+
+    async def test_fallback_to_list_active_when_dense_returns_empty(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        embedder = _mock_embedder()
+        # dense_search returns empty (no embeddings stored yet)
+        repo = _mock_memory_repo([fact], dense_results=[])
+        uc, gw = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        # Fallback: the inferred fact still appears via list_active
+        assert len(request.relevant_memory) == 1

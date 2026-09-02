@@ -56,6 +56,7 @@ from app.domain.models.validation import (
     check_table_references,
     decide,
 )
+from app.domain.ports.adapters import EmbeddingPort
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
 from app.domain.ports.model_gateway import ModelGatewayPort
@@ -236,6 +237,7 @@ class AnswerUseCase:
         kb_repo: KnowledgeBaseRepository | None = None,
         graph_repo: GraphRepository | None = None,
         memory_repo: MemoryRepository | None = None,
+        embedder: EmbeddingPort | None = None,
         multi_hop: MultiHopAnswerUseCase | None = None,
         post_turn_hook: Callable[[ScopeContext, uuid.UUID], Awaitable[None]] | None = None,
         answer_max_words: int = 400,
@@ -250,6 +252,7 @@ class AnswerUseCase:
         self._kb_repo = kb_repo
         self._graph_repo = graph_repo
         self._memory_repo = memory_repo
+        self._embedder = embedder
         self._multi_hop = multi_hop
         self._post_turn_hook = post_turn_hook
         self._answer_max_words = answer_max_words
@@ -342,7 +345,7 @@ class AnswerUseCase:
             )
 
         pinned_memory, relevant_memory = await _load_memory_context(
-            command.scope, self._memory_repo
+            command.scope, command.query, self._memory_repo, self._embedder
         )
 
         request = self._context_builder.build(
@@ -734,15 +737,26 @@ async def _check_entailment(
 # ---------------------------------------------------------------------------
 
 
+_PINNED_PROVENANCES = frozenset({MemoryProvenance.USER_STATEMENT, MemoryProvenance.USER_CORRECTION})
+
+#: Maximum inferred (non-pinned) facts included in the prompt.
+_MAX_RELEVANT_MEMORY = 10
+
+
 async def _load_memory_context(
     scope: ScopeContext,
+    query: str,
     memory_repo: MemoryRepository | None,
+    embedder: EmbeddingPort | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return (pinned_memory, relevant_memory) tuples from the student's active facts.
 
-    Facts from explicit user statements or corrections go into pinned_memory — they are
-    kept until only the essentials remain. Model-inferred facts go into relevant_memory,
-    which is shed before pinned_memory when the prompt budget is tight.
+    Pinned facts (explicit user statements and corrections) are always included in full —
+    they are high-importance and a small set. Inferred facts are filtered by semantic
+    relevance to the current query when an embedder is wired in, so only the most useful
+    ones occupy the prompt budget. When no embedder is available (or the embedder exists
+    but no facts have been embedded yet) the function falls back to including all active
+    inferred facts, capped at _MAX_RELEVANT_MEMORY.
 
     Returns empty tuples when no memory repository is wired in or no active facts exist.
     """
@@ -753,15 +767,19 @@ async def _load_memory_context(
     if not active_facts:
         return (), ()
 
-    pinned: list[str] = []
-    relevant: list[str] = []
-    for fact in active_facts:
-        if fact.provenance in {MemoryProvenance.USER_STATEMENT, MemoryProvenance.USER_CORRECTION}:
-            pinned.append(fact.content)
-        else:
-            relevant.append(fact.content)
+    pinned_facts = [f for f in active_facts if f.provenance in _PINNED_PROVENANCES]
 
-    return tuple(pinned), tuple(relevant)
+    if embedder is not None:
+        query_embedding = await embedder.embed_query(query)
+        dense_hits = await memory_repo.dense_search(scope, query_embedding, limit=_MAX_RELEVANT_MEMORY)
+        relevant_facts = [f for f, _ in dense_hits if f.provenance not in _PINNED_PROVENANCES]
+        if not relevant_facts:
+            # No embeddings stored yet — fall back so newly written facts still appear.
+            relevant_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES][:_MAX_RELEVANT_MEMORY]
+    else:
+        relevant_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES][:_MAX_RELEVANT_MEMORY]
+
+    return tuple(f.content for f in pinned_facts), tuple(f.content for f in relevant_facts)
 
 
 async def _load_graph_context(
