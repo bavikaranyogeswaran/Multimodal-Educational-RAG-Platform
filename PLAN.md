@@ -28,13 +28,13 @@ system design specification.
 |---|---|
 | Phases complete | **11 of 21** â€" Phase 0, 1, 2, 3, 4, 6, 8, 11, 12, 13, 19 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 14 (~75%, write path now live; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 14 (~85%, write path live, security gate closed; compaction/summaries remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 15, 20 |
 | Tests | **3,358 backend** â€" 3,238 unit Â· 120 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 11 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test, which is the only failure in a full run |
 | Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
-| Next step | **Phase 14 completion** â€" memory security tests (open release gate), then compaction/summaries |
-| Last updated | 3 September 2026 (Phase 14 write path confirmed live â€" `LlmMemoryExtractor` was already wired; 21 unit tests added) |
+| Next step | **Phase 14 completion** â€" memory compaction (`COMPACT_MEMORY` / `REBUILD_SUMMARY` jobs) and hierarchical summaries |
+| Last updated | 3 September 2026 (Phase 14 security gate closed â€" `test_memory_security.py` added; five of six release gates now enforced) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2379,8 +2379,10 @@ before vector search, and the security tests.
 - [x] Post-turn extraction + embedding â€" `MemoryExtractionPort`, `ExtractMemoryUseCase`,
       `EmbedMemoryUseCase` built; `LlmMemoryExtractor` wired into the container; `post_turn_hook`
       fires on every COMPLETED turn and writes facts automatically
-- [ ] Security tests: malicious memory-writing instruction in a document; deleted memory never
-      retrieved (open release gate)
+- [x] Security tests: deleted memory never retrieved (release gate closed â€"
+      `test_memory_security.py`, 21 tests, scope binding + status filter + foreign-scope
+      rejection for every repository method). Malicious memory-writing instruction in a
+      document is a Phase 17 evaluation item, not a repository invariant.
 - [~] UC-12, UC-13, UC-14 â€" UC-13 and UC-14 covered by the PATCH/DELETE API. UC-12 (resume a
       long-dormant conversation with memory context) now runs end to end: facts are written
       automatically by the post-turn hook and read back on the next turn via `_load_memory_context`.
@@ -2483,9 +2485,9 @@ to replace the derived latency budgets with measured p95 is unmet.
 - [~] **Six release gates as failing tests:** cross-user leakage 0 âœ… Â· cross-KB leakage 0 âœ… Â·
       fabricated citation acceptance 0 âœ… (`test_generation_security.py`, four tests, resting on
       the evidence record) Â· graph edge without provenance 0 âœ… (`test_graph_security.py`, twelve
-      `gate`-marked tests, landed with Phase 12) Â· deleted memory retrieval 0 (Phase 14, no
-      `test_memory_security.py` exists yet) Â· unauthorized cache reuse 0 (Phase 16). **Four of six
-      are enforced**; the two that are not each name work still outstanding
+      `gate`-marked tests, landed with Phase 12) Â· deleted memory retrieval 0 âœ…
+      (`test_memory_security.py`, 21 `gate`-marked tests, landed Phase 14) Â· unauthorized cache
+      reuse 0 (Phase 16). **Five of six are enforced**; cache reuse awaits Phase 16.
 - [ ] Threshold calibration; latency NFRs recalibrated against measured p95 (D-23)
 - [ ] `evaluation_results` persisted; results written into `REQUIREMENTS.md`
 
