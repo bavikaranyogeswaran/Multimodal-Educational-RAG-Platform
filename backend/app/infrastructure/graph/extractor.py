@@ -142,9 +142,9 @@ def _parse_and_validate(
 
         type_str = raw_ent.get("type", "")
         if type_str not in _VALID_ENTITY_TYPES:
-            # Model returned an undeclared type (e.g. "Module"). The name is
-            # worth keeping; remap to Concept rather than dropping the chunk.
-            type_str = GraphNodeType.CONCEPT.value
+            raise GraphExtractionError(
+                f"entity at index {i} has unrecognised type {type_str!r}"
+            )
 
         raw_desc = raw_ent.get("description")
         description: str | None = None
@@ -187,19 +187,21 @@ def _parse_and_validate(
         target_name = target_name.strip()
 
         if source_name not in name_to_entity:
-            # The model named a source it never declared as an entity. Drop this
-            # relationship rather than discarding all the entities from the chunk.
-            continue
+            raise GraphExtractionError(
+                f"relationship at index {i} source {source_name!r} is not in the extracted entities"
+            )
         if target_name not in name_to_entity:
-            # Same: dangling target. Keep the entities, drop just this edge.
-            continue
+            raise GraphExtractionError(
+                f"relationship at index {i} target {target_name!r} is not in the extracted entities"
+            )
         if source_name == target_name:
-            # Self-loop — no information content, drop silently.
-            continue
+            raise GraphExtractionError(
+                f"relationship at index {i} source and target refer to the same entity {source_name!r}"
+            )
         if rel_type_str not in _VALID_REL_TYPES:
-            # Model invented a relationship type (e.g. "PUBLISHED"). Drop the
-            # edge rather than failing the whole chunk.
-            continue
+            raise GraphExtractionError(
+                f"relationship at index {i} has unrecognised type {rel_type_str!r}"
+            )
         if not isinstance(evidence_str, str) or not evidence_str.strip():
             raise GraphExtractionError(
                 f"relationship at index {i} has blank evidence (provenance invariant violated)"
