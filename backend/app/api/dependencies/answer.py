@@ -25,10 +25,18 @@ from app.api.dependencies.container import get_container
 from app.api.dependencies.retrieval import get_retrieval_orchestrator
 from app.api.dependencies.scope import get_kb_scope
 from app.application.commands.answer import AnswerUseCase
+from app.application.commands.decompose import DecomposeQueryUseCase
 from app.application.commands.embed_memory import EmbedMemoryCommand, EmbedMemoryUseCase
 from app.application.commands.extract_memory import ExtractMemoryCommand, ExtractMemoryUseCase
 from app.application.commands.generate_quiz import GenerateQuizUseCase
+from app.application.commands.multi_hop_answer import MultiHopAnswerUseCase
+from app.application.queries.coverage_classifier import CoverageClassifier
+from app.application.queries.document_selection import DocumentSelector
+from app.application.queries.evidence_selector import EvidenceSelector
+from app.application.queries.hierarchical_synthesis import HierarchicalSynthesizer
+from app.application.queries.iterative_retrieval import IterativeRetrievalLoop
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator
+from app.application.queries.sub_question_pipeline import SubQuestionPipeline
 from app.configuration.container import Container
 from app.configuration.settings import get_settings
 from app.domain.models.context_builder import ContextBuilder
@@ -108,6 +116,21 @@ async def get_answer_use_case(
             container=container,
         )
 
+    multi_hop = MultiHopAnswerUseCase(
+        decompose=DecomposeQueryUseCase(container.query_decomposition),
+        loop=IterativeRetrievalLoop(
+            pipeline=SubQuestionPipeline(retrieve),
+            classifier=CoverageClassifier(container.coverage_classifier),
+            selector=DocumentSelector(
+                max_documents=settings.multihop.max_documents_per_round
+            ),
+        ),
+        selector=EvidenceSelector(
+            max_per_sub_question=settings.evidence.max_items
+        ),
+        synthesizer=HierarchicalSynthesizer(container.multi_hop_synthesis),
+    )
+
     return AnswerUseCase(
         retrieve=retrieve,
         conversation_uow=build_conversation_unit_of_work(container.session_factory, scope),
@@ -124,6 +147,7 @@ async def get_answer_use_case(
         kb_repo=SqlKnowledgeBaseRepository(scope, session),
         graph_repo=SqlGraphRepository(scope, session),
         memory_repo=SqlMemoryRepository(scope, session),
+        multi_hop=multi_hop,
         embedder=container.embedder,
         quiz_generator=GenerateQuizUseCase(
             model_gateway=container.model_gateway,

@@ -61,7 +61,7 @@ async def _build() -> object:
 class TestCollaboratorsAreWired:
     @pytest.mark.parametrize(
         "attribute",
-        ["_kb_repo", "_graph_repo", "_memory_repo"],
+        ["_kb_repo", "_graph_repo", "_memory_repo", "_multi_hop"],
     )
     async def test_collaborator_is_not_none(self, attribute: str) -> None:
         use_case = await _build()
@@ -87,20 +87,3 @@ class TestCollaboratorsAreWired:
         assert len(sessions) == 1
 
 
-# ---------------------------------------------------------------------------
-# Multi-hop is knowingly absent rather than forgotten
-# ---------------------------------------------------------------------------
-
-
-class TestMultiHopStillUnwired:
-    async def test_multi_hop_is_none_until_its_adapters_exist(self) -> None:
-        """Guards the boundary between "not built" and "built but dropped".
-
-        MultiHopAnswerUseCase needs three model-backed adapters that do not exist
-        yet — query decomposition, coverage classification and hierarchical
-        synthesis. Until they do, the dependency cannot supply it, and this test
-        records that as a deliberate state. When those adapters land, this test
-        should fail and be replaced by the positive assertion above.
-        """
-        use_case = await _build()
-        assert use_case._multi_hop is None

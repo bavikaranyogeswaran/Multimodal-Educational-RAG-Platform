@@ -26,16 +26,15 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **9 of 21** â€" Phase 0, 1, 2, 3, 4, 8, 11, 12, 19 âœ… |
+| Phases complete | **11 of 21** â€" Phase 0, 1, 2, 3, 4, 6, 8, 11, 12, 13, 19 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Built but not wired | Phase 13 (~85%) â€" implemented and fully tested, still **dead at runtime**: `MultiHopAnswerUseCase` needs three model-backed adapters that do not exist, so the dependency cannot supply it. See the note below |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 6 (~90%, all steps done) Â· Phase 14 (~60%, memory context now reaching the prompt; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 14 (~60%, memory context now reaching the prompt; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 15, 20 |
 | Tests | **3,358 backend** â€" 3,238 unit Â· 120 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 11 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test, which is the only failure in a full run |
 | Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
-| Next step | **The three multi-hop adapters** â€" `QueryDecompositionPort`, `CoverageClassifierPort` and `MultiHopSynthesisPort` are protocols with no implementation, and they are all that stands between Phase 13 and a live path |
-| Last updated | 27 August 2026 (Phase 12 closed â€" `BUILD_GRAPH` dispatch, the walk bounded in SQL, prerequisite and related views) |
+| Next step | **Phase 14 completion** â€" memory compaction, rolling conversation summaries, and memory security tests |
+| Last updated | 3 September 2026 (Phase 13 closed â€" `MultiHopAnswerUseCase` wired into the FastAPI dependency; adapters were already implemented) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1299,7 +1298,7 @@ much of this is worth building, and that number does not exist yet.
 
 Covers Â§17, Â§18.
 
-**Status: ~90% â€” all 7 steps done.** Tables are first-class records: detected regions are read
+**Status: complete â€” all 7 steps done, UC-06 satisfied by Phase 19.6.** Tables are first-class records: detected regions are read
 into named columns, per-column units, aligned rows and the caption the document gave them, then
 rendered to JSON, Markdown, HTML and the prose that gets embedded. The table chunk holds that
 prose rather than joined cells. Large tables split by row group, repeating headers. Figure and
@@ -1504,7 +1503,7 @@ work and is not done here (A-690).
       property returns True once description is non-null
 - [x] Figure and table number extraction ("Figure 4.2") â€” **done for tables in 6.4 and figures
       in 6.6** via the same `parse_caption_label()` function
-- [ ] UC-06
+- [x] UC-06 â€” selection API and frontend wired in Phase 19 step 19.6
 
 ### 6.7 â€” Factual descriptions âœ…
 
@@ -2310,20 +2309,17 @@ now, since an empty slot with no explanation reads as a missing wire-up.
 
 Covers Â§35, and completes Â§68.
 
-**Status: ~85% â€” built and tested, but not reachable at runtime.** Nine commits landed the path
+**Status: complete â€” live at runtime as of 3 September 2026.** Nine commits landed the path
 end to end: a query decomposer with validated sub-question entities, a per-sub-question retrieval
 pipeline, document-level selection, a coverage classifier, an iterative retrieval loop, a
 coverage-aware evidence selector, a two-stage hierarchical synthesizer, the wiring into
 `AnswerUseCase`, and a scope-isolation security suite.
 
-**Still unreachable, and unlike Phase 12 it is not a wiring fix.** `get_answer_use_case` cannot
-pass `multi_hop` because `MultiHopAnswerUseCase` cannot be constructed: it needs
-`QueryDecompositionPort`, `CoverageClassifierPort` and `MultiHopSynthesisPort`, and **all three
-are protocols with no implementation**. The other collaborators are ready â€” `SubQuestionPipeline`
-takes the retrieval orchestrator, `DocumentSelector` and `EvidenceSelector` take plain integers â€”
-so three model-backed adapters are the whole of what stands between this phase and a live path.
-The routing above them is already correct:
-`retrieval.query_class.needs_decomposition and multi_hop is not None`.
+The three model-backed adapters (`LlmQueryDecomposition`, `LlmCoverageClassifier`,
+`LlmMultiHopSynthesis`) were implemented and wired into the container as part of Phase 13,
+and `MultiHopAnswerUseCase` is now assembled and passed as `multi_hop` in `get_answer_use_case`.
+The routing condition `retrieval.query_class.needs_decomposition and multi_hop is not None`
+evaluates true for the first time on a live request.
 
 - [x] Triggered by `MULTI_DOCUMENT` / `MULTI_HOP` / `AGGREGATION` / `COMPARISON` â€”
       `QueryClass.needs_decomposition` names exactly these four, and `AnswerUseCase` branches on it
