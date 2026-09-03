@@ -339,6 +339,11 @@ class QueryClass(StrEnum):
         }
 
     @property
+    def needs_quiz_generation(self) -> bool:
+        """Classes routed to the quiz generation path instead of the standard answer path."""
+        return self is QueryClass.QUIZ_GENERATION
+
+    @property
     def forbids_expansion(self) -> bool:
         """Classes where paraphrasing the query would actively harm retrieval.
 

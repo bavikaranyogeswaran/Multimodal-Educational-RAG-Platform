@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 
 import structlog
 
+from app.application.commands.generate_quiz import GenerateQuizCommand, GenerateQuizUseCase
 from app.application.commands.multi_hop_answer import MultiHopAnswerCommand, MultiHopAnswerUseCase
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
@@ -239,6 +240,7 @@ class AnswerUseCase:
         memory_repo: MemoryRepository | None = None,
         embedder: EmbeddingPort | None = None,
         multi_hop: MultiHopAnswerUseCase | None = None,
+        quiz_generator: GenerateQuizUseCase | None = None,
         post_turn_hook: Callable[[ScopeContext, uuid.UUID], Awaitable[None]] | None = None,
         answer_max_words: int = 400,
         answer_max_tokens: int = 600,
@@ -254,6 +256,7 @@ class AnswerUseCase:
         self._memory_repo = memory_repo
         self._embedder = embedder
         self._multi_hop = multi_hop
+        self._quiz_generator = quiz_generator
         self._post_turn_hook = post_turn_hook
         self._answer_max_words = answer_max_words
         self._answer_max_tokens = answer_max_tokens
@@ -378,8 +381,10 @@ class AnswerUseCase:
         faithfulness = self._faithfulness
         query = command.query
         multi_hop = self._multi_hop
+        quiz_generator = self._quiz_generator
         post_turn_hook = self._post_turn_hook
         is_multi_hop = retrieval.query_class.needs_decomposition and multi_hop is not None
+        is_quiz = retrieval.query_class.needs_quiz_generation and quiz_generator is not None
 
         async def _tracked() -> AsyncGenerator[str, None]:
             failed = False
@@ -389,7 +394,18 @@ class AnswerUseCase:
             citations: tuple[Citation, ...] = ()
             usage: GenerationUsage | None = None
             try:
-                if is_multi_hop:
+                if is_quiz:
+                    quiz = await quiz_generator.execute(  # type: ignore[union-attr]
+                        GenerateQuizCommand(
+                            scope=scope,
+                            query=query,
+                            evidence=evidence,
+                            history=history,
+                        )
+                    )
+                    answer_text = quiz.text
+                    yield quiz.text
+                elif is_multi_hop:
                     hop = await multi_hop.execute(  # type: ignore[union-attr]
                         MultiHopAnswerCommand(
                             scope=scope,
