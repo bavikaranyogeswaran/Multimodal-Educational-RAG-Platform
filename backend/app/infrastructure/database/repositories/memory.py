@@ -43,6 +43,19 @@ class SqlMemoryRepository(ScopedRepository):
         for fact in facts:
             await self._session.merge(_to_model(fact))
 
+    async def get_active_by_key(self, scope: ScopeContext, key: str) -> MemoryFact | None:
+        self._require_scope(scope)
+        stmt = (
+            select(MemoryFactModel)
+            .where(
+                MemoryFactModel.key == key,
+                self._scope_filter(MemoryFactModel),
+                MemoryFactModel.status == MemoryStatus.ACTIVE.value,
+            )
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _to_entity(row) if row else None
+
     async def list_active(self, scope: ScopeContext) -> Sequence[MemoryFact]:
         self._require_scope(scope)
         stmt = (

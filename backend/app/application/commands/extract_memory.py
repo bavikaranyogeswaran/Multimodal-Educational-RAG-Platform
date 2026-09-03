@@ -94,9 +94,6 @@ class ExtractMemoryUseCase:
             )
             return ExtractMemoryResult(created=0, superseded=0)
 
-        existing = await self._memory_repo.list_active(scope)
-        existing_by_key = {f.key: f for f in existing}
-
         try:
             candidates = await self._extractor.extract(
                 scope,
@@ -121,7 +118,7 @@ class ExtractMemoryUseCase:
         embeddable_ids: list[UUID] = []
 
         for candidate in candidates:
-            existing_fact = existing_by_key.get(candidate.key)
+            existing_fact = await self._memory_repo.get_active_by_key(scope, candidate.key)
             if existing_fact is not None:
                 retired, successor = existing_fact.create_successor(
                     successor_id=candidate.id,

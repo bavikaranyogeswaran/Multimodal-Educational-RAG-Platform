@@ -759,6 +759,16 @@ _PINNED_PROVENANCES = frozenset({MemoryProvenance.USER_STATEMENT, MemoryProvenan
 _MAX_RELEVANT_MEMORY = 10
 
 
+def _key_matches_query(key: str, query_lower: str) -> bool:
+    """Return True when a fact's snake_case key appears verbatim in the query.
+
+    Keys like 'exam_date' are normalized to 'exam date' before matching, so a
+    query that mentions 'exam date' surfaces that fact even though it was stored
+    under a programmatic identifier.
+    """
+    return key.replace("_", " ") in query_lower
+
+
 async def _load_memory_context(
     scope: ScopeContext,
     query: str,
@@ -767,12 +777,16 @@ async def _load_memory_context(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return (pinned_memory, relevant_memory) tuples from the student's active facts.
 
-    Pinned facts (explicit user statements and corrections) are always included in full —
-    they are high-importance and a small set. Inferred facts are filtered by semantic
-    relevance to the current query when an embedder is wired in, so only the most useful
-    ones occupy the prompt budget. When no embedder is available (or the embedder exists
-    but no facts have been embedded yet) the function falls back to including all active
-    inferred facts, capped at _MAX_RELEVANT_MEMORY.
+    Pinned facts (explicit user statements and corrections) are always included in full.
+    For inferred facts, retrieval runs in two passes:
+
+      1. Exact-key lookup — inferred facts whose key (underscores replaced with spaces)
+         appears literally in the query are surfaced first, before vector search.
+      2. Dense search — remaining inferred facts ranked by cosine similarity to the query
+         embedding. Falls back to recency order when no embedder is wired in or no
+         embeddings have been stored yet.
+
+    The two passes are deduplicated and capped at _MAX_RELEVANT_MEMORY combined.
 
     Returns empty tuples when no memory repository is wired in or no active facts exist.
     """
@@ -783,17 +797,26 @@ async def _load_memory_context(
     if not active_facts:
         return (), ()
 
+    query_lower = query.lower()
     pinned_facts = [f for f in active_facts if f.provenance in _PINNED_PROVENANCES]
+    inferred_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES]
+
+    # Pass 1: exact-key matches surface first regardless of embedding availability.
+    key_hit_ids: set[object] = set()
+    key_hits = [f for f in inferred_facts if _key_matches_query(f.key, query_lower)]
+    key_hit_ids = {f.id for f in key_hits}
 
     if embedder is not None:
         query_embedding = await embedder.embed_query(query)
         dense_hits = await memory_repo.dense_search(scope, query_embedding, limit=_MAX_RELEVANT_MEMORY)
-        relevant_facts = [f for f, _ in dense_hits if f.provenance not in _PINNED_PROVENANCES]
+        dense_facts = [f for f, _ in dense_hits if f.provenance not in _PINNED_PROVENANCES and f.id not in key_hit_ids]
+        relevant_facts = (key_hits + dense_facts)[:_MAX_RELEVANT_MEMORY]
         if not relevant_facts:
             # No embeddings stored yet — fall back so newly written facts still appear.
-            relevant_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES][:_MAX_RELEVANT_MEMORY]
+            relevant_facts = inferred_facts[:_MAX_RELEVANT_MEMORY]
     else:
-        relevant_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES][:_MAX_RELEVANT_MEMORY]
+        non_key_inferred = [f for f in inferred_facts if f.id not in key_hit_ids]
+        relevant_facts = (key_hits + non_key_inferred)[:_MAX_RELEVANT_MEMORY]
 
     return tuple(f.content for f in pinned_facts), tuple(f.content for f in relevant_facts)
 

@@ -297,6 +297,12 @@ class MemoryRepository(Protocol):
         self, scope: ScopeContext, facts: Sequence[MemoryFact]
     ) -> None: ...
 
+    async def get_active_by_key(
+        self, scope: ScopeContext, key: str
+    ) -> MemoryFact | None:
+        """Return the single ACTIVE fact with the given key, or None if absent."""
+        ...
+
     async def list_active(self, scope: ScopeContext) -> Sequence[MemoryFact]:
         """All facts with status ACTIVE, for inclusion in model context."""
         ...

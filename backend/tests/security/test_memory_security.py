@@ -77,6 +77,43 @@ async def test_get_binds_knowledge_base_id() -> None:
 
 @pytest.mark.security
 @pytest.mark.gate
+async def test_get_active_by_key_binds_user_id() -> None:
+    scope = _scope()
+    ses = _session()
+    await SqlMemoryRepository(scope, ses).get_active_by_key(scope, "exam_date")
+    assert scope.user_id in _params(ses).values()
+
+
+@pytest.mark.security
+@pytest.mark.gate
+async def test_get_active_by_key_binds_knowledge_base_id() -> None:
+    scope = _scope()
+    ses = _session()
+    await SqlMemoryRepository(scope, ses).get_active_by_key(scope, "exam_date")
+    assert scope.knowledge_base_id in _params(ses).values()
+
+
+@pytest.mark.security
+@pytest.mark.gate
+async def test_get_active_by_key_binds_active_status() -> None:
+    scope = _scope()
+    ses = _session()
+    await SqlMemoryRepository(scope, ses).get_active_by_key(scope, "exam_date")
+    assert MemoryStatus.ACTIVE.value in _params(ses).values()
+
+
+@pytest.mark.security
+@pytest.mark.gate
+async def test_get_active_by_key_rejects_foreign_scope() -> None:
+    bound, foreign = _scope(), _scope()
+    ses = _session()
+    with pytest.raises(ScopeViolationError):
+        await SqlMemoryRepository(bound, ses).get_active_by_key(foreign, "exam_date")
+    ses.execute.assert_not_called()
+
+
+@pytest.mark.security
+@pytest.mark.gate
 async def test_list_active_binds_user_id() -> None:
     scope = _scope()
     ses = _session()
