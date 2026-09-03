@@ -28,13 +28,13 @@ system design specification.
 |---|---|
 | Phases complete | **11 of 21** â€" Phase 0, 1, 2, 3, 4, 6, 8, 11, 12, 13, 19 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 14 (~60%, memory context now reaching the prompt; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
+| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 14 (~75%, write path now live; compaction/summaries/security remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 15, 20 |
 | Tests | **3,358 backend** â€" 3,238 unit Â· 120 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 11 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test, which is the only failure in a full run |
 | Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
-| Next step | **Phase 14 completion** â€" memory compaction, rolling conversation summaries, and memory security tests |
-| Last updated | 3 September 2026 (Phase 13 closed â€" `MultiHopAnswerUseCase` wired into the FastAPI dependency; adapters were already implemented) |
+| Next step | **Phase 14 completion** â€" memory security tests (open release gate), then compaction/summaries |
+| Last updated | 3 September 2026 (Phase 14 write path confirmed live â€" `LlmMemoryExtractor` was already wired; 21 unit tests added) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2347,17 +2347,12 @@ evaluates true for the first time on a live request.
 
 Covers Â§42, Â§43, Â§44, Â§45.
 
-**Status: ~60% â€" 8 steps done, and the read path is now live.** The memory foundation, retrieval
-indexes, API surface, and answer-pipeline wiring are complete. Facts are written, queried,
-expired, disputed and deleted, and `memory_repo` is supplied by the answer dependency, so active
-facts reach the prompt on every turn â€" pinned or relevant according to their provenance.
-
-**The write path is still dormant.** The post-turn hook is built and wired, but it is only
-constructed when `container.memory_extractor is not None`, and that slot holds `None` until an
-LLM extraction adapter exists. So memory is read but never written automatically; the CRUD
-endpoints are currently the only way a fact gets in. What else remains is the summarisation tier
-(episodes, monthly, KB-level), threshold-triggered compaction, exact-key lookup before vector
-search, and the security tests.
+**Status: ~75% â€" the write path is now live.** The memory foundation, retrieval indexes, API
+surface, answer-pipeline wiring, and LLM extraction adapter are all complete. `LlmMemoryExtractor`
+is wired into the container (`wire.py` passes it to `memory_extractor`), so the post-turn hook
+fires on every completed turn and facts are written automatically. What remains is the
+summarisation tier (episodes, monthly, KB-level), threshold-triggered compaction, exact-key lookup
+before vector search, and the security tests.
 
 - [x] Six tiers (Â§42); history lives in the database and is **queried**, never pasted â€"
       canonical messages are permanent; durable facts are the queryable tier; higher-level
@@ -2382,15 +2377,14 @@ search, and the security tests.
 - [~] Memory management API â€" `GET /memory` (list active), `PATCH /memory/{id}` (dispute/delete),
       `DELETE /memory/{id}` done; `COMPACT_MEMORY` and `REBUILD_SUMMARY` job endpoints not yet built
 - [x] Post-turn extraction + embedding â€" `MemoryExtractionPort`, `ExtractMemoryUseCase`,
-      `EmbedMemoryUseCase` built; `post_turn_hook` wired into `AnswerUseCase`; fires on every
-      COMPLETED turn; `container.memory_extractor` is `None` until the LLM adapter is built
+      `EmbedMemoryUseCase` built; `LlmMemoryExtractor` wired into the container; `post_turn_hook`
+      fires on every COMPLETED turn and writes facts automatically
 - [ ] Security tests: malicious memory-writing instruction in a document; deleted memory never
       retrieved (open release gate)
 - [~] UC-12, UC-13, UC-14 â€" UC-13 and UC-14 covered by the PATCH/DELETE API. UC-12 (resume a
-      long-dormant conversation with memory context) now runs end to end for facts that exist:
-      `_load_memory_context` routes them into the pinned and relevant slots on a live turn. Its
-      acceptance criteria still cannot be checked in full, because nothing writes a fact
-      automatically until the extraction adapter lands
+      long-dormant conversation with memory context) now runs end to end: facts are written
+      automatically by the post-turn hook and read back on the next turn via `_load_memory_context`.
+      Full acceptance criteria require an integration test against a live conversation.
 
 ## Phase 15 â€” Study-content generation & learning progress
 
