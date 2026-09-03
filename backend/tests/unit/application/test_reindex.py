@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.application.commands.ingest_document import IngestDocumentResult
 from app.application.commands.reindex import (
     RebuildUnit,
     ReindexKnowledgeBaseCommand,
@@ -74,11 +75,18 @@ def _unit_of_work(
     What each block commits is the worker's business; what the use case has to get right
     is which work goes in which block, and the count of blocks records that.
     """
+    job_repo = AsyncMock()
+    job_repo.save = AsyncMock()
 
     @asynccontextmanager
     async def _unit() -> AsyncIterator[RebuildUnit]:
         _unit.opened += 1  # type: ignore[attr-defined]
-        yield RebuildUnit(knowledge_bases=kb_repo, documents=document_repo, ingest=ingest)
+        yield RebuildUnit(
+            knowledge_bases=kb_repo,
+            documents=document_repo,
+            ingest=ingest,
+            job_repo=job_repo,
+        )
 
     _unit.opened = 0  # type: ignore[attr-defined]
     return _unit
@@ -102,11 +110,13 @@ def _make_use_case(
 
     if ingest is None:
         ingest = AsyncMock()
-        # Ingestion hands back the completed document it was given, which is what the
-        # real one does after marking it.
+        # Ingestion hands back an IngestDocumentResult wrapping the completed document.
         ingest.execute = AsyncMock(
-            side_effect=lambda command: command.document.mark_completed(
-                page_count=command.document.page_count or 1, now=_NOW
+            side_effect=lambda command: IngestDocumentResult(
+                document=command.document.mark_completed(
+                    page_count=command.document.page_count or 1, now=_NOW
+                ),
+                searchable_chunk_ids=(),
             )
         )
 
@@ -223,7 +233,10 @@ class TestActivation:
         use_case, kb_repo, _, ingest = _make_use_case(documents=[good, bad])
         ingest.execute = AsyncMock(
             side_effect=[
-                good.mark_processing(now=_NOW).mark_completed(page_count=12, now=_NOW),
+                IngestDocumentResult(
+                    document=good.mark_processing(now=_NOW).mark_completed(page_count=12, now=_NOW),
+                    searchable_chunk_ids=(),
+                ),
                 RuntimeError("the object store is unreachable"),
             ]
         )
@@ -248,8 +261,14 @@ class TestFailures:
         ingest.execute = AsyncMock(
             side_effect=[
                 RuntimeError("this file is not a PDF"),
-                second.mark_processing(now=_NOW).mark_completed(page_count=12, now=_NOW),
-                third.mark_processing(now=_NOW).mark_completed(page_count=12, now=_NOW),
+                IngestDocumentResult(
+                    document=second.mark_processing(now=_NOW).mark_completed(page_count=12, now=_NOW),
+                    searchable_chunk_ids=(),
+                ),
+                IngestDocumentResult(
+                    document=third.mark_processing(now=_NOW).mark_completed(page_count=12, now=_NOW),
+                    searchable_chunk_ids=(),
+                ),
             ]
         )
 
@@ -318,14 +337,24 @@ def _recording_use_case(
         ingest.execute = AsyncMock(
             side_effect=lambda command: (
                 events.append("read"),
-                command.document.mark_completed(page_count=12, now=_NOW),
+                IngestDocumentResult(
+                    document=command.document.mark_completed(page_count=12, now=_NOW),
+                    searchable_chunk_ids=(),
+                ),
             )[1]
         )
 
     @asynccontextmanager
     async def _unit() -> AsyncIterator[RebuildUnit]:
         events.append("begin")
-        yield RebuildUnit(knowledge_bases=kb_repo, documents=document_repo, ingest=ingest)
+        job_repo = AsyncMock()
+        job_repo.save = AsyncMock()
+        yield RebuildUnit(
+            knowledge_bases=kb_repo,
+            documents=document_repo,
+            ingest=ingest,
+            job_repo=job_repo,
+        )
         events.append("commit")
 
     return (

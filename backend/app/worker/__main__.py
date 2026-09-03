@@ -33,6 +33,7 @@ from app.application.commands.delete_document import (
     DeleteDocumentCommand,
     DeleteDocumentUseCase,
 )
+from app.application.commands.embed_chunks import EmbedChunksCommand, EmbedChunksUseCase
 from app.application.commands.ingest_document import IngestDocumentCommand, IngestDocumentUseCase
 from app.application.commands.reindex import (
     RebuildUnit,
@@ -111,6 +112,9 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
         return
     if job.job_type is JobType.SYNC_GRAPH_PROJECTION:
         await _run_sync_graph_projection(container, job)
+        return
+    if job.job_type is JobType.GENERATE_EMBEDDINGS:
+        await _run_embed_chunks(container, settings, job)
         return
     await _run_ingestion(container, settings, job)
 
@@ -241,7 +245,6 @@ def _build_ingest(
         chunk_repo=SqlChunkRepository(scope, session),
         document_repo=SqlDocumentRepository(scope, session),
         storage=container.storage,
-        embedder=container.embedder,
         parser=container.pdf_parser,
         chunker=Chunker(
             container.token_counter.count,
@@ -251,7 +254,6 @@ def _build_ingest(
             parent_target_tokens=settings.chunking.parent_target_tokens,
             parent_max_tokens=settings.chunking.parent_max_tokens,
         ),
-        embedding_model_id=settings.embedding.model_id,
         index_version=settings.embedding.index_version,
         figure_cropper=container.figure_cropper,
         crops_prefix=settings.storage.crops_prefix,
@@ -276,6 +278,7 @@ def _rebuild_unit_of_work(
                 knowledge_bases=SqlKnowledgeBaseRepository(scope, session),
                 documents=SqlDocumentRepository(scope, session),
                 ingest=_build_ingest(container, settings, scope, session),
+                job_repo=SqlJobRepository(session),
             )
             # Reached only when the block completed. An exception propagates through the
             # yield instead, and the session closes without committing.
@@ -354,15 +357,100 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
 
     # Phase 2: run the pipeline while the lease is held open
     async with _leased(container, settings, job), container.session_factory() as session:
-        completed_doc = await _build_ingest(container, settings, scope, session).execute(
+        result = await _build_ingest(container, settings, scope, session).execute(
             IngestDocumentCommand(scope=scope, document=processing_doc)
         )
-        await SqlDocumentRepository(scope, session).save(scope, completed_doc)
+        await SqlDocumentRepository(scope, session).save(scope, result.document)
         await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        queued_embed = await _enqueue_embed_chunks(
+            scope, session, result.searchable_chunk_ids, now=datetime.now(UTC)
+        )
         queued_graph = await _enqueue_graph_build(scope, session, doc_id, now=datetime.now(UTC))
         await session.commit()
 
-    log.info("document_ingestion_completed", graph_build_queued=queued_graph)
+    log.info(
+        "document_ingestion_completed",
+        embed_job_queued=queued_embed,
+        graph_build_queued=queued_graph,
+    )
+
+
+async def _enqueue_embed_chunks(
+    scope: ScopeContext,
+    session: AsyncSession,
+    chunk_ids: tuple[uuid.UUID, ...],
+    *,
+    now: datetime,
+) -> bool:
+    """Queue embedding for the child chunks written by an ingestion or reindex run.
+
+    Enqueued in the transaction that completes the document, so the chunk rows and the
+    embedding job are always consistent: if the transaction rolls back, the job disappears
+    with the chunks it would have embedded.
+
+    Returns False when there are no searchable chunks (a fully scanned document with no
+    text), in which case no job is queued.
+    """
+    if not chunk_ids:
+        return False
+
+    settings = get_settings()
+    await SqlJobRepository(session).save(
+        ProcessingJob(
+            id=uuid.uuid4(),
+            job_type=JobType.GENERATE_EMBEDDINGS,
+            priority=JobPriority.INTERACTIVE,
+            status=JobStatus.PENDING,
+            attempt_count=0,
+            max_attempts=3,
+            created_at=now,
+            updated_at=now,
+            payload={
+                "user_id": str(scope.user_id),
+                "knowledge_base_id": str(scope.knowledge_base_id),
+                "chunk_ids": [str(c) for c in chunk_ids],
+                "embedding_model_id": settings.embedding.model_id,
+                "index_version": settings.embedding.index_version,
+            },
+        )
+    )
+    return True
+
+
+async def _run_embed_chunks(
+    container: Container, settings: Settings, job: ProcessingJob
+) -> None:
+    """Embed the child chunks that an ingestion job wrote without vectors."""
+    scope = _scope_from(job)
+    chunk_ids = tuple(
+        uuid.UUID(c) for c in job.payload.get("chunk_ids", [])
+    )
+    embedding_model_id = str(
+        job.payload.get("embedding_model_id", settings.embedding.model_id)
+    )
+    index_version = int(
+        job.payload.get("index_version", settings.embedding.index_version)
+    )
+    log = _log.bind(job_id=str(job.id), chunk_count=len(chunk_ids))
+    log.info("embed_chunks_started")
+
+    async with container.session_factory() as session:
+        use_case = EmbedChunksUseCase(
+            chunk_repo=SqlChunkRepository(scope, session),
+            embedder=container.embedder,
+        )
+        result = await use_case.execute(
+            EmbedChunksCommand(
+                scope=scope,
+                chunk_ids=chunk_ids,
+                embedding_model_id=embedding_model_id,
+                index_version=index_version,
+            )
+        )
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
+
+    log.info("embed_chunks_completed", embedded=result.embedded)
 
 
 async def _enqueue_graph_build(
@@ -440,6 +528,7 @@ async def _main() -> None:
             JobType.DELETE_DOCUMENT,
             JobType.REINDEX_KNOWLEDGE_BASE,
             JobType.BUILD_GRAPH,
+            JobType.GENERATE_EMBEDDINGS,
             # Claimed so it can be completed. A job type nothing claims is not idle,
             # it is a queue that grows for ever.
             JobType.SYNC_GRAPH_PROJECTION,

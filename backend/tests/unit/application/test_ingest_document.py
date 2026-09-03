@@ -15,6 +15,7 @@ import pytest
 
 from app.application.commands.ingest_document import (
     IngestDocumentCommand,
+    IngestDocumentResult,
     IngestDocumentUseCase,
 )
 from app.domain.documents.chunker import Chunker
@@ -43,9 +44,6 @@ _DOC_ID = uuid.uuid4()
 _STORAGE_KEY = f"{_USER_ID}/{_KB_ID}/{_DOC_ID}/original.pdf"
 
 _SCOPE = ScopeContext(user_id=_USER_ID, knowledge_base_id=_KB_ID)
-
-_FAKE_VECTOR = [0.1] * 384
-
 
 def _make_doc(*, status: DocumentStatus = DocumentStatus.PROCESSING) -> Document:
     return Document(
@@ -123,21 +121,6 @@ class _FakeTokenCounter:
         return self.count(text) <= self.max_input_tokens
 
 
-def _make_embedder() -> AsyncMock:
-    """Returns one vector per text it is given.
-
-    Chunk counts are a property of the chunker, not of these tests. An embedder with a
-    fixed-length reply forces every caller to predict how many chunks it will produce,
-    which makes an unrelated chunking change look like a failure here.
-    """
-    embedder = AsyncMock()
-    embedder.embed_documents = AsyncMock(
-        side_effect=lambda texts: [[0.1] * 384 for _ in texts]
-    )
-    embedder.dimension = 384
-    return embedder
-
-
 def _make_document_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.save_pages = AsyncMock()
@@ -153,7 +136,6 @@ def _make_use_case(
     chunk_repo: AsyncMock | None = None,
     document_repo: AsyncMock | None = None,
     storage: AsyncMock | None = None,
-    embedder: AsyncMock | None = None,
     parser: AsyncMock | None = None,
     figure_cropper: AsyncMock | None = None,
     model_gateway: AsyncMock | None = None,
@@ -165,20 +147,16 @@ def _make_use_case(
     if chunk_repo is None:
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
-        chunk_repo.set_embeddings = AsyncMock()
     if storage is None:
         storage = AsyncMock()
         storage.get = AsyncMock(return_value=b"%PDF fake bytes")
         storage.put = AsyncMock()
-    if embedder is None:
-        embedder = _make_embedder()
     if parser is None:
         parser = _make_parser([(1, ["Sample page text."])])
     return IngestDocumentUseCase(
         chunk_repo=chunk_repo,
         document_repo=document_repo or _make_document_repo(),
         storage=storage,
-        embedder=embedder,
         parser=parser,
         chunker=Chunker(
             _FakeTokenCounter().count,
@@ -188,7 +166,6 @@ def _make_use_case(
             parent_target_tokens=parent_target_tokens,
             parent_max_tokens=parent_max_tokens,
         ),
-        embedding_model_id="test-model",
         index_version=1,
         figure_cropper=figure_cropper,
         crops_prefix="figures",
@@ -206,18 +183,15 @@ class TestHappyPath:
         use_case = _make_use_case()
         doc = _make_doc()
         result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=doc))
-        assert result.status == DocumentStatus.COMPLETED
+        assert result.document.status == DocumentStatus.COMPLETED
 
     async def test_page_count_comes_from_the_parse(self) -> None:
         """The parse counted the pages, so it is the authority — not the count the
         document was carrying from upload-time validation."""
-        embedder = _make_embedder()
-        use_case = _make_use_case(
-            parser=_make_parser([(1, ["a"]), (2, ["b"])]), embedder=embedder
-        )
+        use_case = _make_use_case(parser=_make_parser([(1, ["a"]), (2, ["b"])]))
         doc = _make_doc()  # carries page_count=3
         result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=doc))
-        assert result.page_count == 2
+        assert result.document.page_count == 2
 
     async def test_storage_get_called_with_storage_key(self) -> None:
         storage = AsyncMock()
@@ -230,40 +204,27 @@ class TestHappyPath:
     async def test_chunk_repo_save_batch_called(self) -> None:
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
-        chunk_repo.set_embeddings = AsyncMock()
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384])
-        embedder.dimension = 384
-        use_case = _make_use_case(chunk_repo=chunk_repo, embedder=embedder)
+        use_case = _make_use_case(chunk_repo=chunk_repo)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         chunk_repo.save_batch.assert_called_once()
 
-    async def test_embedder_called_with_chunk_texts(self) -> None:
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384])
-        embedder.dimension = 384
+    async def test_searchable_chunk_ids_populated_for_child_chunks(self) -> None:
         parser = _make_parser([(1, ["hello world"])])
-        use_case = _make_use_case(embedder=embedder, parser=parser)
-        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
-        embedder.embed_documents.assert_called_once()
-        texts = embedder.embed_documents.call_args.args[0]
-        assert len(texts) == 1
-        assert "hello world" in texts[0]
+        result = await _make_use_case(parser=parser).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        assert len(result.searchable_chunk_ids) >= 1
 
-    async def test_set_embeddings_called_with_model_metadata(self) -> None:
+    async def test_searchable_chunk_ids_contains_only_child_ids(self) -> None:
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
-        chunk_repo.set_embeddings = AsyncMock()
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[[0.1] * 384])
-        embedder.dimension = 384
-        use_case = _make_use_case(chunk_repo=chunk_repo, embedder=embedder)
-        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
-        chunk_repo.set_embeddings.assert_called_once()
-        kw = chunk_repo.set_embeddings.call_args.kwargs
-        assert kw["model_id"] == "test-model"
-        assert kw["dimension"] == 384
-        assert kw["version"] == 1
+        result = await _make_use_case(chunk_repo=chunk_repo).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        saved_children = {
+            c.id for c in chunk_repo.save_batch.call_args.args[1] if c.is_child
+        }
+        assert set(result.searchable_chunk_ids) == saved_children
 
     async def test_chunks_follow_sections_rather_than_pages(self) -> None:
         """A section that continues onto the next page is one passage, not two. The old
@@ -271,7 +232,6 @@ class TestHappyPath:
         parser = _make_parser([(1, ["Page one text."]), (2, ["Page two text."])])
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
-        chunk_repo.set_embeddings = AsyncMock()
         use_case = _make_use_case(parser=parser, chunk_repo=chunk_repo)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
@@ -300,7 +260,7 @@ class TestDocumentWithNoExtractableText:
         result = await use_case.execute(
             IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
         )
-        assert result.status == DocumentStatus.COMPLETED
+        assert result.document.status == DocumentStatus.COMPLETED
 
     async def test_its_pages_are_still_recorded(self) -> None:
         """The pages exist and are known to need recognition. Losing that because no
@@ -317,7 +277,7 @@ class TestDocumentWithNoExtractableText:
         result = await use_case.execute(
             IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
         )
-        assert result.page_count == 5
+        assert result.document.page_count == 5
 
     async def test_no_elements_are_written(self) -> None:
         document_repo = _make_document_repo()
@@ -325,18 +285,15 @@ class TestDocumentWithNoExtractableText:
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         document_repo.save_elements.assert_not_called()
 
-    async def test_the_embedder_is_not_called(self) -> None:
-        embedder = AsyncMock()
-        embedder.embed_documents = AsyncMock(return_value=[])
-        embedder.dimension = 384
-        use_case = _make_use_case(parser=_scanned_parser(), embedder=embedder)
-        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
-        embedder.embed_documents.assert_not_called()
+    async def test_no_searchable_chunk_ids_for_scanned_document(self) -> None:
+        result = await _make_use_case(parser=_scanned_parser()).execute(
+            IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
+        )
+        assert result.searchable_chunk_ids == ()
 
     async def test_no_chunks_are_written(self) -> None:
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
-        chunk_repo.set_embeddings = AsyncMock()
         use_case = _make_use_case(parser=_scanned_parser(), chunk_repo=chunk_repo)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         chunk_repo.save_batch.assert_not_called()
@@ -363,10 +320,7 @@ class TestPageAndElementPersistence:
     async def test_elements_from_every_page_are_saved_together(self) -> None:
         document_repo = _make_document_repo()
         parser = _make_parser([(1, ["one", "two"]), (2, ["three"])])
-        embedder = _make_embedder()
-        use_case = _make_use_case(
-            parser=parser, document_repo=document_repo, embedder=embedder
-        )
+        use_case = _make_use_case(parser=parser, document_repo=document_repo)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         saved = document_repo.save_elements.call_args.args[1]
         assert [element.text.value for element in saved] == ["one", "two", "three"]
@@ -383,7 +337,6 @@ class TestPageAndElementPersistence:
         chunk_repo.save_batch = AsyncMock(
             side_effect=lambda *_a, **_k: order.append("chunks")
         )
-        chunk_repo.set_embeddings = AsyncMock()
         use_case = _make_use_case(document_repo=document_repo, chunk_repo=chunk_repo)
         await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
         assert order == ["pages", "chunks"]
@@ -401,7 +354,6 @@ class TestPageAndElementPersistence:
         splitter that will eventually respect them."""
         chunk_repo = AsyncMock()
         chunk_repo.save_batch = AsyncMock()
-        chunk_repo.set_embeddings = AsyncMock()
         use_case = _make_use_case(
             parser=_make_parser([(1, ["first para", "second para"])]),
             chunk_repo=chunk_repo,
@@ -433,7 +385,6 @@ def _split_use_case(chunk_repo: AsyncMock) -> IngestDocumentUseCase:
 def _chunk_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.save_batch = AsyncMock()
-    repo.set_embeddings = AsyncMock()
     return repo
 
 
@@ -504,14 +455,12 @@ class TestParentAndChildChunks:
             range(len([c for c in saved if c.is_child]))
         )
 
-    async def test_only_children_are_embedded(self) -> None:
-        """A parent is what a hit expands into, not something to match: indexing it
-        would put a section and a paragraph inside it in the same ranking."""
+    async def test_only_children_are_in_searchable_chunk_ids(self) -> None:
+        """A parent is what a hit expands into, not something to match: only child IDs
+        are returned for embedding."""
         repo = _chunk_repo()
-        embedder = _make_embedder()
         use_case = _make_use_case(
             chunk_repo=repo,
-            embedder=embedder,
             parser=_make_parser(
                 [(1, [f"paragraph number {i}" for i in range(4)]), (2, ["a closing remark"])]
             ),
@@ -520,36 +469,12 @@ class TestParentAndChildChunks:
             parent_target_tokens=9,
             parent_max_tokens=20,
         )
-        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
-
-        saved = repo.save_batch.call_args.args[1]
-        child_texts = {c.text.value for c in saved if c.is_child}
-        embedded = embedder.embed_documents.call_args.args[0]
-
-        assert set(embedded) == child_texts
-        assert len(embedded) == len([c for c in saved if c.is_child])
-
-    async def test_embeddings_are_written_only_against_children(self) -> None:
-        repo = _chunk_repo()
-        embedder = _make_embedder()
-        use_case = _make_use_case(
-            chunk_repo=repo,
-            embedder=embedder,
-            parser=_make_parser(
-                [(1, [f"paragraph number {i}" for i in range(4)]), (2, ["a closing remark"])]
-            ),
-            target_tokens=3,
-            max_tokens=8,
-            parent_target_tokens=9,
-            parent_max_tokens=20,
-        )
-        await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
+        result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
         saved = repo.save_batch.call_args.args[1]
         child_ids = {c.id for c in saved if c.is_child}
-        written = set(repo.set_embeddings.call_args.args[1])
 
-        assert written == child_ids
+        assert set(result.searchable_chunk_ids) == child_ids
 
     async def test_a_parent_carries_the_documents_scope(self) -> None:
         repo = _chunk_repo()
@@ -572,7 +497,6 @@ _TABLE_BOX = BoundingBox(x0=10.0, y0=20.0, x1=200.0, y1=120.0)
 def _make_chunk_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.save_batch = AsyncMock()
-    repo.set_embeddings = AsyncMock()
     return repo
 
 
@@ -873,7 +797,7 @@ class TestFigureCropping:
         # Should not raise — crop failure is logged and skipped
         result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
-        assert result.status.name == "COMPLETED"
+        assert result.document.status.name == "COMPLETED"
         saved = document_repo.save_figures.await_args.args[1][0]
         assert saved.crop_key is None
         storage.put.assert_not_awaited()
@@ -1043,7 +967,7 @@ class TestFigureDescription:
         )
         result = await use_case.execute(IngestDocumentCommand(scope=_SCOPE, document=_make_doc()))
 
-        assert result.status.name == "COMPLETED"
+        assert result.document.status.name == "COMPLETED"
         saved = document_repo.save_figures.await_args.args[1][0]
         assert saved.description is None
 
@@ -1254,7 +1178,7 @@ class TestReplacingAnEarlierReading:
             IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
         )
 
-        assert result.status == DocumentStatus.COMPLETED
+        assert result.document.status == DocumentStatus.COMPLETED
 
     async def test_the_crops_of_the_earlier_reading_are_removed_from_storage(self) -> None:
         """A new reading mints new figure ids and so writes to new keys. Skipping this
@@ -1303,7 +1227,7 @@ class TestReplacingAnEarlierReading:
             IngestDocumentCommand(scope=_SCOPE, document=_make_doc())
         )
 
-        assert result.status == DocumentStatus.COMPLETED
+        assert result.document.status == DocumentStatus.COMPLETED
 
     async def test_one_failed_crop_delete_does_not_strand_the_rest(self) -> None:
         first, second = _previous_figure(), _previous_figure(crop_key="figures/u/kb/doc/b.png")

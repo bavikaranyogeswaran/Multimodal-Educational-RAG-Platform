@@ -24,6 +24,7 @@ has room for one.
 
 from __future__ import annotations
 
+import uuid
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -37,9 +38,10 @@ from app.application.commands.ingest_document import (
     IngestDocumentUseCase,
 )
 from app.domain.documents.entities import Document
-from app.domain.enums import DocumentStatus
+from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
 from app.domain.errors import InvariantViolationError
-from app.domain.ports.repositories import DocumentRepository, KnowledgeBaseRepository
+from app.domain.jobs.entities import ProcessingJob
+from app.domain.ports.repositories import DocumentRepository, JobRepository, KnowledgeBaseRepository
 from app.domain.scope import ScopeContext
 
 _log = structlog.get_logger(__name__)
@@ -52,6 +54,7 @@ class RebuildUnit:
     knowledge_bases: KnowledgeBaseRepository
     documents: DocumentRepository
     ingest: IngestDocumentUseCase
+    job_repo: JobRepository
 
 
 class RebuildUnitOfWork(Protocol):
@@ -158,10 +161,14 @@ class ReindexKnowledgeBaseUseCase:
 
         try:
             async with self._unit() as work:
-                completed = await work.ingest.execute(
+                result = await work.ingest.execute(
                     IngestDocumentCommand(scope=scope, document=processing)
                 )
-                await work.documents.save(scope, completed)
+                await work.documents.save(scope, result.document)
+                if result.searchable_chunk_ids:
+                    await work.job_repo.save(
+                        _embedding_job(scope, result.searchable_chunk_ids)
+                    )
         except Exception as exc:
             # One unreadable document does not stop the rest, but it must not be left
             # looking finished: its old chunks may already be gone, and a completed
@@ -175,3 +182,22 @@ class ReindexKnowledgeBaseUseCase:
                 )
             return False
         return True
+
+
+def _embedding_job(scope: ScopeContext, chunk_ids: tuple) -> ProcessingJob:
+    now = datetime.now(UTC)
+    return ProcessingJob(
+        id=uuid.uuid4(),
+        job_type=JobType.GENERATE_EMBEDDINGS,
+        priority=JobPriority.BACKGROUND,
+        status=JobStatus.PENDING,
+        attempt_count=0,
+        max_attempts=3,
+        created_at=now,
+        updated_at=now,
+        payload={
+            "user_id": str(scope.user_id),
+            "knowledge_base_id": str(scope.knowledge_base_id),
+            "chunk_ids": [str(c) for c in chunk_ids],
+        },
+    )

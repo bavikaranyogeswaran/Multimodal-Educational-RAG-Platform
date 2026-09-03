@@ -78,14 +78,9 @@ def _make_container(doc: Document) -> MagicMock:
 
     chunk_repo = AsyncMock()
     chunk_repo.save_batch = AsyncMock()
-    chunk_repo.set_embeddings = AsyncMock()
 
     storage = AsyncMock()
     storage.get = AsyncMock(return_value=b"%PDF fake")
-
-    embedder = AsyncMock()
-    embedder.embed_documents = AsyncMock(return_value=[[0.0] * 384])
-    embedder.dimension = 384
 
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=session)
@@ -94,7 +89,6 @@ def _make_container(doc: Document) -> MagicMock:
     container = MagicMock()
     container.session_factory = MagicMock(return_value=ctx)
     container.storage = storage
-    container.embedder = embedder
     return container
 
 
@@ -163,14 +157,9 @@ class TestRunJobHappyPath:
 
         chunk_repo_mock = AsyncMock()
         chunk_repo_mock.save_batch = AsyncMock()
-        chunk_repo_mock.set_embeddings = AsyncMock()
 
         storage_mock = AsyncMock()
         storage_mock.get = AsyncMock(return_value=b"%PDF fake")
-
-        embedder_mock = AsyncMock()
-        embedder_mock.embed_documents = AsyncMock(return_value=[])
-        embedder_mock.dimension = 384
 
         ctx = MagicMock()
         ctx.__aenter__ = AsyncMock(return_value=session)
@@ -199,7 +188,6 @@ class TestRunJobHappyPath:
         container = MagicMock()
         container.session_factory = MagicMock(return_value=ctx)
         container.storage = storage_mock
-        container.embedder = embedder_mock
         container.pdf_parser = parser_mock
 
         with (
@@ -274,7 +262,6 @@ def _failing_container(doc: Document) -> tuple[MagicMock, list[Document], AsyncM
     container = MagicMock()
     container.session_factory = MagicMock(return_value=ctx)
     container.storage = storage
-    container.embedder = AsyncMock()
     container.pdf_parser = AsyncMock()
     return container, saved, doc_repo
 

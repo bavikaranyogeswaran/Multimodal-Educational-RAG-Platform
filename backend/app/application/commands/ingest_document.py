@@ -29,7 +29,7 @@ import hashlib
 import json
 import re as _re
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -43,7 +43,7 @@ from app.domain.documents.table_render import render as render_table
 from app.domain.documents.tables import DocumentTable
 from app.domain.enums import ElementType, ModelTask
 from app.domain.models.entities import ModelRequest
-from app.domain.ports.adapters import EmbeddingPort, FigureCropperPort, PdfParserPort, StoragePort
+from app.domain.ports.adapters import FigureCropperPort, PdfParserPort, StoragePort
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import ChunkRepository, DocumentRepository
 from app.domain.scope import ScopeContext
@@ -56,6 +56,13 @@ _log = structlog.get_logger(__name__)
 class IngestDocumentCommand:
     scope: ScopeContext
     document: Document
+
+
+@dataclass(frozen=True)
+class IngestDocumentResult:
+    document: Document
+    #: IDs of child chunks that need embeddings. Empty when the document yielded no text.
+    searchable_chunk_ids: tuple[UUID, ...] = field(default_factory=tuple)
 
 
 class IngestDocumentUseCase:
@@ -73,11 +80,9 @@ class IngestDocumentUseCase:
         chunk_repo: ChunkRepository,
         document_repo: DocumentRepository,
         storage: StoragePort,
-        embedder: EmbeddingPort,
         *,
         parser: PdfParserPort,
         chunker: Chunker,
-        embedding_model_id: str,
         index_version: int,
         figure_cropper: FigureCropperPort | None = None,
         crops_prefix: str = "figures",
@@ -86,16 +91,14 @@ class IngestDocumentUseCase:
         self._chunk_repo = chunk_repo
         self._document_repo = document_repo
         self._storage = storage
-        self._embedder = embedder
         self._parser = parser
         self._chunker = chunker
-        self._embedding_model_id = embedding_model_id
         self._index_version = index_version
         self._figure_cropper = figure_cropper
         self._crops_prefix = crops_prefix
         self._model_gateway = model_gateway
 
-    async def execute(self, command: IngestDocumentCommand) -> Document:
+    async def execute(self, command: IngestDocumentCommand) -> IngestDocumentResult:
         scope = command.scope
         doc = command.document
         now = datetime.now(UTC)
@@ -154,32 +157,24 @@ class IngestDocumentUseCase:
             table_by_element={tbl.source_element_id: tbl.id for tbl in tables},
         )
 
+        searchable_chunk_ids: tuple[UUID, ...] = ()
         if chunks:
-            # Persist chunks (without embeddings) first so the DB row exists
-            # before we write the embedding vector to it. Parents come before the
-            # children naming them, so the reference is never to a row that is not
-            # there yet.
+            # Parents come before the children naming them, so the reference is never
+            # to a row that does not exist yet.
             await self._chunk_repo.save_batch(scope, chunks)
 
             # Only children are embedded. A parent is what a match expands into, not
-            # something to match against: embedding it would put a section and a
-            # paragraph inside that section into the same ranking, competing for the
-            # same slots and returning the same passage twice.
-            searchable = [chunk for chunk in chunks if chunk.is_child]
-            texts = [c.text.value for c in searchable]
-            vectors = await self._embedder.embed_documents(texts)
-
-            await self._chunk_repo.set_embeddings(
-                scope,
-                {c.id: v for c, v in zip(searchable, vectors, strict=True)},
-                model_id=self._embedding_model_id,
-                dimension=self._embedder.dimension,
-                version=self._index_version,
+            # something to match against, so it is excluded from the embedding job.
+            searchable_chunk_ids = tuple(
+                c.id for c in chunks if c.is_child
             )
 
         # The parse counted the pages, so the count is known rather than inferred from
         # whichever page happened to yield text last.
-        return doc.mark_completed(page_count=len(parsed), now=now)
+        return IngestDocumentResult(
+            document=doc.mark_completed(page_count=len(parsed), now=now),
+            searchable_chunk_ids=searchable_chunk_ids,
+        )
 
     async def _discard_previous_ingestion(self, scope: ScopeContext, document_id: UUID) -> None:
         """Remove everything an earlier ingestion of this document produced.
