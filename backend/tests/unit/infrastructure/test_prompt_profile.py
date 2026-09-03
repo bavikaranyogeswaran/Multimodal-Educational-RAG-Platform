@@ -287,3 +287,63 @@ class TestOpenAICompatPromptProfileWiring:
 
         # Without exchange: system + user(memory) + user(query) = 3
         assert len(captured[0]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Rolling summary rendering
+# ---------------------------------------------------------------------------
+
+
+def _request_with_summary(
+    *,
+    rolling_summary: str = "The student is studying thermodynamics.",
+    pinned_memory: tuple[str, ...] = (),
+) -> ModelRequest:
+    return ModelRequest(
+        model_task=ModelTask.ANSWER_GENERATION,
+        system_preamble="You are a tutor.",
+        safety_rules=(),
+        task_instructions="Answer the question.",
+        query="What is entropy?",
+        rolling_summary=rolling_summary,
+        pinned_memory=pinned_memory,
+    )
+
+
+class TestRollingSummaryRendering:
+    def test_summary_appears_in_student_context_block(self) -> None:
+        req = _request_with_summary()
+        messages = build_chat_messages(req)
+        context_msg = next(m for m in messages if "[Student context]" in m["content"])
+        assert "The student is studying thermodynamics." in context_msg["content"]
+
+    def test_summary_rendered_under_conversation_so_far_label(self) -> None:
+        req = _request_with_summary()
+        messages = build_chat_messages(req)
+        context_msg = next(m for m in messages if "[Student context]" in m["content"])
+        assert "Conversation so far:" in context_msg["content"]
+
+    def test_summary_not_rendered_as_bullet_point(self) -> None:
+        req = _request_with_summary()
+        messages = build_chat_messages(req)
+        context_msg = next(m for m in messages if "[Student context]" in m["content"])
+        # The prose summary should appear verbatim, not prefixed with "- "
+        assert "- The student is studying thermodynamics." not in context_msg["content"]
+
+    def test_individual_facts_still_rendered_as_bullets_alongside_summary(self) -> None:
+        req = _request_with_summary(pinned_memory=("Prefers short answers.",))
+        messages = build_chat_messages(req)
+        context_msg = next(m for m in messages if "[Student context]" in m["content"])
+        assert "- Prefers short answers." in context_msg["content"]
+        assert "The student is studying thermodynamics." in context_msg["content"]
+
+    def test_summary_alone_produces_acknowledged_exchange(self) -> None:
+        req = _request_with_summary()
+        messages = build_chat_messages(req, PromptProfile(use_acknowledged_exchange=True))
+        roles = [m["role"] for m in messages]
+        assert roles == ["system", "user", "assistant", "user"]
+
+    def test_summary_alone_without_exchange_no_assistant_ack(self) -> None:
+        req = _request_with_summary()
+        messages = build_chat_messages(req, PromptProfile(use_acknowledged_exchange=False))
+        assert not any(m["role"] == "assistant" for m in messages)

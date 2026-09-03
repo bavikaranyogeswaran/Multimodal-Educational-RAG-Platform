@@ -72,12 +72,14 @@ def build_chat_messages(
         {"role": "system", "content": "\n\n".join(system_parts)},
     ]
 
-    memory = [*request.pinned_memory, *request.relevant_memory]
+    memory_parts: list[str] = []
     if request.rolling_summary:
-        memory.append(request.rolling_summary)
-    if memory:
-        facts = "\n".join(f"- {fact}" for fact in memory)
-        messages.append({"role": "user", "content": f"[Student context]\n{facts}"})
+        memory_parts.append(f"Conversation so far:\n{request.rolling_summary}")
+    individual = [*request.pinned_memory, *request.relevant_memory]
+    if individual:
+        memory_parts.append("\n".join(f"- {fact}" for fact in individual))
+    if memory_parts:
+        messages.append({"role": "user", "content": f"[Student context]\n" + "\n\n".join(memory_parts)})
         if profile.use_acknowledged_exchange:
             messages.append({"role": "assistant", "content": "Understood, I have noted the context."})
 

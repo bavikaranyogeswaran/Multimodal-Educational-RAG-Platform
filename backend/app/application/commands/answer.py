@@ -284,6 +284,7 @@ class AnswerUseCase:
                 ConversationTurn(role=msg.role, content=msg.content)
                 for msg in reversed(list(messages))
             )
+            conversation = await repo.get(command.scope, command.conversation_id)
 
             # Committed before retrieval or generation begins, so a question that was
             # asked stays recorded however the rest of the turn goes.
@@ -347,6 +348,8 @@ class AnswerUseCase:
                 ),
             )
 
+        rolling_summary = conversation.rolling_summary if conversation else None
+
         pinned_memory, relevant_memory = await _load_memory_context(
             command.scope, command.query, self._memory_repo, self._embedder
         )
@@ -365,6 +368,7 @@ class AnswerUseCase:
                 knowledge_base_state=graph_context,
                 pinned_memory=pinned_memory,
                 relevant_memory=relevant_memory,
+                rolling_summary=rolling_summary,
             )
         )
 
@@ -443,6 +447,9 @@ class AnswerUseCase:
                                 evidence=labeled,
                                 output_schema=OUTPUT_SCHEMA,
                                 knowledge_base_state=graph_context,
+                                pinned_memory=pinned_memory,
+                                relevant_memory=relevant_memory,
+                                rolling_summary=rolling_summary,
                                 critical_checklist=(repair,) if repair else (),
                             )
                         )

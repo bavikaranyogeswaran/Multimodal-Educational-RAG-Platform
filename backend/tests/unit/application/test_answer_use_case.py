@@ -131,7 +131,13 @@ def _mock_retrieve(
     return retrieve
 
 
-def _mock_repo(messages: list[Message] | None = None) -> AsyncMock:
+def _mock_repo(
+    messages: list[Message] | None = None,
+    rolling_summary: str | None = None,
+) -> AsyncMock:
+    from app.domain.conversations.entities import Conversation
+    from datetime import UTC, datetime
+
     repo = AsyncMock()
     # The answer path reads list_history, not list_messages: an AsyncMock would
     # auto-create the former and hand back an empty history without saying so.
@@ -139,6 +145,18 @@ def _mock_repo(messages: list[Message] | None = None) -> AsyncMock:
     repo.list_messages = AsyncMock(return_value=messages or [])
     repo.save_message = AsyncMock()
     repo.save_retrieval_chunks = AsyncMock()
+    _now = datetime(2025, 1, 1, tzinfo=UTC)
+    repo.get = AsyncMock(
+        return_value=Conversation(
+            id=_CONV_ID,
+            user_id=_USER_ID,
+            knowledge_base_id=_KB_ID,
+            title="Test conversation",
+            created_at=_now,
+            updated_at=_now,
+            rolling_summary=rolling_summary,
+        )
+    )
     return repo
 
 
@@ -1667,3 +1685,71 @@ class TestPartialAbstention:
             pass
 
         assert gateway.generate_stream.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Rolling summary context
+# ---------------------------------------------------------------------------
+
+
+class TestRollingSummaryInContext:
+    """The conversation's rolling_summary reaches the ModelRequest passed to the gateway."""
+
+    @pytest.mark.asyncio
+    async def test_rolling_summary_passed_to_model_request(self) -> None:
+        captured: list[object] = []
+        repo = _mock_repo(rolling_summary="The student has covered Newton's laws.")
+        gateway = MagicMock()
+
+        def _capture(req: object) -> _FakeTokenStream:
+            captured.append(req)
+            return _FakeTokenStream(_VALID_ANSWER_JSON, None)
+
+        gateway.generate_stream = MagicMock(side_effect=_capture)
+
+        use_case = AnswerUseCase(
+            retrieve=_mock_retrieve(),
+            conversation_uow=_uow_over(repo),
+            model_gateway=gateway,
+            context_builder=_context_builder(),
+            entailment=_mock_entailment(),
+            faithfulness=_mock_faithfulness(),
+        )
+        stream = await use_case.execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        assert len(captured) == 1
+        from app.domain.models.entities import ModelRequest
+        req = captured[0]
+        assert isinstance(req, ModelRequest)
+        assert req.rolling_summary == "The student has covered Newton's laws."
+
+    @pytest.mark.asyncio
+    async def test_no_rolling_summary_when_conversation_has_none(self) -> None:
+        captured: list[object] = []
+        repo = _mock_repo(rolling_summary=None)
+        gateway = MagicMock()
+
+        def _capture(req: object) -> _FakeTokenStream:
+            captured.append(req)
+            return _FakeTokenStream(_VALID_ANSWER_JSON, None)
+
+        gateway.generate_stream = MagicMock(side_effect=_capture)
+
+        use_case = AnswerUseCase(
+            retrieve=_mock_retrieve(),
+            conversation_uow=_uow_over(repo),
+            model_gateway=gateway,
+            context_builder=_context_builder(),
+            entailment=_mock_entailment(),
+            faithfulness=_mock_faithfulness(),
+        )
+        stream = await use_case.execute(_BASE_CMD)
+        async for _ in stream:
+            pass
+
+        from app.domain.models.entities import ModelRequest
+        req = captured[0]
+        assert isinstance(req, ModelRequest)
+        assert req.rolling_summary is None
