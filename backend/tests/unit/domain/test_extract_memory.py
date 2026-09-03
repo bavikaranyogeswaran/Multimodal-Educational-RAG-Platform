@@ -75,8 +75,12 @@ def _use_case(
     conv_repo.get_message = AsyncMock(return_value=assistant_msg)
     conv_repo.list_messages = AsyncMock(return_value=messages or [])
 
+    facts_by_key = {f.key: f for f in (active_facts or [])}
+
     memory_repo = AsyncMock()
-    memory_repo.list_active = AsyncMock(return_value=active_facts or [])
+    memory_repo.get_active_by_key = AsyncMock(
+        side_effect=lambda _scope, key: facts_by_key.get(key)
+    )
     memory_repo.save_batch = AsyncMock()
 
     extractor = AsyncMock()
