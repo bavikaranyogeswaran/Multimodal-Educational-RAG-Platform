@@ -29,6 +29,7 @@ from app.domain.ports.adapters import (
     QueryDecompositionPort,
     RerankerPort,
     StoragePort,
+    SummarizationPort,
     TokenCounterPort,
 )
 from app.domain.ports.coverage import CoverageClassifierPort
@@ -77,6 +78,9 @@ class Container:
 
     # Memory extraction — None until the LLM extractor adapter is implemented
     memory_extractor: MemoryExtractionPort | None
+
+    # Conversation summarizer for COMPACT_MEMORY jobs
+    summarizer: SummarizationPort | None
 
     # Adapter ports
     storage: StoragePort

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, List  # noqa: UP035
 from uuid import UUID
 
-from sqlalchemy import delete as sa_delete
+from sqlalchemy import delete as sa_delete, func
 from sqlalchemy import or_, select
 
 from app.domain.conversations.entities import Conversation, Message
@@ -186,6 +186,18 @@ class SqlConversationRepository(ScopedRepository):
         }
         return [(row, row.chunk_id in cited_ids) for row in chunk_rows]
 
+    async def count_messages(self, scope: ScopeContext, conversation_id: UUID) -> int:
+        self._require_scope(scope)
+        stmt = (
+            select(func.count())
+            .select_from(MessageModel)
+            .where(
+                MessageModel.conversation_id == conversation_id,
+                self._scope_filter(MessageModel),
+            )
+        )
+        return (await self._session.execute(stmt)).scalar_one()
+
     async def save_retrieval_chunks(
         self, scope: ScopeContext, message_id: UUID, evidence: Sequence[Evidence]
     ) -> None:
@@ -271,6 +283,7 @@ def _conv_to_entity(row: ConversationModel) -> Conversation:
         active_page_number=row.active_page_number,
         active_figure_id=row.active_figure_id,
         active_table_id=row.active_table_id,
+        rolling_summary=row.rolling_summary,
     )
 
 
@@ -284,6 +297,7 @@ def _conv_to_model(conv: Conversation) -> ConversationModel:
         active_page_number=conv.active_page_number,
         active_figure_id=conv.active_figure_id,
         active_table_id=conv.active_table_id,
+        rolling_summary=conv.rolling_summary,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
     )

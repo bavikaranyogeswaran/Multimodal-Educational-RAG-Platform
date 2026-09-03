@@ -301,6 +301,31 @@ class GraphExtractionPort(Protocol):
         ...
 
 
+class SummarizationPort(Protocol):
+    """LLM-backed conversation summarizer.
+
+    Produces a rolling summary from a sequence of conversation turns. Called by
+    the compaction job when the message-count threshold is crossed. The previous
+    summary (if any) is passed so the model can build incrementally rather than
+    starting from scratch each time.
+    """
+
+    async def summarize(
+        self,
+        scope: ScopeContext,
+        *,
+        turns: Sequence[str],
+        previous_summary: str | None,
+    ) -> str:
+        """Return a concise summary of the conversation.
+
+        `turns` are the message contents in chronological order (oldest first).
+        `previous_summary` is the last summary the compaction job wrote, or None
+        on the first compaction of a conversation.
+        """
+        ...
+
+
 class MemoryExtractionPort(Protocol):
     """LLM-backed extraction of durable facts about the student from a conversation turn.
 

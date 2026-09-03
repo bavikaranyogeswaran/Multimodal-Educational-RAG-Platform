@@ -241,6 +241,10 @@ class ConversationRepository(Protocol):
         """
         ...
 
+    async def count_messages(self, scope: ScopeContext, conversation_id: UUID) -> int:
+        """Total number of messages in a conversation, for compaction threshold checks."""
+        ...
+
     async def save_retrieval_chunks(
         self, scope: ScopeContext, message_id: UUID, evidence: Sequence[Evidence]
     ) -> None:

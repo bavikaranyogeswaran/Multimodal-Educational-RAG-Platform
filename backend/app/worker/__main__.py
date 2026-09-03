@@ -29,6 +29,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.commands.build_graph import BuildGraphCommand, BuildGraphUseCase
+from app.application.commands.compact_memory import CompactMemoryCommand, CompactMemoryUseCase
 from app.application.commands.delete_document import (
     DeleteDocumentCommand,
     DeleteDocumentUseCase,
@@ -48,6 +49,7 @@ from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
+from app.infrastructure.database.repositories.conversation import SqlConversationRepository
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
 from app.infrastructure.database.repositories.graph import SqlGraphRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
@@ -115,6 +117,9 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
         return
     if job.job_type is JobType.GENERATE_EMBEDDINGS:
         await _run_embed_chunks(container, settings, job)
+        return
+    if job.job_type is JobType.COMPACT_MEMORY:
+        await _run_compact_memory(container, settings, job)
         return
     await _run_ingestion(container, settings, job)
 
@@ -453,6 +458,42 @@ async def _run_embed_chunks(
     log.info("embed_chunks_completed", embedded=result.embedded)
 
 
+async def _run_compact_memory(
+    container: Container, settings: Settings, job: ProcessingJob
+) -> None:
+    """Summarize a conversation's history into a rolling summary.
+
+    Runs only when the summarizer adapter is wired. If it is absent, the job is
+    marked complete immediately so it does not retry for ever on every poll cycle.
+    """
+    scope = _scope_from(job)
+    conversation_id = uuid.UUID(job.payload["conversation_id"])
+    log = _log.bind(job_id=str(job.id), conversation_id=str(conversation_id))
+
+    summarizer = container.summarizer
+    if summarizer is None:
+        log.warning("compact_memory.skipped", reason="summarizer not configured")
+        async with container.session_factory() as session:
+            await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+            await session.commit()
+        return
+
+    log.info("compact_memory_started")
+    async with container.session_factory() as session:
+        use_case = CompactMemoryUseCase(
+            conversation_repo=SqlConversationRepository(scope=scope, session=session),
+            summarizer=summarizer,
+            min_messages=settings.memory.compaction_unsummarized_messages,
+        )
+        result = await use_case.execute(
+            CompactMemoryCommand(scope=scope, conversation_id=conversation_id)
+        )
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
+
+    log.info("compact_memory_completed", summary_written=result.summary_written)
+
+
 async def _enqueue_graph_build(
     scope: ScopeContext,
     session: AsyncSession,
@@ -529,6 +570,7 @@ async def _main() -> None:
             JobType.REINDEX_KNOWLEDGE_BASE,
             JobType.BUILD_GRAPH,
             JobType.GENERATE_EMBEDDINGS,
+            JobType.COMPACT_MEMORY,
             # Claimed so it can be completed. A job type nothing claims is not idle,
             # it is a queue that grows for ever.
             JobType.SYNC_GRAPH_PROJECTION,

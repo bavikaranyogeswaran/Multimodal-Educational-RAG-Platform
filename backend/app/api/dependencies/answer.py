@@ -21,6 +21,9 @@ import structlog
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import uuid
+from datetime import UTC, datetime
+
 from app.api.dependencies.container import get_container
 from app.api.dependencies.retrieval import get_retrieval_orchestrator
 from app.api.dependencies.scope import get_kb_scope
@@ -41,8 +44,11 @@ from app.configuration.container import Container
 from app.configuration.settings import get_settings
 from app.domain.models.context_builder import ContextBuilder
 from app.domain.scope import ScopeContext
+from app.domain.enums import JobPriority, JobStatus, JobType
+from app.domain.jobs.entities import ProcessingJob
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
 from app.infrastructure.database.repositories.graph import SqlGraphRepository
+from app.infrastructure.database.repositories.job import SqlJobRepository
 from app.infrastructure.database.repositories.knowledge_base import SqlKnowledgeBaseRepository
 from app.infrastructure.database.repositories.memory import SqlMemoryRepository
 from app.infrastructure.database.session import get_session
@@ -58,19 +64,21 @@ def _build_post_turn_hook(
     scope: ScopeContext,
     container: Container,
 ) -> Callable[[ScopeContext, UUID], Awaitable[None]]:
-    """Build a post-turn callable that extracts and embeds memory facts.
+    """Build a post-turn callable that extracts memory facts and triggers compaction.
 
-    Opened sessions are committed independently: extraction writes facts, then a
-    fresh session for embedding reads and updates them. Splitting the commits
-    avoids a long-lived transaction that would hold locks across LLM calls.
+    Opened sessions are committed independently: extraction writes facts (and
+    optionally enqueues a compaction job) in the first session, embedding updates
+    the vectors in the second. Splitting the commits avoids a long-lived transaction
+    that would hold locks across LLM calls.
     """
-    # The caller checks this before building the hook; narrowing it again here is what
-    # lets the closure below hold a non-optional extractor.
     extractor = container.memory_extractor
     assert extractor is not None
     embedder = container.embedder
+    summarizer = container.summarizer
 
     async def _hook(hook_scope: ScopeContext, assistant_id: UUID) -> None:
+        settings = get_settings()
+
         # Extract memory facts from the completed turn.
         async with session_factory() as session:
             conv_repo = SqlConversationRepository(scope=hook_scope, session=session)
@@ -83,6 +91,35 @@ def _build_post_turn_hook(
             result = await extract_uc.execute(
                 ExtractMemoryCommand(scope=hook_scope, message_id=assistant_id)
             )
+
+            # Enqueue compaction when the message count crosses the configured
+            # threshold. The check runs in the same transaction so the job is only
+            # enqueued when extraction succeeded.
+            if result.conversation_id is not None and summarizer is not None:
+                threshold = settings.memory.compaction_unsummarized_messages
+                count = await conv_repo.count_messages(
+                    hook_scope, result.conversation_id
+                )
+                if count >= threshold and count % threshold == 0:
+                    now = datetime.now(UTC)
+                    await SqlJobRepository(session).save(
+                        ProcessingJob(
+                            id=uuid.uuid4(),
+                            job_type=JobType.COMPACT_MEMORY,
+                            priority=JobPriority.BACKGROUND,
+                            status=JobStatus.PENDING,
+                            attempt_count=0,
+                            max_attempts=settings.job.max_attempts,
+                            created_at=now,
+                            updated_at=now,
+                            payload={
+                                "conversation_id": str(result.conversation_id),
+                                "user_id": str(hook_scope.user_id),
+                                "knowledge_base_id": str(hook_scope.knowledge_base_id),
+                            },
+                        )
+                    )
+
             await session.commit()
 
         if not result.embeddable_ids:

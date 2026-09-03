@@ -49,6 +49,10 @@ class ExtractMemoryResult:
     # IDs of facts that were written and need an embedding (new facts + successors).
     # Retired SUPERSEDED facts are excluded — they are no longer searched.
     embeddable_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    # Set when a completed assistant message was found; None on early exit.
+    # Carried for the post-turn hook so it can check compaction thresholds without
+    # a second database round-trip to re-load the same message.
+    conversation_id: UUID | None = None
 
 
 class ExtractMemoryUseCase:
@@ -147,6 +151,7 @@ class ExtractMemoryUseCase:
         return ExtractMemoryResult(
             created=created,
             superseded=superseded,
+            conversation_id=assistant_msg.conversation_id,
             embeddable_ids=tuple(embeddable_ids),
         )
 

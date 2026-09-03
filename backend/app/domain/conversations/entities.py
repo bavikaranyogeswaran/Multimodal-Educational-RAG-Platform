@@ -42,6 +42,7 @@ class Conversation:
     active_page_number: int | None = None
     active_figure_id: UUID | None = None
     active_table_id: UUID | None = None
+    rolling_summary: str | None = None
 
     def __post_init__(self) -> None:
         require_non_blank(self.title, "title")
@@ -75,6 +76,12 @@ class Conversation:
     @property
     def scope(self) -> ScopeContext:
         return ScopeContext(user_id=self.user_id, knowledge_base_id=self.knowledge_base_id)
+
+    def with_summary(self, summary: str, *, now: datetime) -> Conversation:
+        """Replace the rolling summary produced by compaction."""
+        if not summary.strip():
+            raise InvariantViolationError("rolling_summary must not be blank")
+        return replace(self, rolling_summary=summary, updated_at=now)
 
     def renamed(self, title: str, *, now: datetime) -> Conversation:
         return replace(self, title=title, updated_at=now)
