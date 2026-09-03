@@ -27,6 +27,7 @@ from app.api.dependencies.scope import get_kb_scope
 from app.application.commands.answer import AnswerUseCase
 from app.application.commands.embed_memory import EmbedMemoryCommand, EmbedMemoryUseCase
 from app.application.commands.extract_memory import ExtractMemoryCommand, ExtractMemoryUseCase
+from app.application.commands.generate_quiz import GenerateQuizUseCase
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator
 from app.configuration.container import Container
 from app.configuration.settings import get_settings
@@ -124,6 +125,13 @@ async def get_answer_use_case(
         graph_repo=SqlGraphRepository(scope, session),
         memory_repo=SqlMemoryRepository(scope, session),
         embedder=container.embedder,
+        quiz_generator=GenerateQuizUseCase(
+            model_gateway=container.model_gateway,
+            context_builder=ContextBuilder(
+                container.token_counter.count,
+                token_budget=settings.model.prompt_token_budget,
+            ),
+        ),
         answer_max_words=settings.generation.answer_max_words,
         answer_max_tokens=settings.generation.answer_max_tokens,
         post_turn_hook=post_turn_hook,
