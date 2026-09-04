@@ -144,6 +144,17 @@ class DocumentRepository(Protocol):
         """
         ...
 
+    async def delete_page_elements(
+        self, scope: ScopeContext, document_id: UUID, page_number: int
+    ) -> None:
+        """Remove only the elements for one page of a document.
+
+        Used by the OCR job to replace a page's elements with freshly recognised ones
+        without touching the rest of the document. The page row itself is preserved;
+        only element rows for this page are removed.
+        """
+        ...
+
 
 class ChunkRepository(Protocol):
     """Persistence for retrievable Chunks."""

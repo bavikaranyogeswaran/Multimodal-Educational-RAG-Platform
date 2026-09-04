@@ -36,6 +36,7 @@ from app.application.commands.delete_document import (
 )
 from app.application.commands.embed_chunks import EmbedChunksCommand, EmbedChunksUseCase
 from app.application.commands.ingest_document import IngestDocumentCommand, IngestDocumentUseCase
+from app.application.commands.ocr_page import OcrPageCommand, OcrPageUseCase
 from app.application.commands.reindex import (
     RebuildUnit,
     ReindexKnowledgeBaseCommand,
@@ -122,6 +123,9 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
         return
     if job.job_type is JobType.COMPACT_MEMORY:
         await _run_compact_memory(container, settings, job)
+        return
+    if job.job_type is JobType.OCR_PAGE:
+        await _run_ocr_page(container, job)
         return
     await _run_ingestion(container, settings, job)
 
@@ -373,12 +377,14 @@ async def _run_ingestion(container: Container, settings: Settings, job: Processi
             scope, session, result.searchable_chunk_ids, now=datetime.now(UTC)
         )
         queued_graph = await _enqueue_graph_build(scope, session, doc_id, now=datetime.now(UTC))
+        queued_ocr = await _enqueue_ocr_pages(scope, session, doc_id, now=datetime.now(UTC))
         await session.commit()
 
     log.info(
         "document_ingestion_completed",
         embed_job_queued=queued_embed,
         graph_build_queued=queued_graph,
+        ocr_pages_queued=queued_ocr,
     )
 
 
@@ -458,6 +464,80 @@ async def _run_embed_chunks(
         await session.commit()
 
     log.info("embed_chunks_completed", embedded=result.embedded)
+
+
+async def _enqueue_ocr_pages(
+    scope: ScopeContext,
+    session: AsyncSession,
+    document_id: uuid.UUID,
+    *,
+    now: datetime,
+) -> int:
+    """Queue one OCR job per page that the parser flagged as needing recognition.
+
+    Enqueued inside the transaction that completes ingestion so the page rows and
+    the OCR jobs are always consistent: a rolled-back ingestion leaves no orphan jobs.
+
+    Returns the number of jobs queued (zero for fully native-text documents).
+    """
+    from app.infrastructure.database.repositories.document import SqlDocumentRepository
+
+    pages = await SqlDocumentRepository(scope, session).get_pages(scope, document_id)
+    ocr_pages = [p for p in pages if p.needs_ocr]
+
+    job_repo = SqlJobRepository(session)
+    for page in ocr_pages:
+        await job_repo.save(
+            ProcessingJob(
+                id=uuid.uuid4(),
+                job_type=JobType.OCR_PAGE,
+                priority=JobPriority.BACKGROUND,
+                status=JobStatus.PENDING,
+                attempt_count=0,
+                max_attempts=3,
+                created_at=now,
+                updated_at=now,
+                payload={
+                    "user_id": str(scope.user_id),
+                    "knowledge_base_id": str(scope.knowledge_base_id),
+                    "document_id": str(document_id),
+                    "page_number": page.page_number,
+                },
+            )
+        )
+    return len(ocr_pages)
+
+
+async def _run_ocr_page(container: Container, job: ProcessingJob) -> None:
+    """Recognise text on one scanned or image-heavy page and persist the elements."""
+    scope = _scope_from(job)
+    document_id = uuid.UUID(job.payload["document_id"])
+    page_number = int(job.payload["page_number"])
+    log = _log.bind(
+        job_id=str(job.id),
+        document_id=str(document_id),
+        page_number=page_number,
+    )
+    log.info("ocr_page_started")
+
+    async with container.session_factory() as session:
+        use_case = OcrPageUseCase(
+            document_repo=SqlDocumentRepository(scope, session),
+            storage=container.storage,
+            page_renderer=container.page_renderer,
+            ocr=container.ocr,
+        )
+        result = await use_case.execute(
+            OcrPageCommand(
+                scope=scope,
+                document_id=document_id,
+                page_number=page_number,
+            )
+        )
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
+
+    log.info("ocr_page_completed", elements_saved=result.elements_saved)
 
 
 async def _run_compact_memory(
@@ -591,6 +671,7 @@ async def _main() -> None:
             JobType.BUILD_GRAPH,
             JobType.GENERATE_EMBEDDINGS,
             JobType.COMPACT_MEMORY,
+            JobType.OCR_PAGE,
             # Claimed so it can be completed. A job type nothing claims is not idle,
             # it is a queue that grows for ever.
             JobType.SYNC_GRAPH_PROJECTION,

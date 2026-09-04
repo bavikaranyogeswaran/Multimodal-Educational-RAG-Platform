@@ -177,6 +177,18 @@ class SqlDocumentRepository(ScopedRepository):
         await self._delete_document_rows(DocumentElementModel, document_id)
         await self._delete_document_rows(DocumentPageModel, document_id)
 
+    async def delete_page_elements(
+        self, scope: ScopeContext, document_id: UUID, page_number: int
+    ) -> None:
+        self._require_scope(scope)
+        await self._session.execute(
+            sa_delete(DocumentElementModel).where(
+                DocumentElementModel.document_id == document_id,
+                DocumentElementModel.page_number == page_number,
+                self._scope_filter(DocumentElementModel),
+            )
+        )
+
     async def _delete_document_rows(self, model: type[Any], document_id: UUID) -> None:
         """Delete one table's rows for one document, within the bound scope."""
         await self._session.execute(
