@@ -25,7 +25,7 @@ from uuid import UUID
 
 import structlog
 
-from app.domain.ports.adapters import PageRendererPort, StoragePort
+from app.domain.ports.adapters import CacheStore, PageRendererPort, StoragePort
 from app.domain.ports.repositories import DocumentRepository
 from app.domain.scope import ScopeContext
 
@@ -49,10 +49,12 @@ class DeleteDocumentUseCase:
         document_repo: DocumentRepository,
         storage: StoragePort,
         page_renderer: PageRendererPort,
+        cache: CacheStore | None = None,
     ) -> None:
         self._document_repo = document_repo
         self._storage = storage
         self._page_renderer = page_renderer
+        self._cache = cache
 
     async def execute(self, command: DeleteDocumentCommand) -> None:
         scope = command.scope
@@ -80,6 +82,15 @@ class DeleteDocumentUseCase:
         # Last, because it is what the rest is reachable from. Chunks, elements and pages
         # go with it; graph entities keep their rows with the link cleared.
         await self._document_repo.delete(scope, command.document_id)
+
+        if self._cache is not None:
+            try:
+                await self._cache.delete_by_prefix(f"answer:{scope.knowledge_base_id}:")
+            except Exception:
+                _log.exception(
+                    "document_cache_invalidation_failed",
+                    document_id=str(command.document_id),
+                )
 
         _log.info(
             "document_deleted",

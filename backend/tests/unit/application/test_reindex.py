@@ -420,3 +420,35 @@ class TestTransactionBoundaries:
         # The block the reading ran in never reaches its commit; the next thing that
         # happens is a new block opening to record the failure.
         assert events[read + 1] == "begin"
+
+
+# ---------------------------------------------------------------------------
+# Cache invalidation
+# ---------------------------------------------------------------------------
+
+
+class TestCacheInvalidation:
+    async def test_cache_is_swept_when_rebuild_activates(self) -> None:
+        cache = AsyncMock()
+        use_case, _, _, _ = _make_use_case()
+        use_case._cache = cache  # inject after construction
+
+        await _run(use_case)
+
+        cache.delete_by_prefix.assert_awaited_once_with(f"answer:{_KB_ID}:")
+
+    async def test_cache_is_not_swept_when_nothing_was_rebuilt(self) -> None:
+        """An empty KB means no documents were read, so the old index is still intact
+        and there is no stale data to invalidate."""
+        cache = AsyncMock()
+        use_case, _, _, _ = _make_use_case(documents=[])
+        use_case._cache = cache
+
+        await _run(use_case)
+
+        cache.delete_by_prefix.assert_not_awaited()
+
+    async def test_cache_not_required(self) -> None:
+        """cache=None (the default) must not raise."""
+        use_case, _, _, _ = _make_use_case()
+        await _run(use_case)

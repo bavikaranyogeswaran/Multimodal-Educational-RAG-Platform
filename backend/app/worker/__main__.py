@@ -64,6 +64,18 @@ from app.runtime import loop_factory
 
 _log = structlog.get_logger(__name__)
 
+
+def _configured_cache(container: Container, settings: Settings):
+    """Return the cache adapter when one is configured, else None.
+
+    Avoids touching container.cache when it is _Unimplemented — that object
+    raises NotImplementedError on any attribute access.
+    """
+    if settings.cache.enabled and settings.database.url.get_secret_value():
+        return container.cache
+    return None
+
+
 #: Graph extraction is a long chain of model calls, and a transient provider failure
 #: partway through is the ordinary case rather than the exceptional one. The use case
 #: deletes the document's existing graph before re-extracting, so a retry rebuilds
@@ -107,7 +119,7 @@ async def _heartbeat_loop(
 async def _run_job(container: Container, settings: Settings, job: ProcessingJob) -> None:
     """Run whichever kind of work this job describes."""
     if job.job_type is JobType.DELETE_DOCUMENT:
-        await _run_deletion(container, job)
+        await _run_deletion(container, settings, job)
         return
     if job.job_type is JobType.REINDEX_KNOWLEDGE_BASE:
         await _run_reindex(container, settings, job)
@@ -130,7 +142,7 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
     await _run_ingestion(container, settings, job)
 
 
-async def _run_deletion(container: Container, job: ProcessingJob) -> None:
+async def _run_deletion(container: Container, settings: Settings, job: ProcessingJob) -> None:
     """Finish a deletion the API began by marking the document DELETING.
 
     Its own transaction, and no heartbeat: removing a file, a handful of cache keys and
@@ -146,6 +158,7 @@ async def _run_deletion(container: Container, job: ProcessingJob) -> None:
             document_repo=SqlDocumentRepository(scope, session),
             storage=container.storage,
             page_renderer=container.page_renderer,
+            cache=_configured_cache(container, settings),
         )
         await use_case.execute(
             DeleteDocumentCommand(
@@ -317,6 +330,7 @@ async def _run_reindex(container: Container, settings: Settings, job: Processing
         use_case = ReindexKnowledgeBaseUseCase(
             _rebuild_unit_of_work(container, settings, scope),
             index_version=settings.embedding.index_version,
+            cache=_configured_cache(container, settings),
         )
         result = await use_case.execute(ReindexKnowledgeBaseCommand(scope=scope))
 

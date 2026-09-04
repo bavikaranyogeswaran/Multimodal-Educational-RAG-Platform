@@ -162,3 +162,29 @@ async def test_delete_is_idempotent() -> None:
 
     await store.delete("never-existed")
     await store.delete("never-existed")
+
+
+# ---------------------------------------------------------------------------
+# delete_by_prefix
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_by_prefix_executes_and_commits() -> None:
+    factory, session = _make_session_factory()
+    store = SqlCacheStore(factory)
+
+    await store.delete_by_prefix("answer:kb-123:")
+
+    session.execute.assert_awaited_once()
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_by_prefix_is_idempotent() -> None:
+    """Calling with a prefix that matches nothing should not raise."""
+    factory, _ = _make_session_factory()
+    store = SqlCacheStore(factory)
+
+    await store.delete_by_prefix("answer:no-such-kb:")
+    await store.delete_by_prefix("answer:no-such-kb:")

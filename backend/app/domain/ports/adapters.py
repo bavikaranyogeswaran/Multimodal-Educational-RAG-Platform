@@ -405,6 +405,14 @@ class CacheStore(Protocol):
 
     async def delete(self, key: str) -> None: ...
 
+    async def delete_by_prefix(self, prefix: str) -> None:
+        """Delete all entries whose key starts with `prefix`.
+
+        Used for bulk invalidation — e.g. sweeping every cached answer for a
+        knowledge base when its index version changes or a document is deleted.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Observability

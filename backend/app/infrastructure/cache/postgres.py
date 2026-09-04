@@ -70,3 +70,11 @@ class SqlCacheStore:
             )
             await session.commit()
         _log.debug("cache_delete", key=key)
+
+    async def delete_by_prefix(self, prefix: str) -> None:
+        async with self._session_factory() as session:
+            await session.execute(
+                sa_delete(CacheEntryModel).where(CacheEntryModel.key.like(f"{prefix}%"))
+            )
+            await session.commit()
+        _log.debug("cache_delete_by_prefix", prefix=prefix)

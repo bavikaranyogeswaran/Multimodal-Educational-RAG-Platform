@@ -198,3 +198,40 @@ class TestDegenerateDocuments:
         assert renderer.discard_document.call_args.kwargs["page_count"] == 0
         storage.delete.assert_awaited_once()
         repo.delete.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Cache invalidation
+# ---------------------------------------------------------------------------
+
+
+class TestCacheInvalidation:
+    async def test_cache_is_swept_after_deletion(self) -> None:
+        cache = AsyncMock()
+        use_case = DeleteDocumentUseCase(
+            document_repo=_repo(_document()),
+            storage=AsyncMock(),
+            page_renderer=AsyncMock(),
+            cache=cache,
+        )
+        await use_case.execute(_COMMAND)
+
+        cache.delete_by_prefix.assert_awaited_once_with(f"answer:{_KB_ID}:")
+
+    async def test_cache_is_not_called_when_document_already_gone(self) -> None:
+        """No deletion work happened, so there is nothing to invalidate."""
+        cache = AsyncMock()
+        use_case = DeleteDocumentUseCase(
+            document_repo=_repo(None),
+            storage=AsyncMock(),
+            page_renderer=AsyncMock(),
+            cache=cache,
+        )
+        await use_case.execute(_COMMAND)
+
+        cache.delete_by_prefix.assert_not_awaited()
+
+    async def test_cache_not_required(self) -> None:
+        """cache=None (the default) must not raise."""
+        use_case, _, _, _ = _use_case()
+        await use_case.execute(_COMMAND)

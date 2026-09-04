@@ -41,6 +41,7 @@ from app.domain.documents.entities import Document
 from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
 from app.domain.errors import InvariantViolationError
 from app.domain.jobs.entities import ProcessingJob
+from app.domain.ports.adapters import CacheStore
 from app.domain.ports.repositories import DocumentRepository, JobRepository, KnowledgeBaseRepository
 from app.domain.scope import ScopeContext
 
@@ -88,9 +89,16 @@ class ReindexResult:
 class ReindexKnowledgeBaseUseCase:
     """Rebuild a Knowledge Base's index, then point retrieval at it."""
 
-    def __init__(self, unit_of_work: RebuildUnitOfWork, *, index_version: int) -> None:
+    def __init__(
+        self,
+        unit_of_work: RebuildUnitOfWork,
+        *,
+        index_version: int,
+        cache: CacheStore | None = None,
+    ) -> None:
         self._unit = unit_of_work
         self._index_version = index_version
+        self._cache = cache
 
     async def execute(self, command: ReindexKnowledgeBaseCommand) -> ReindexResult:
         scope = command.scope
@@ -138,6 +146,14 @@ class ReindexKnowledgeBaseUseCase:
                     scope,
                     kb.with_active_index_version(self._index_version, now=datetime.now(UTC)),
                 )
+            if self._cache is not None:
+                try:
+                    await self._cache.delete_by_prefix(f"answer:{scope.knowledge_base_id}:")
+                except Exception:
+                    _log.exception(
+                        "reindex_cache_invalidation_failed",
+                        knowledge_base_id=str(scope.knowledge_base_id),
+                    )
 
         log.info("reindex_finished", rebuilt=rebuilt, failed=failed, activated=activated)
         return ReindexResult(
