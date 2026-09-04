@@ -364,13 +364,25 @@ class AnswerUseCase:
                 return _cache_replay()
         # ── End cache probe ───────────────────────────────────────────────────
 
-        retrieval = await self._retrieve.execute(
-            RetrieveEvidenceQuery(
-                scope=command.scope,
-                query=command.query,
-                filters=RetrievalFilters(),
-                history=history,
-            )
+        # Memory retrieval runs concurrently with chunk retrieval — it depends only on
+        # the query text and user scope, not on which passages retrieval finds.
+        retrieval, (pinned_memory, relevant_memory) = await asyncio.gather(
+            self._retrieve.execute(
+                RetrieveEvidenceQuery(
+                    scope=command.scope,
+                    query=command.query,
+                    filters=_filters_from_conversation(conversation),
+                    history=history,
+                )
+            ),
+            _load_memory_context(
+                command.scope,
+                command.query,
+                self._memory_repo,
+                self._embedder,
+                summary_repo=self._summary_repo,
+                conversation_id=command.conversation_id,
+            ),
         )
         evidence = retrieval.evidence
 
@@ -412,15 +424,6 @@ class AnswerUseCase:
             )
 
         rolling_summary = conversation.rolling_summary if conversation else None
-
-        pinned_memory, relevant_memory = await _load_memory_context(
-            command.scope,
-            command.query,
-            self._memory_repo,
-            self._embedder,
-            summary_repo=self._summary_repo,
-            conversation_id=command.conversation_id,
-        )
 
         request = self._context_builder.build(
             ContextInputs(
@@ -1068,6 +1071,27 @@ def _format_graph_context(
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
+
+
+def _filters_from_conversation(conversation: object | None) -> RetrievalFilters:
+    """Derive retrieval filters from the conversation's active selection.
+
+    A table or figure the student has selected narrows retrieval to that specific
+    object instead of running a broad similarity search. An active document narrows
+    to that document. Both filters are empty when no context has been set.
+    """
+    if conversation is None:
+        return RetrievalFilters()
+    doc_ids = (
+        frozenset({conversation.active_document_id})  # type: ignore[union-attr]
+        if conversation.active_document_id  # type: ignore[union-attr]
+        else frozenset()
+    )
+    return RetrievalFilters(
+        document_ids=doc_ids,
+        table_id=conversation.active_table_id,  # type: ignore[union-attr]
+        figure_id=conversation.active_figure_id,  # type: ignore[union-attr]
+    )
 
 
 def _labeled(evidence: Sequence[Evidence]) -> tuple[LabeledPassage, ...]:

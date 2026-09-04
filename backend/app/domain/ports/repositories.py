@@ -202,6 +202,23 @@ class ChunkRepository(Protocol):
         """
         ...
 
+    async def find_by_table_id(self, scope: ScopeContext, table_id: UUID) -> Chunk | None:
+        """Return the parent (complete) table chunk for a given table id.
+
+        Used by the TABLE_LOOKUP early exit, which bypasses embedding + vector
+        search when the student has already selected the specific table they are
+        asking about. Returns None if no chunk is found (e.g. the table was
+        deleted since the conversation was created).
+        """
+        ...
+
+    async def find_by_figure_id(self, scope: ScopeContext, figure_id: UUID) -> Chunk | None:
+        """Return the parent (complete) figure chunk for a given figure id.
+
+        Used by the VISUAL_LOOKUP early exit, analogous to find_by_table_id.
+        """
+        ...
+
 
 class ConversationRepository(Protocol):
     """Persistence for Conversations and their Messages."""

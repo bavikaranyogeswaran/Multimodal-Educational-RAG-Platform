@@ -112,6 +112,34 @@ class SqlChunkRepository(ScopedRepository):
             )
             await self._session.execute(stmt)
 
+    async def find_by_table_id(self, scope: ScopeContext, table_id: UUID) -> Chunk | None:
+        self._require_scope(scope)
+        stmt = (
+            select(ChunkModel)
+            .where(
+                ChunkModel.table_id == table_id,
+                ChunkModel.parent_chunk_id.is_(None),
+                self._scope_filter(ChunkModel),
+            )
+            .limit(1)
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _to_entity(row) if row else None
+
+    async def find_by_figure_id(self, scope: ScopeContext, figure_id: UUID) -> Chunk | None:
+        self._require_scope(scope)
+        stmt = (
+            select(ChunkModel)
+            .where(
+                ChunkModel.figure_id == figure_id,
+                ChunkModel.parent_chunk_id.is_(None),
+                self._scope_filter(ChunkModel),
+            )
+            .limit(1)
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _to_entity(row) if row else None
+
 
 def _utc(dt: datetime) -> datetime:
     """Return dt unchanged if timezone-aware; attach UTC when SQLite strips it."""

@@ -19,12 +19,12 @@ from uuid import UUID
 import structlog
 
 from app.application.observability.timer import StageTimer
-from app.domain.enums import QueryClass
+from app.domain.enums import EarlyExitPath, QueryClass, RetrieverKind
 from app.domain.models.entities import ConversationTurn
 from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, QueryClassificationPort, RerankerPort
 from app.domain.ports.repositories import ChunkRepository
 from app.domain.retrieval.compression import EvidenceCompressor
-from app.domain.retrieval.entities import Evidence, RetrievalFilters, RetrievalPlan
+from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters, RetrievalPlan
 from app.domain.retrieval.expander import QueryExpander
 from app.domain.retrieval.expansion import ExpansionReason, ExpansionRules
 from app.domain.retrieval.fusion import RRFusion
@@ -99,12 +99,46 @@ class RetrievalOrchestrator:
             query_class = await self._classifier.classify(query.query)
         _log.info("retrieval_stage", stage="classify", elapsed_ms=_timer.elapsed_ms())
 
-        with StageTimer("rewrite") as _timer:
-            standalone, was_rewritten = await self._rewriter.rewrite(query.query, query.history)
-        _log.info("retrieval_stage", stage="rewrite", elapsed_ms=_timer.elapsed_ms())
+        plan = RetrievalPlan.for_query(query_class, filters=query.filters)
+
+        # ── Early exits ──────────────────────────────────────────────────────
+        # A table or figure the student has already selected resolves the target
+        # exactly. Fetching it by id is faster and more precise than embedding +
+        # vector search, which could surface a different table on the same topic.
+        if plan.early_exit is EarlyExitPath.TABLE_LOOKUP and query.filters.table_id is not None:
+            chunk = await self._chunks.find_by_table_id(query.scope, query.filters.table_id)
+            if chunk is not None:
+                _log.info("retrieval_stage", stage="table_lookup", early_exit=True)
+                return RetrievalResult(
+                    evidence=[Evidence(label=EvidenceLabel(1), chunk=chunk, retrievers=frozenset({RetrieverKind.TABLE}), rank=0)],
+                    standalone_query=query.query,
+                    was_rewritten=False,
+                    query_class=query_class,
+                )
+
+        if plan.early_exit is EarlyExitPath.VISUAL_LOOKUP and query.filters.figure_id is not None:
+            chunk = await self._chunks.find_by_figure_id(query.scope, query.filters.figure_id)
+            if chunk is not None:
+                _log.info("retrieval_stage", stage="visual_lookup", early_exit=True)
+                return RetrievalResult(
+                    evidence=[Evidence(label=EvidenceLabel(1), chunk=chunk, retrievers=frozenset({RetrieverKind.VISUAL}), rank=0)],
+                    standalone_query=query.query,
+                    was_rewritten=False,
+                    query_class=query_class,
+                )
+        # ── End early exits ──────────────────────────────────────────────────
+
+        # For exact-term queries, the identifier is already specific — rewriting
+        # it would call the model to produce what the student already typed.
+        if plan.early_exit is EarlyExitPath.EXACT_LOOKUP:
+            standalone, was_rewritten = query.query, False
+            _log.info("retrieval_stage", stage="rewrite", skipped=True)
+        else:
+            with StageTimer("rewrite") as _timer:
+                standalone, was_rewritten = await self._rewriter.rewrite(query.query, query.history)
+            _log.info("retrieval_stage", stage="rewrite", elapsed_ms=_timer.elapsed_ms())
 
         with StageTimer("plan_expand") as _timer:
-            plan = RetrievalPlan.for_query(query_class, filters=query.filters)
             expanded = await self._expander.expand(standalone, plan)
         _log.info(
             "retrieval_stage",

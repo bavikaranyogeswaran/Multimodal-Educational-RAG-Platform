@@ -700,3 +700,145 @@ class TestParentExpansion:
         )
         await orc.execute(_query(scope=scope))
         assert mocks["chunks"].get_many.call_args.args[0] == scope
+
+
+# ---------------------------------------------------------------------------
+# Early exits
+# ---------------------------------------------------------------------------
+
+
+def _make_orchestrator_with_object_lookup(
+    *,
+    table_chunk: object | None = None,
+    figure_chunk: object | None = None,
+) -> tuple[RetrievalOrchestrator, dict[str, MagicMock]]:
+    """Orchestrator whose chunk repo can return a table or figure chunk by id."""
+    orc, mocks = _make_orchestrator()
+    mocks["chunks"].find_by_table_id = AsyncMock(return_value=table_chunk)
+    mocks["chunks"].find_by_figure_id = AsyncMock(return_value=figure_chunk)
+    return orc, mocks
+
+
+def _table_query(table_id: uuid.UUID | None = None) -> RetrieveEvidenceQuery:
+    from app.domain.retrieval.entities import RetrievalFilters
+    tid = table_id or uuid.uuid4()
+    return RetrieveEvidenceQuery(
+        scope=_scope(),
+        query="what does table 3 show",
+        filters=RetrievalFilters(table_id=tid),
+        history=(),
+    )
+
+
+def _figure_query(figure_id: uuid.UUID | None = None) -> RetrieveEvidenceQuery:
+    from app.domain.retrieval.entities import RetrievalFilters
+    fid = figure_id or uuid.uuid4()
+    return RetrieveEvidenceQuery(
+        scope=_scope(),
+        query="describe figure 2",
+        filters=RetrievalFilters(figure_id=fid),
+        history=(),
+    )
+
+
+class TestEarlyExits:
+    async def test_table_lookup_returns_the_table_chunk_directly(self) -> None:
+        chunk = MagicMock()
+        orc, mocks = _make_orchestrator_with_object_lookup(table_chunk=chunk)
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.TABLE)
+
+        result = await orc.execute(_table_query())
+
+        assert len(result.evidence) == 1
+        assert result.evidence[0].chunk is chunk
+        assert result.evidence[0].label.number == 1
+
+    async def test_table_lookup_skips_embed_and_search(self) -> None:
+        chunk = MagicMock()
+        orc, mocks = _make_orchestrator_with_object_lookup(table_chunk=chunk)
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.TABLE)
+
+        await orc.execute(_table_query())
+
+        mocks["embedder"].embed_query.assert_not_called()
+        mocks["dense_retriever"].search.assert_not_called()
+        mocks["keyword_retriever"].search.assert_not_called()
+
+    async def test_table_lookup_skips_rewrite(self) -> None:
+        chunk = MagicMock()
+        orc, mocks = _make_orchestrator_with_object_lookup(table_chunk=chunk)
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.TABLE)
+
+        await orc.execute(_table_query())
+
+        mocks["rewriter"].rewrite.assert_not_called()
+
+    async def test_table_lookup_returns_original_query_as_standalone(self) -> None:
+        chunk = MagicMock()
+        orc, mocks = _make_orchestrator_with_object_lookup(table_chunk=chunk)
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.TABLE)
+        q = _table_query()
+
+        result = await orc.execute(q)
+
+        assert result.standalone_query == q.query
+        assert result.was_rewritten is False
+
+    async def test_table_lookup_falls_back_to_full_search_when_chunk_not_found(self) -> None:
+        orc, mocks = _make_orchestrator_with_object_lookup(table_chunk=None)
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.TABLE)
+        mocks["rewriter"].rewrite = AsyncMock(return_value=("q", False))
+
+        await orc.execute(_table_query())
+
+        mocks["embedder"].embed_query.assert_called()
+
+    async def test_visual_lookup_returns_the_figure_chunk_directly(self) -> None:
+        chunk = MagicMock()
+        orc, mocks = _make_orchestrator_with_object_lookup(figure_chunk=chunk)
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.VISUAL)
+
+        result = await orc.execute(_figure_query())
+
+        assert len(result.evidence) == 1
+        assert result.evidence[0].chunk is chunk
+
+    async def test_visual_lookup_skips_embed_and_search(self) -> None:
+        chunk = MagicMock()
+        orc, mocks = _make_orchestrator_with_object_lookup(figure_chunk=chunk)
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.VISUAL)
+
+        await orc.execute(_figure_query())
+
+        mocks["embedder"].embed_query.assert_not_called()
+        mocks["dense_retriever"].search.assert_not_called()
+
+    async def test_exact_lookup_skips_rewrite(self) -> None:
+        orc, mocks = _make_orchestrator()
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.EXACT_TERM)
+
+        await orc.execute(_query(text="ATP"))
+
+        mocks["rewriter"].rewrite.assert_not_called()
+
+    async def test_exact_lookup_uses_original_query_as_standalone(self) -> None:
+        orc, mocks = _make_orchestrator(
+            fused_results=[_evidence(0)],
+            rerank_scores=[0.9],
+        )
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.EXACT_TERM)
+
+        result = await orc.execute(_query(text="ATP synthesis"))
+
+        assert result.standalone_query == "ATP synthesis"
+        assert result.was_rewritten is False
+
+    async def test_exact_lookup_still_runs_search(self) -> None:
+        orc, mocks = _make_orchestrator()
+        mocks["classifier"].classify = AsyncMock(return_value=QueryClass.EXACT_TERM)
+
+        await orc.execute(_query(text="ATP"))
+
+        mocks["embedder"].embed_query.assert_called()
+        mocks["dense_retriever"].search.assert_called()
+        mocks["keyword_retriever"].search.assert_called()
