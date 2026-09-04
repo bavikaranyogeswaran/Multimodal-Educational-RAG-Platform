@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.infrastructure.database.base import Base
 
 _MEMORY_EMBEDDING_DIM = 384
+_SUMMARY_EMBEDDING_DIM = 384
 
 
 class ConversationModel(Base):
@@ -195,3 +196,33 @@ class MemoryFactModel(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ConversationSummaryModel(Base):
+    """Immutable episode-level summary written after compaction.
+
+    embedding is NULL until the worker's embed step runs after saving the row.
+    """
+
+    __tablename__ = "conversation_summaries"
+    __table_args__ = (
+        Index("ix_conv_summaries_user_kb", "user_id", "knowledge_base_id"),
+        Index("ix_conv_summaries_conv_id", "conversation_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+    )
+    tier: Mapped[str] = mapped_column(String(20))
+    text: Mapped[str] = mapped_column(Text)
+    message_count: Mapped[int] = mapped_column(Integer)
+    # NULL until update_embedding() runs after the row is first written.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(_SUMMARY_EMBEDDING_DIM))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

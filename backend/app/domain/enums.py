@@ -540,6 +540,20 @@ class MemoryProvenance(IntEnum):
     USER_CORRECTION = 40
 
 
+class SummaryTier(StrEnum):
+    """Granularity of a hierarchical conversation summary.
+
+    EPISODE — a block of messages within a single conversation, written after the
+    compaction threshold is crossed. The most frequent tier; the raw material for
+    higher tiers.
+    MONTHLY / KB — reserved for future aggregation phases (Phase B+).
+    """
+
+    EPISODE = "EPISODE"
+    MONTHLY = "MONTHLY"
+    KB = "KB"
+
+
 # ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------

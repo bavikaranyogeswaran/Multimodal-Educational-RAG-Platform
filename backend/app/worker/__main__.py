@@ -50,6 +50,8 @@ from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
+from app.infrastructure.database.repositories.conversation_summary import SqlConversationSummaryRepository
+from app.infrastructure.database.repositories.conversation_summary import SqlConversationSummaryRepository
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
 from app.infrastructure.database.repositories.graph import SqlGraphRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
@@ -484,6 +486,7 @@ async def _run_compact_memory(
             conversation_repo=SqlConversationRepository(scope=scope, session=session),
             summarizer=summarizer,
             min_messages=settings.memory.compaction_unsummarized_messages,
+            summary_repo=SqlConversationSummaryRepository(scope=scope, session=session),
         )
         result = await use_case.execute(
             CompactMemoryCommand(scope=scope, conversation_id=conversation_id)
@@ -491,7 +494,24 @@ async def _run_compact_memory(
         await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
         await session.commit()
 
-    log.info("compact_memory_completed", summary_written=result.summary_written)
+    log.info(
+        "compact_memory_completed",
+        summary_written=result.summary_written,
+        episode_written=result.episode_summary_id is not None,
+    )
+
+    if (
+        result.episode_summary_id is not None
+        and result.episode_summary_text is not None
+        and container.embedder is not None
+    ):
+        embedding = await container.embedder.embed_query(result.episode_summary_text)
+        async with container.session_factory() as embed_session:
+            await SqlConversationSummaryRepository(
+                scope=scope, session=embed_session
+            ).save_embedding(scope, result.episode_summary_id, embedding)
+            await embed_session.commit()
+        log.info("compact_memory_episode_embedded", episode_id=str(result.episode_summary_id))
 
 
 async def _enqueue_graph_build(

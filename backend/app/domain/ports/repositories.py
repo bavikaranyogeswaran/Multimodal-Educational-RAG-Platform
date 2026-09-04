@@ -28,11 +28,12 @@ from app.domain.documents.chunks import Chunk
 from app.domain.documents.entities import Document, DocumentElement, DocumentPage
 from app.domain.documents.figures import DocumentFigure
 from app.domain.documents.tables import DocumentTable
-from app.domain.enums import JobType, RelationshipType
+from app.domain.enums import JobType, RelationshipType, SummaryTier
 from app.domain.graph.entities import GraphEntity, GraphRelationship
 from app.domain.jobs.entities import ProcessingJob
 from app.domain.knowledge_base.entities import KnowledgeBase
 from app.domain.memory.entities import MemoryFact
+from app.domain.memory.summaries import ConversationSummary
 from app.domain.retrieval.entities import Citation, Evidence
 from app.domain.scope import ScopeContext
 
@@ -485,4 +486,42 @@ class JobRepository(Protocol):
 
     async def list_for_scope(self, scope: ScopeContext) -> Sequence[ProcessingJob]:
         """All jobs associated with this user and Knowledge Base."""
+        ...
+
+
+class ConversationSummaryRepository(Protocol):
+    """Persistence for ConversationSummary episode records."""
+
+    async def save(self, scope: ScopeContext, summary: ConversationSummary) -> None:
+        """Persist a new summary row. Embedding may be None at this point."""
+        ...
+
+    async def save_embedding(
+        self,
+        scope: ScopeContext,
+        summary_id: UUID,
+        embedding: Sequence[float],
+    ) -> None:
+        """Write the dense vector for a summary that has already been saved."""
+        ...
+
+    async def dense_search(
+        self,
+        scope: ScopeContext,
+        query_embedding: Sequence[float],
+        *,
+        limit: int,
+    ) -> Sequence[tuple[ConversationSummary, float]]:
+        """Return (summary, cosine_distance) pairs across all embedded episodes in scope."""
+        ...
+
+    async def list_by_conversation(
+        self,
+        scope: ScopeContext,
+        conversation_id: UUID,
+        *,
+        tier: SummaryTier = SummaryTier.EPISODE,
+        limit: int = 10,
+    ) -> Sequence[ConversationSummary]:
+        """Return episodes for a single conversation, newest first."""
         ...

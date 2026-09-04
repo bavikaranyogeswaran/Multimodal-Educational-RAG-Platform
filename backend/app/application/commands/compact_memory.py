@@ -16,14 +16,16 @@ replacement for the canonical history.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 
+from app.domain.enums import SummaryTier
+from app.domain.memory.summaries import ConversationSummary
 from app.domain.ports.adapters import SummarizationPort
-from app.domain.ports.repositories import ConversationRepository
+from app.domain.ports.repositories import ConversationRepository, ConversationSummaryRepository
 from app.domain.scope import ScopeContext
 
 _log = structlog.get_logger(__name__)
@@ -38,6 +40,8 @@ class CompactMemoryCommand:
 @dataclass(frozen=True)
 class CompactMemoryResult:
     summary_written: bool
+    episode_summary_id: UUID | None = None
+    episode_summary_text: str | None = None
 
 
 class CompactMemoryUseCase:
@@ -53,10 +57,12 @@ class CompactMemoryUseCase:
         summarizer: SummarizationPort,
         *,
         min_messages: int,
+        summary_repo: ConversationSummaryRepository | None = None,
     ) -> None:
         self._conv_repo = conversation_repo
         self._summarizer = summarizer
         self._min_messages = min_messages
+        self._summary_repo = summary_repo
 
     async def execute(self, command: CompactMemoryCommand) -> CompactMemoryResult:
         scope = command.scope
@@ -98,9 +104,29 @@ class CompactMemoryUseCase:
         updated = conversation.with_summary(summary, now=now)
         await self._conv_repo.save(scope, updated)
 
+        episode_summary_id: UUID | None = None
+        if self._summary_repo is not None:
+            episode = ConversationSummary(
+                id=uuid4(),
+                user_id=scope.user_id,
+                knowledge_base_id=scope.knowledge_base_id,
+                conversation_id=command.conversation_id,
+                tier=SummaryTier.EPISODE,
+                text=summary,
+                message_count=len(messages),
+                created_at=now,
+            )
+            await self._summary_repo.save(scope, episode)
+            episode_summary_id = episode.id
+
         _log.info(
             "compact_memory.complete",
             conversation_id=str(command.conversation_id),
             message_count=len(messages),
+            episode_written=episode_summary_id is not None,
         )
-        return CompactMemoryResult(summary_written=True)
+        return CompactMemoryResult(
+            summary_written=True,
+            episode_summary_id=episode_summary_id,
+            episode_summary_text=summary if episode_summary_id is not None else None,
+        )

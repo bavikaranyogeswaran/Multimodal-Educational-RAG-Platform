@@ -47,6 +47,7 @@ from app.domain.scope import ScopeContext
 from app.domain.enums import JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
+from app.infrastructure.database.repositories.conversation_summary import SqlConversationSummaryRepository
 from app.infrastructure.database.repositories.graph import SqlGraphRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
 from app.infrastructure.database.repositories.knowledge_base import SqlKnowledgeBaseRepository
@@ -184,6 +185,7 @@ async def get_answer_use_case(
         kb_repo=SqlKnowledgeBaseRepository(scope, session),
         graph_repo=SqlGraphRepository(scope, session),
         memory_repo=SqlMemoryRepository(scope, session),
+        summary_repo=SqlConversationSummaryRepository(scope, session),
         multi_hop=multi_hop,
         embedder=container.embedder,
         quiz_generator=GenerateQuizUseCase(

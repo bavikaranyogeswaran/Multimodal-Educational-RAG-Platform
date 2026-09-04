@@ -62,6 +62,7 @@ from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.ports.repositories import (
+    ConversationSummaryRepository,
     ConversationUnitOfWork,
     GraphRepository,
     KnowledgeBaseRepository,
@@ -238,6 +239,7 @@ class AnswerUseCase:
         kb_repo: KnowledgeBaseRepository | None = None,
         graph_repo: GraphRepository | None = None,
         memory_repo: MemoryRepository | None = None,
+        summary_repo: ConversationSummaryRepository | None = None,
         embedder: EmbeddingPort | None = None,
         multi_hop: MultiHopAnswerUseCase | None = None,
         quiz_generator: GenerateQuizUseCase | None = None,
@@ -254,6 +256,7 @@ class AnswerUseCase:
         self._kb_repo = kb_repo
         self._graph_repo = graph_repo
         self._memory_repo = memory_repo
+        self._summary_repo = summary_repo
         self._embedder = embedder
         self._multi_hop = multi_hop
         self._quiz_generator = quiz_generator
@@ -351,7 +354,12 @@ class AnswerUseCase:
         rolling_summary = conversation.rolling_summary if conversation else None
 
         pinned_memory, relevant_memory = await _load_memory_context(
-            command.scope, command.query, self._memory_repo, self._embedder
+            command.scope,
+            command.query,
+            self._memory_repo,
+            self._embedder,
+            summary_repo=self._summary_repo,
+            conversation_id=command.conversation_id,
         )
 
         request = self._context_builder.build(
@@ -776,11 +784,17 @@ def _key_matches_query(key: str, query_lower: str) -> bool:
     return key.replace("_", " ") in query_lower
 
 
+_MAX_EPISODE_SUMMARIES = 3
+
+
 async def _load_memory_context(
     scope: ScopeContext,
     query: str,
     memory_repo: MemoryRepository | None,
     embedder: EmbeddingPort | None = None,
+    *,
+    summary_repo: ConversationSummaryRepository | None = None,
+    conversation_id: uuid.UUID | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return (pinned_memory, relevant_memory) tuples from the student's active facts.
 
@@ -797,35 +811,66 @@ async def _load_memory_context(
 
     Returns empty tuples when no memory repository is wired in or no active facts exist.
     """
-    if memory_repo is None:
-        return (), ()
+    pinned_strings: tuple[str, ...] = ()
+    relevant_strings: tuple[str, ...] = ()
 
-    active_facts = await memory_repo.list_active(scope)
-    if not active_facts:
-        return (), ()
-
-    query_lower = query.lower()
-    pinned_facts = [f for f in active_facts if f.provenance in _PINNED_PROVENANCES]
-    inferred_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES]
-
-    # Pass 1: exact-key matches surface first regardless of embedding availability.
-    key_hit_ids: set[object] = set()
-    key_hits = [f for f in inferred_facts if _key_matches_query(f.key, query_lower)]
-    key_hit_ids = {f.id for f in key_hits}
-
-    if embedder is not None:
+    # Compute the query embedding once; shared by both the memory and episode passes.
+    query_embedding: list[float] | None = None
+    if embedder is not None and (memory_repo is not None or summary_repo is not None):
         query_embedding = await embedder.embed_query(query)
-        dense_hits = await memory_repo.dense_search(scope, query_embedding, limit=_MAX_RELEVANT_MEMORY)
-        dense_facts = [f for f, _ in dense_hits if f.provenance not in _PINNED_PROVENANCES and f.id not in key_hit_ids]
-        relevant_facts = (key_hits + dense_facts)[:_MAX_RELEVANT_MEMORY]
-        if not relevant_facts:
-            # No embeddings stored yet — fall back so newly written facts still appear.
-            relevant_facts = inferred_facts[:_MAX_RELEVANT_MEMORY]
-    else:
-        non_key_inferred = [f for f in inferred_facts if f.id not in key_hit_ids]
-        relevant_facts = (key_hits + non_key_inferred)[:_MAX_RELEVANT_MEMORY]
 
-    return tuple(f.content for f in pinned_facts), tuple(f.content for f in relevant_facts)
+    if memory_repo is not None:
+        active_facts = await memory_repo.list_active(scope)
+        if active_facts:
+            query_lower = query.lower()
+            pinned_facts = [f for f in active_facts if f.provenance in _PINNED_PROVENANCES]
+            inferred_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES]
+
+            # Pass 1: exact-key matches surface first regardless of embedding availability.
+            key_hits = [f for f in inferred_facts if _key_matches_query(f.key, query_lower)]
+            key_hit_ids = {f.id for f in key_hits}
+
+            if query_embedding is not None:
+                dense_hits = await memory_repo.dense_search(
+                    scope, query_embedding, limit=_MAX_RELEVANT_MEMORY
+                )
+                dense_facts = [
+                    f for f, _ in dense_hits
+                    if f.provenance not in _PINNED_PROVENANCES and f.id not in key_hit_ids
+                ]
+                relevant_facts = (key_hits + dense_facts)[:_MAX_RELEVANT_MEMORY]
+                if not relevant_facts:
+                    # No embeddings stored yet — fall back so new facts still appear.
+                    relevant_facts = inferred_facts[:_MAX_RELEVANT_MEMORY]
+            else:
+                non_key_inferred = [f for f in inferred_facts if f.id not in key_hit_ids]
+                relevant_facts = (key_hits + non_key_inferred)[:_MAX_RELEVANT_MEMORY]
+
+            pinned_strings = tuple(f.content for f in pinned_facts)
+            relevant_strings = tuple(f.content for f in relevant_facts)
+
+    # Append episode summaries to relevant context.
+    if summary_repo is not None:
+        if query_embedding is not None:
+            # Dense search across the whole KB/user scope — may surface summaries from
+            # prior conversations on the same topic.
+            episode_hits = await summary_repo.dense_search(
+                scope, query_embedding, limit=_MAX_EPISODE_SUMMARIES
+            )
+            episode_strings = tuple(
+                f"[Episode summary] {ep.text}" for ep, _ in episode_hits
+            )
+        elif conversation_id is not None:
+            # Recency fallback when no embedder is wired.
+            episodes = await summary_repo.list_by_conversation(
+                scope, conversation_id, limit=_MAX_EPISODE_SUMMARIES
+            )
+            episode_strings = tuple(f"[Episode summary] {ep.text}" for ep in episodes)
+        else:
+            episode_strings = ()
+        relevant_strings = relevant_strings + episode_strings
+
+    return pinned_strings, relevant_strings
 
 
 async def _load_graph_context(
