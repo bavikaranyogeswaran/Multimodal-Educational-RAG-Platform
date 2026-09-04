@@ -137,6 +137,18 @@ def _build_pdf_parser(settings: Settings) -> PdfParserPort:
         return cast(PdfParserPort, _Unimplemented("PdfParserPort"))
 
 
+def _build_ocr(settings: Settings) -> OcrPort:
+    try:
+        from app.infrastructure.ocr.paddle_ocr import PaddleOcrAdapter
+
+        return PaddleOcrAdapter(
+            lang=settings.ocr.language,
+            dpi=settings.storage.page_render_dpi,
+        )
+    except ImportError:
+        return cast(OcrPort, _Unimplemented("OcrPort"))
+
+
 def _build_token_counter(settings: Settings) -> TokenCounterPort:
     """Built eagerly, and allowed to fail.
 
@@ -242,7 +254,7 @@ def build_container(settings: Settings) -> Container:
         storage=_storage,
         cache=_cache,
         pdf_parser=_build_pdf_parser(settings),
-        ocr=cast(OcrPort, _u("OcrPort")),
+        ocr=_build_ocr(settings),
         embedder=_build_embedder(settings),
         token_counter=_build_token_counter(settings),
         reranker=_build_reranker(settings),

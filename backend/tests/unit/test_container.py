@@ -25,13 +25,13 @@ from app.configuration.wire import build_container
 _WIRED = [
     ("model_gateway", "generate"),
     ("pdf_parser", "parse"),
+    ("ocr", "extract_text"),
 ]
 
 # Slots still awaiting the phase that builds them.
 _UNWIRED = [
     ("knowledge_base_repository", "get", "KnowledgeBaseRepository"),
     ("storage", "put", "StoragePort"),
-    ("ocr", "extract_text", "OcrPort"),
     ("graph", "neighbors", "GraphPort"),
     ("cache", "get", "CacheStore"),
 ]

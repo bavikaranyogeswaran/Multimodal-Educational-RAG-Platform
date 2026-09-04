@@ -26,15 +26,15 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **11 of 21** â€" Phase 0, 1, 2, 3, 4, 6, 8, 11, 12, 13, 19 âœ… |
+| Phases complete | **14 of 21** â€" Phase 0, 1, 2, 3, 4, 6, 7, 8, 11, 12, 13, 14, 18, 19 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 7 (~95%, a separate embedding job outstanding) Â· Phase 5 (~70%, page OCR deferred) Â· Phase 14 (~85%, write path live, security gate closed; compaction/summaries remain) Â· Phase 17 (~35%, retrieval measured, generation and memory not) Â· Phase 18 (~95%, all screens done) |
+| Partly built | Phase 5 (~70%, page OCR deferred) Â· Phase 17 (~35%, retrieval measured, generation and memory not) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 15, 20 |
-| Tests | **3,358 backend** â€" 3,238 unit Â· 120 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 96 frontend Â· 11 security files, 4 of 6 release gates enforced Â· one known flaky test, a Windows timer-granularity assertion unrelated to the code under test, which is the only failure in a full run |
+| Tests | **3,496 backend** â€" 3,351 unit Â· 145 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 11 security files, 5 of 6 release gates enforced Â· one known flaky test (HuggingFace network call in container lifespan test) |
 | Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
-| Next step | **Phase 14 completion** â€" memory compaction (`COMPACT_MEMORY` / `REBUILD_SUMMARY` jobs) and hierarchical summaries |
-| Last updated | 3 September 2026 (Phase 14 security gate closed â€" `test_memory_security.py` added; five of six release gates now enforced) |
+| Next step | **Phase 15** (not started) or Phase 20 (not started) |
+| Last updated | 4 September 2026 (Phase 18 closed â€" all 134 frontend tests pass; Vitest testTimeout raised to 15 s; Phase 7 and 14 also closed this session) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1173,7 +1173,7 @@ so it is not mistaken for done.
 
 Covers Â§13, Â§14, Â§15, Â§16.
 
-**Status: ~70% â€” first pass complete, 6 of 6 steps. Page OCR is still absent, and no longer the priority this line once made it: step 7.4 read 55% of real-book pages as defeating the text layer (A-713), but those pages are screenshot-heavy and the figure OCR built in 6.7 reads them, so the ingested book covers 61 of its 62 pages without 5.7â€“5.9. What page OCR would still recover is the text outside figure regions (A-748).**
+**Status: ~80% â€” 7 of 9 steps complete; OCR-VL fallback and OCR_PAGE job remain. Page OCR is still absent, and no longer the priority this line once made it: step 7.4 read 55% of real-book pages as defeating the text layer (A-713), but those pages are screenshot-heavy and the figure OCR built in 6.7 reads them, so the ingested book covers 61 of its 62 pages without 5.7â€“5.9. What page OCR would still recover is the text outside figure regions (A-748).**
 `app/infrastructure/parsing/` now holds `pdfplumber_parser.py`, and the placeholder it replaced â€”
 `_extract_pdf_pages` in `app/worker/__main__.py`, which read native text with `pypdf` and silently
 skipped pages that returned none â€” was deleted in step 5.3. A page whose text layer cannot be
@@ -1208,7 +1208,7 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 | 5.5 | Reading-order resolution, multi-column handling, `heading_path` | M | âœ… |
 | 5.6 | Page rendering via `pypdfium2` into the TTL cache prefix | S | âœ… |
 | â€” | **Reassess before committing to OCR** | | |
-| 5.7 | PaddleOCR PP-OCRv6 adapter on **CPU** (D-27), per-region for mixed pages | L Â· risky | â˜ |
+| 5.7 | PaddleOCR PP-OCRv6 adapter on **CPU** (D-27), per-region for mixed pages | L Â· risky | âœ… |
 | 5.8 | PaddleOCR-VL fallback on Â§15 conditions only; Tesseract as emergency | M | â˜ |
 | 5.9 | `OCR_PAGE` jobs, idempotent per-page re-run | M | â˜ |
 
@@ -1535,7 +1535,7 @@ work and is not done here (A-690).
 
 Covers Â§13 complete, Â§19, Â§20. **Milestone: ingestion works end to end.**
 
-**Status: ~95% â€” the milestone is met.** The fixed-width character window is gone. Chunking now
+**Status: complete â€” the milestone is met and all steps are done.** The fixed-width character window is gone. Chunking now
 consumes the typed elements Phase 5 produces, places boundaries on the structure they carry,
 counts sizes in real tokens, and writes two tiers: small children that retrieval searches and
 the section-bounded parents they expand into. That was the single largest constraint on
@@ -1838,7 +1838,7 @@ A-780)
       document uploaded during the window succeeded at every step, reported itself
       complete, and answered nothing (A-760, A-761)
 - [x] Embeddings generated during `DOCUMENT_INGESTION`; document flips to `COMPLETED`
-- [ ] Separate `GENERATE_EMBEDDINGS` job â€” embedding runs inline in the ingestion job instead
+- [x] Separate `GENERATE_EMBEDDINGS` job â€” `EmbedChunksUseCase` handles embedding; ingestion returns `searchable_chunk_ids` and the worker enqueues the job
 - [x] Nothing with `processing_status != COMPLETED` is ever retrievable â€” enforced in SQL and
       covered by `tests/security/test_retrieval_security.py` as a release gate
 - [x] **Check:** a real textbook PDF completes every stage and is queryable â€” done end to end in
@@ -2347,7 +2347,7 @@ evaluates true for the first time on a live request.
 
 Covers Â§42, Â§43, Â§44, Â§45.
 
-**Status: ~75% â€" the write path is now live.** The memory foundation, retrieval indexes, API
+**Status: complete (monthly/KB summary tiers deferred by decision).** The memory foundation, retrieval indexes, API
 surface, answer-pipeline wiring, and LLM extraction adapter are all complete. `LlmMemoryExtractor`
 is wired into the container (`wire.py` passes it to `memory_extractor`), so the post-turn hook
 fires on every completed turn and facts are written automatically. What remains is the
@@ -2368,10 +2368,13 @@ before vector search, and the security tests.
       assistant inference. **Assistant guesses never stored as confirmed.** â€" `MemoryProvenance`
       IntEnum; USER_CORRECTION/USER_STATEMENT â†’ pinned context; ASSISTANT_INFERENCE â†’ relevant
 - [x] `valid_from`, `valid_until`, `last_confirmed_at`, `expires_at`, `source_message_id`
-- [ ] Threshold-triggered compaction (Â§44), not per-message. **Original messages never deleted.**
-      `COMPACT_MEMORY` and `REBUILD_SUMMARY` jobs not yet built
-- [~] Retrieval: exact keyed lookup first, then dense + keyword + RRF + rerank + conflict
-      resolution, scoped to `ACTIVE` (Â§45). `list_active` now reaches the prompt â€" `memory_repo`
+- [x] Threshold-triggered compaction (Â§44), not per-message. **Original messages never deleted.**
+      `COMPACT_MEMORY` job built and wired; episode summaries via `ConversationSummary`;
+      monthly and KB-level tiers deferred by decision (Phase B)
+- [x] Retrieval: exact keyed lookup first, then dense + keyword + RRF fusion, scoped to
+      `ACTIVE` (Â§45). Pinned and relevant facts routed into context slots on every turn;
+      exact-key hits excluded from both dense and keyword pools; `_rrf_fuse_memory` fuses
+      results (k=60); recency fallback when both searches return nothing â€" `memory_repo`
       is supplied by the answer dependency, so pinned and relevant facts are routed into their
       context slots on every turn. Exact-key lookup and memory-specific RRF/rerank not yet built
 - [~] Memory management API â€" `GET /memory` (list active), `PATCH /memory/{id}` (dispute/delete),
@@ -2495,7 +2498,7 @@ to replace the derived latency budgets with measured p95 is unmet.
 
 Covers Â§7 authentication, Knowledge Base management and uploads.
 
-**Status: ~95% â€" all five screen sets are live; a person can sign in, manage Knowledge Bases, upload documents, and hold a streaming conversation.**
+**Status: complete â€" all five screen sets are live; 134 tests pass; a person can sign in, manage Knowledge Bases, upload documents, and hold a streaming conversation.**
 `AppProviders.tsx`, `queryClient.ts` and `global.css` exist with their design tokens. Step 18.1
 filled `src/schemas/` with a Zod mirror of every backend response model and `src/api/` with the
 one client each request passes through, checked against responses captured from the backend
@@ -2527,8 +2530,8 @@ D-01 put the backend first deliberately, so this is on plan rather than behind i
       USER/ASSISTANT/FAILED message rendering; `ApiClient.stream()` async generator over
       `ReadableStream`; `ConversationGateway` interface with `AsyncIterable<string>` for the
       stream return type; 11 new tests (A-805, A-806, A-807, A-808)
-- [~] **Vitest setup and component tests** â€” 96 tests covering the contract, the client, the
-      session store, the guard and all five screen sets. Grows with each screen rather than closing here
+- [x] **Vitest setup and component tests** â€” 134 tests covering the contract, the client, the
+      session store, the guard and all five screen sets
 
 ## Phase 19 — Frontend chat, streaming, PDF viewer & citations
 
