@@ -25,6 +25,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         start = time.monotonic()
+        request.state.started_at = start
         response = await call_next(request)
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(

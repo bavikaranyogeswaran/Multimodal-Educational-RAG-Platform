@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -260,12 +261,18 @@ async def stream_response(
     use_case: Annotated[AnswerUseCase, Depends(get_answer_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> StreamingResponse:
+    authentication_ms = int(
+        (time.monotonic() - getattr(request.state, "started_at", time.monotonic())) * 1000
+    )
+    _log.info("stream_stage", stage="authentication", elapsed_ms=authentication_ms)
+
     # ── Concurrency gate ─────────────────────────────────────────────────────
     # Two semaphores, checked synchronously so no other coroutine can take the
     # last slot between the check and the acquire (asyncio is single-threaded).
     global_sem: asyncio.Semaphore = request.app.state.generation_semaphore
     if global_sem.locked():
         raise HTTPException(status_code=429, detail=_THROTTLE_MESSAGE)
+    _mq_start = time.monotonic()
     await global_sem.acquire()
 
     user_sems: dict[str, asyncio.Semaphore] = request.app.state.user_generation_semaphores
@@ -277,6 +284,11 @@ async def stream_response(
         global_sem.release()
         raise HTTPException(status_code=429, detail=_THROTTLE_MESSAGE)
     await user_sem.acquire()
+    _log.info(
+        "stream_stage",
+        stage="model_queue",
+        elapsed_ms=int((time.monotonic() - _mq_start) * 1000),
+    )
     # ── End concurrency gate ─────────────────────────────────────────────────
 
     try:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ import structlog
 
 from app.application.commands.generate_quiz import GenerateQuizCommand, GenerateQuizUseCase
 from app.application.commands.multi_hop_answer import MultiHopAnswerCommand, MultiHopAnswerUseCase
+from app.application.observability.timer import StageTimer
 from app.application.queries.retrieve_evidence import RetrievalOrchestrator, RetrieveEvidenceQuery
 from app.domain.conversations.entities import Message
 from app.domain.enums import (
@@ -311,6 +313,7 @@ class AnswerUseCase:
         early must call `aclose()` to say so. Abandoning it without closing leaves the
         record to whenever the object is collected.
         """
+        _execute_started_at = time.monotonic()
         now = datetime.now(UTC)
 
         async with self._uow() as repo:
@@ -365,6 +368,19 @@ class AnswerUseCase:
                 return _cache_replay()
         # ── End cache probe ───────────────────────────────────────────────────
 
+        async def _timed_memory() -> tuple[tuple[str, ...], tuple[str, ...]]:
+            with StageTimer("memory_retrieval") as _timer:
+                result = await _load_memory_context(
+                    command.scope,
+                    command.query,
+                    self._memory_repo,
+                    self._embedder,
+                    summary_repo=self._summary_repo,
+                    conversation_id=command.conversation_id,
+                )
+            _log.info("answer_stage", stage="memory_retrieval", elapsed_ms=_timer.elapsed_ms())
+            return result
+
         # Memory retrieval runs concurrently with chunk retrieval — it depends only on
         # the query text and user scope, not on which passages retrieval finds.
         retrieval, (pinned_memory, relevant_memory) = await asyncio.gather(
@@ -376,22 +392,17 @@ class AnswerUseCase:
                     history=history,
                 )
             ),
-            _load_memory_context(
-                command.scope,
-                command.query,
-                self._memory_repo,
-                self._embedder,
-                summary_repo=self._summary_repo,
-                conversation_id=command.conversation_id,
-            ),
+            _timed_memory(),
         )
         evidence = retrieval.evidence
 
         # Graph context is loaded after retrieval so it is seeded by the same
         # chunks the model will see — not by all entities in the document.
-        graph_context = await _load_graph_context(
-            command.scope, evidence, self._kb_repo, self._graph_repo
-        )
+        with StageTimer("graph_retrieval") as _graph_timer:
+            graph_context = await _load_graph_context(
+                command.scope, evidence, self._kb_repo, self._graph_repo
+            )
+        _log.info("answer_stage", stage="graph_retrieval", elapsed_ms=_graph_timer.elapsed_ms())
 
         if retrieval.was_rewritten:
             now_rw = datetime.now(UTC)
@@ -426,23 +437,25 @@ class AnswerUseCase:
 
         rolling_summary = conversation.rolling_summary if conversation else None
 
-        request = self._context_builder.build(
-            ContextInputs(
-                model_task=ModelTask.ANSWER_GENERATION,
-                system_preamble=_SYSTEM_PREAMBLE,
-                safety_rules=_SAFETY_RULES,
-                task_instructions=_TASK_INSTRUCTIONS,
-                query=command.query,
-                instructions=_INSTRUCTIONS,
-                conversation_history=history,
-                evidence=labeled,
-                output_schema=OUTPUT_SCHEMA,
-                knowledge_base_state=graph_context,
-                pinned_memory=pinned_memory,
-                relevant_memory=relevant_memory,
-                rolling_summary=rolling_summary,
+        with StageTimer("context_building") as _ctx_timer:
+            request = self._context_builder.build(
+                ContextInputs(
+                    model_task=ModelTask.ANSWER_GENERATION,
+                    system_preamble=_SYSTEM_PREAMBLE,
+                    safety_rules=_SAFETY_RULES,
+                    task_instructions=_TASK_INSTRUCTIONS,
+                    query=command.query,
+                    instructions=_INSTRUCTIONS,
+                    conversation_history=history,
+                    evidence=labeled,
+                    output_schema=OUTPUT_SCHEMA,
+                    knowledge_base_state=graph_context,
+                    pinned_memory=pinned_memory,
+                    relevant_memory=relevant_memory,
+                    rolling_summary=rolling_summary,
+                )
             )
-        )
+        _log.info("answer_stage", stage="context_building", elapsed_ms=_ctx_timer.elapsed_ms())
 
         # generate_stream is called here so the request is observable by callers that
         # inspect call_args before consuming the returned iterator.
@@ -494,11 +507,16 @@ class AnswerUseCase:
                     answer_text = hop.answer
                     yield answer_text
                 else:
-                    raw, usage = await _collect_stream(initial_stream)
-                    checked = await _validate(
-                        raw, labeled, entailment, faithfulness,
-                        self._answer_max_words, self._answer_max_tokens,
-                    )
+                    with StageTimer("generation") as _gen_timer:
+                        raw, usage, ttft_ms = await _collect_stream(initial_stream)
+                    _log.info("answer_stage", stage="generation", elapsed_ms=_gen_timer.elapsed_ms())
+                    _log.info("answer_stage", stage="time_to_first_token", elapsed_ms=ttft_ms)
+                    with StageTimer("validation") as _val_timer:
+                        checked = await _validate(
+                            raw, labeled, entailment, faithfulness,
+                            self._answer_max_words, self._answer_max_tokens,
+                        )
+                    _log.info("answer_stage", stage="validation", elapsed_ms=_val_timer.elapsed_ms())
 
                     if checked.decision is ValidationDecision.REPAIRABLE:
                         repair = build_repair_instructions(
@@ -530,13 +548,17 @@ class AnswerUseCase:
                         # The repair call replaces the first one's usage rather than
                         # adding to it. What is recorded is the generation that produced
                         # the answer actually returned; the discarded attempt is not.
-                        repair_raw, usage = await _collect_stream(
-                            gateway.generate_stream(repair_request)
-                        )
-                        checked = await _validate(
-                            repair_raw, labeled, entailment, faithfulness,
-                            self._answer_max_words, self._answer_max_tokens,
-                        )
+                        with StageTimer("generation") as _repair_gen_timer:
+                            repair_raw, usage, _ = await _collect_stream(
+                                gateway.generate_stream(repair_request)
+                            )
+                        _log.info("answer_stage", stage="generation_repair", elapsed_ms=_repair_gen_timer.elapsed_ms())
+                        with StageTimer("validation") as _repair_val_timer:
+                            checked = await _validate(
+                                repair_raw, labeled, entailment, faithfulness,
+                                self._answer_max_words, self._answer_max_tokens,
+                            )
+                        _log.info("answer_stage", stage="validation_repair", elapsed_ms=_repair_val_timer.elapsed_ms())
 
                     answer = _returnable_answer(checked)
                     if answer is None:
@@ -570,6 +592,11 @@ class AnswerUseCase:
                 failed = True
                 raise
             finally:
+                _log.info(
+                    "answer_stage",
+                    stage="total",
+                    elapsed_ms=int((time.monotonic() - _execute_started_at) * 1000),
+                )
                 outcome = _outcome(failed=failed, abandoned=abandoned, abstained=abstained)
                 await _record_turn(
                     uow,
@@ -730,17 +757,21 @@ def _outcome(*, failed: bool, abandoned: bool, abstained: bool) -> MessageStatus
 
 async def _collect_stream(
     stream: AsyncIterable[str],
-) -> tuple[str, GenerationUsage | None]:
-    """Drain the stream, and take the usage the provider reports once it is done.
+) -> tuple[str, GenerationUsage | None, int]:
+    """Drain the stream; return text, usage, and time-to-first-token in ms.
 
-    Read after the loop, never during: the counts do not exist until the provider has
+    Usage is read after the loop: the counts do not exist until the provider has
     finished producing. A stream that reports nothing yields `None` rather than zeros,
     so "the provider did not say" stays distinct from "it cost nothing".
     """
     parts: list[str] = []
+    ttft_ms = 0
+    _start = time.monotonic()
     async for token in stream:
+        if not parts:
+            ttft_ms = int((time.monotonic() - _start) * 1000)
         parts.append(token)
-    return "".join(parts), getattr(stream, "usage", None)
+    return "".join(parts), getattr(stream, "usage", None), ttft_ms
 
 
 #: Outcomes the faithfulness check cannot move, so it is not worth its model call.
