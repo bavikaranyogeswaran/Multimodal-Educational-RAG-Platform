@@ -165,6 +165,10 @@ class ModelSettings(BaseSettings):
     max_concurrent_generations_per_user: int = 1
     generation_queue_size: int = 16
 
+    #: Hard wall on how long one generation may run. Protects against a hung provider
+    #: holding a semaphore slot indefinitely.
+    generation_timeout_seconds: int = 90
+
     #: Task-specific output caps.
     max_output_tokens_answer: int = 1024
     max_output_tokens_rewrite: int = 128

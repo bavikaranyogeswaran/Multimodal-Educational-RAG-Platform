@@ -13,6 +13,7 @@ every query. Startup checks for this rather than letting it surface one request 
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -65,6 +66,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError(explain_unusable_loop())
 
     _app.state.container = build_container(settings)
+    _app.state.generation_semaphore = asyncio.Semaphore(settings.model.max_concurrent_generations)
+    _app.state.user_generation_semaphores: dict[str, asyncio.Semaphore] = {}
     _app.state.jwks_client = JwksClient(
         url=settings.supabase.jwks_url,
         cache_seconds=settings.supabase.jwks_cache_seconds,

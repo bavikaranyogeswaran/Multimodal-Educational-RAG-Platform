@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from app.api.dependencies.scope import get_kb_scope
 from app.api.routers.conversations import _FAILED_MESSAGE, _REJECTED_MESSAGE
 from app.api.routers.conversations import router as conversations_router
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
+from app.configuration.settings import Settings, get_settings
 from app.domain.errors import GenerationRejectedError, ProviderError
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.session import get_session
@@ -95,6 +97,11 @@ def _make_app(
     auth_raises_401: bool = False,
 ) -> FastAPI:
     app = FastAPI()
+
+    # Concurrency state normally set up in lifespan.
+    app.state.generation_semaphore = asyncio.Semaphore(2)
+    app.state.user_generation_semaphores = {}
+
     app.dependency_overrides[get_session] = _session_override(session)
 
     if use_case is not None:
@@ -118,6 +125,14 @@ def _make_app(
         app.dependency_overrides[get_kb_scope] = _missing
     else:
         app.dependency_overrides[get_kb_scope] = lambda: _SCOPE
+
+    fake_model = MagicMock()
+    fake_model.max_concurrent_generations = 2
+    fake_model.max_concurrent_generations_per_user = 1
+    fake_model.generation_timeout_seconds = 60
+    fake_settings = MagicMock(spec=Settings)
+    fake_settings.model = fake_model
+    app.dependency_overrides[get_settings] = lambda: fake_settings
 
     app.include_router(conversations_router, prefix="/api/v1")
     return app

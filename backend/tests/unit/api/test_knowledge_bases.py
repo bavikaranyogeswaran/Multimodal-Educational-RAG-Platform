@@ -17,8 +17,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.container import get_container
 from app.api.dependencies.scope import get_kb_scope
 from app.api.routers.knowledge_bases import router
+from app.configuration.settings import get_settings
 from app.domain.documents.entities import Document
 from app.domain.enums import DocumentStatus, ExplanationLevel, JobType
 from app.domain.knowledge_base.entities import KnowledgeBase
@@ -108,6 +110,18 @@ def _make_app(
         test_app.dependency_overrides[get_kb_scope] = _missing
     elif scope is not None:
         test_app.dependency_overrides[get_kb_scope] = lambda: scope
+
+    # The delete endpoint accesses the container for cache and uses settings for the
+    # cache guard. Override both so the test does not need app.state.container.
+    test_app.dependency_overrides[get_container] = lambda: MagicMock()
+    fake_cache = MagicMock()
+    fake_cache.enabled = False
+    fake_db = MagicMock()
+    fake_db.url.get_secret_value.return_value = ""
+    fake_settings = MagicMock()
+    fake_settings.cache = fake_cache
+    fake_settings.database = fake_db
+    test_app.dependency_overrides[get_settings] = lambda: fake_settings
 
     test_app.include_router(router, prefix="/api/v1")
     return test_app
@@ -310,7 +324,10 @@ class TestDeleteKnowledgeBase:
         user_id = uuid.uuid4()
         kb_id = uuid.uuid4()
         scope = ScopeContext(user_id=user_id, knowledge_base_id=kb_id)
-        session = _session_for_write()
+        # The delete endpoint lists documents first (returns empty list → no job queued),
+        # then issues a delete statement. Both calls go through session.execute, so the
+        # session must return a result with a usable scalars().all() chain.
+        session = _session_for_list([])
         with TestClient(_make_app(user_id, session, scope=scope)) as client:
             response = client.delete(f"/api/v1/knowledge-bases/{kb_id}")
         assert response.status_code == 204

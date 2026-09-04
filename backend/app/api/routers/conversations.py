@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncIterator
@@ -9,12 +10,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.answer import get_answer_use_case
 from app.api.dependencies.scope import get_kb_scope
+from app.configuration.settings import Settings, get_settings
 from app.api.schemas.conversation import (
     BoundingBoxResponse,
     CitationResponse,
@@ -65,6 +67,21 @@ _REJECTED_MESSAGE = (
 _FAILED_MESSAGE = (
     "Something went wrong while answering, so this response is incomplete. "
     "Try asking again."
+)
+
+#: Shown when both global and per-user slots are full. Not a server error — the system is
+#: working correctly, just busy. The student can retry; the slot will free when the current
+#: generation finishes.
+_THROTTLE_MESSAGE = (
+    "The system is currently handling too many requests. "
+    "Try again in a moment."
+)
+
+#: Shown when a generation exceeds the hard time limit. Protects against a hung provider
+#: holding a semaphore slot indefinitely.
+_TIMEOUT_MESSAGE = (
+    "Answer generation took too long and was stopped. "
+    "Try a shorter or more focused question."
 )
 
 
@@ -235,33 +252,65 @@ async def delete_conversation(
 
 @router.post("/{conversation_id}/stream", status_code=200)
 async def stream_response(
+    request: Request,
     conversation_id: uuid.UUID,
     body: StreamRequest,
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
     session: Annotated[AsyncSession, Depends(get_session)],
     use_case: Annotated[AnswerUseCase, Depends(get_answer_use_case)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> StreamingResponse:
-    repo = SqlConversationRepository(scope=scope, session=session)
-    conversation = await repo.get(scope, conversation_id)
-    if conversation is None:
-        raise HTTPException(status_code=404, detail=_404_CONVERSATION)
+    # ── Concurrency gate ─────────────────────────────────────────────────────
+    # Two semaphores, checked synchronously so no other coroutine can take the
+    # last slot between the check and the acquire (asyncio is single-threaded).
+    global_sem: asyncio.Semaphore = request.app.state.generation_semaphore
+    if global_sem.locked():
+        raise HTTPException(status_code=429, detail=_THROTTLE_MESSAGE)
+    await global_sem.acquire()
 
-    command = AnswerCommand(
-        scope=scope,
-        conversation_id=conversation_id,
-        query=body.query,
+    user_sems: dict[str, asyncio.Semaphore] = request.app.state.user_generation_semaphores
+    user_sem = user_sems.setdefault(
+        str(scope.user_id),
+        asyncio.Semaphore(settings.model.max_concurrent_generations_per_user),
     )
-    stream = await use_case.execute(command)
+    if user_sem.locked():
+        global_sem.release()
+        raise HTTPException(status_code=429, detail=_THROTTLE_MESSAGE)
+    await user_sem.acquire()
+    # ── End concurrency gate ─────────────────────────────────────────────────
+
+    try:
+        repo = SqlConversationRepository(scope=scope, session=session)
+        conversation = await repo.get(scope, conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail=_404_CONVERSATION)
+
+        command = AnswerCommand(
+            scope=scope,
+            conversation_id=conversation_id,
+            query=body.query,
+        )
+        stream = await use_case.execute(command)
+    except BaseException:
+        global_sem.release()
+        user_sem.release()
+        raise
 
     async def _event_stream() -> AsyncIterator[str]:
         # Closing the inner stream is what tells the use case the student has gone, and
         # it has to happen here rather than whenever the generator is collected: the turn
         # is not recorded until its cleanup runs, and a record that waits on the garbage
         # collector is a record with no guaranteed arrival time.
+        #
+        # Semaphore release is also here: the slot must stay occupied until the entire
+        # generation is done, not until the headers go out.
         try:
             try:
-                async for token in stream:
-                    yield f"data: {token}\n\n"
+                async with asyncio.timeout(settings.model.generation_timeout_seconds):
+                    async for token in stream:
+                        yield f"data: {token}\n\n"
+            except TimeoutError:
+                yield f"event: error\ndata: {_TIMEOUT_MESSAGE}\n\n"
             except GenerationRejectedError as exc:
                 # Validation rejects an answer before its first token, by which point the
                 # 200 and its headers have already gone out — there is no status code left
@@ -284,6 +333,8 @@ async def stream_response(
             yield "data: [DONE]\n\n"
         finally:
             await stream.aclose()
+            global_sem.release()
+            user_sem.release()
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
