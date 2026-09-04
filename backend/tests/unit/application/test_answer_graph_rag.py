@@ -149,6 +149,9 @@ def _mock_repo() -> AsyncMock:
     repo.save_message = AsyncMock()
     repo.save_retrieval_chunks = AsyncMock()
     repo.save_citations = AsyncMock()
+    conv = MagicMock()
+    conv.rolling_summary = None
+    repo.get = AsyncMock(return_value=conv)
     return repo
 
 

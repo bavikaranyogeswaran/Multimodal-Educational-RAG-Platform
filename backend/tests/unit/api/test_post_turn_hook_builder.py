@@ -25,6 +25,7 @@ def _make_container(extractor: object, embedder: object) -> MagicMock:
     container = MagicMock()
     container.memory_extractor = extractor
     container.embedder = embedder
+    container.summarizer = None
     return container
 
 

@@ -57,6 +57,7 @@ from app.domain.models.validation import (
     check_table_references,
     decide,
 )
+from app.domain.memory.entities import MemoryFact
 from app.domain.ports.adapters import EmbeddingPort
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
@@ -773,6 +774,9 @@ _PINNED_PROVENANCES = frozenset({MemoryProvenance.USER_STATEMENT, MemoryProvenan
 #: Maximum inferred (non-pinned) facts included in the prompt.
 _MAX_RELEVANT_MEMORY = 10
 
+#: RRF smoothing constant for memory fact fusion — same value as chunk-level fusion.
+_MEMORY_RRF_K = 60
+
 
 def _key_matches_query(key: str, query_lower: str) -> bool:
     """Return True when a fact's snake_case key appears verbatim in the query.
@@ -782,6 +786,24 @@ def _key_matches_query(key: str, query_lower: str) -> bool:
     under a programmatic identifier.
     """
     return key.replace("_", " ") in query_lower
+
+
+def _rrf_fuse_memory(
+    *ranked_lists: Sequence[tuple[MemoryFact, float]],
+) -> list[MemoryFact]:
+    """Merge ranked memory-fact lists with Reciprocal Rank Fusion.
+
+    Each element of `ranked_lists` is a pre-ranked sequence of (MemoryFact, score)
+    pairs where lower index = higher rank. Facts appearing in multiple lists get
+    additive RRF contributions. Returns facts in descending fusion-score order.
+    """
+    scores: dict[uuid.UUID, float] = {}
+    facts: dict[uuid.UUID, MemoryFact] = {}
+    for ranked in ranked_lists:
+        for rank, (fact, _) in enumerate(ranked):
+            scores[fact.id] = scores.get(fact.id, 0.0) + 1.0 / (_MEMORY_RRF_K + rank)
+            facts.setdefault(fact.id, fact)
+    return [facts[fid] for fid in sorted(scores, key=lambda fid: scores[fid], reverse=True)]
 
 
 _MAX_EPISODE_SUMMARIES = 3
@@ -799,15 +821,17 @@ async def _load_memory_context(
     """Return (pinned_memory, relevant_memory) tuples from the student's active facts.
 
     Pinned facts (explicit user statements and corrections) are always included in full.
-    For inferred facts, retrieval runs in two passes:
+    For inferred facts, retrieval runs in three passes:
 
       1. Exact-key lookup — inferred facts whose key (underscores replaced with spaces)
-         appears literally in the query are surfaced first, before vector search.
-      2. Dense search — remaining inferred facts ranked by cosine similarity to the query
-         embedding. Falls back to recency order when no embedder is wired in or no
-         embeddings have been stored yet.
+         appears literally in the query are surfaced first.
+      2. Dense + keyword search, fused with RRF — when an embedder is wired, both
+         searches run concurrently and their ranked lists are merged. Without an
+         embedder, keyword search alone ranks the remaining inferred facts.
+      3. Recency fallback — when neither search returns a result (no embeddings stored
+         yet and no text match), list_active order fills the remaining slots.
 
-    The two passes are deduplicated and capped at _MAX_RELEVANT_MEMORY combined.
+    Results from all three passes are deduplicated and capped at _MAX_RELEVANT_MEMORY.
 
     Returns empty tuples when no memory repository is wired in or no active facts exist.
     """
@@ -826,24 +850,32 @@ async def _load_memory_context(
             pinned_facts = [f for f in active_facts if f.provenance in _PINNED_PROVENANCES]
             inferred_facts = [f for f in active_facts if f.provenance not in _PINNED_PROVENANCES]
 
-            # Pass 1: exact-key matches surface first regardless of embedding availability.
+            # Pass 1: exact-key matches surface first regardless of search availability.
             key_hits = [f for f in inferred_facts if _key_matches_query(f.key, query_lower)]
-            key_hit_ids = {f.id for f in key_hits}
+            # Exclude key-hit and pinned ids from the search result pools.
+            exclude_ids = {f.id for f in key_hits} | {f.id for f in pinned_facts}
 
             if query_embedding is not None:
-                dense_hits = await memory_repo.dense_search(
-                    scope, query_embedding, limit=_MAX_RELEVANT_MEMORY
+                # Pass 2a: dense + keyword concurrently, then RRF-fuse the two lists.
+                dense_hits, keyword_hits = await asyncio.gather(
+                    memory_repo.dense_search(scope, query_embedding, limit=_MAX_RELEVANT_MEMORY),
+                    memory_repo.keyword_search(scope, query, limit=_MAX_RELEVANT_MEMORY),
                 )
-                dense_facts = [
-                    f for f, _ in dense_hits
-                    if f.provenance not in _PINNED_PROVENANCES and f.id not in key_hit_ids
-                ]
-                relevant_facts = (key_hits + dense_facts)[:_MAX_RELEVANT_MEMORY]
+                dense_filtered = [(f, s) for f, s in dense_hits if f.id not in exclude_ids]
+                keyword_filtered = [(f, s) for f, s in keyword_hits if f.id not in exclude_ids]
+                fused = _rrf_fuse_memory(dense_filtered, keyword_filtered)
+                relevant_facts = (key_hits + fused)[:_MAX_RELEVANT_MEMORY]
                 if not relevant_facts:
-                    # No embeddings stored yet — fall back so new facts still appear.
+                    # Pass 3: no embeddings stored yet and no keyword match — recency order.
                     relevant_facts = inferred_facts[:_MAX_RELEVANT_MEMORY]
             else:
-                non_key_inferred = [f for f in inferred_facts if f.id not in key_hit_ids]
+                # Pass 2b: keyword search only (no embedder).
+                keyword_hits = await memory_repo.keyword_search(scope, query, limit=_MAX_RELEVANT_MEMORY)
+                keyword_filtered = [f for f, _ in keyword_hits if f.id not in exclude_ids]
+                # Fall back to recency order when keyword returns nothing.
+                non_key_inferred = keyword_filtered or [
+                    f for f in inferred_facts if f.id not in exclude_ids
+                ]
                 relevant_facts = (key_hits + non_key_inferred)[:_MAX_RELEVANT_MEMORY]
 
             pinned_strings = tuple(f.content for f in pinned_facts)

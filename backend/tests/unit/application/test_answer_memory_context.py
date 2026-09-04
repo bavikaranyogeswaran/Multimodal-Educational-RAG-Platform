@@ -69,6 +69,10 @@ def _mock_conv_repo() -> AsyncMock:
     repo.list_history = AsyncMock(return_value=[])
     repo.save_message = AsyncMock()
     repo.save_retrieval_chunks = AsyncMock()
+    # rolling_summary must be a string/None so ContextBuilder can call split() on it.
+    conv = MagicMock()
+    conv.rolling_summary = None
+    repo.get = AsyncMock(return_value=conv)
     return repo
 
 
@@ -97,10 +101,12 @@ def _context_builder() -> ContextBuilder:
 def _mock_memory_repo(
     facts: list[MemoryFact],
     dense_results: list[tuple[MemoryFact, float]] | None = None,
+    keyword_results: list[tuple[MemoryFact, float]] | None = None,
 ) -> AsyncMock:
     repo = AsyncMock()
     repo.list_active = AsyncMock(return_value=facts)
     repo.dense_search = AsyncMock(return_value=dense_results if dense_results is not None else [])
+    repo.keyword_search = AsyncMock(return_value=keyword_results if keyword_results is not None else [])
     return repo
 
 
@@ -342,18 +348,182 @@ class TestSemanticSearch:
         assert len(request.pinned_memory) == 1
         assert len(request.relevant_memory) == 1
 
-    async def test_fallback_to_list_active_when_dense_returns_empty(self) -> None:
+    async def test_fallback_to_list_active_when_dense_and_keyword_return_empty(self) -> None:
         fact = _make_fact(
             key="weak_topic",
             value={"topic": "thermodynamics"},
             provenance=MemoryProvenance.ASSISTANT_INFERENCE,
         )
         embedder = _mock_embedder()
-        # dense_search returns empty (no embeddings stored yet)
-        repo = _mock_memory_repo([fact], dense_results=[])
+        # Both searches return empty (no embeddings stored yet, no text match).
+        repo = _mock_memory_repo([fact], dense_results=[], keyword_results=[])
         uc, gw = _make_use_case(memory_repo=repo, embedder=embedder)
         cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
         await uc.execute(cmd)
         request = gw.generate_stream.call_args[0][0]
-        # Fallback: the inferred fact still appears via list_active
+        # Fallback: the inferred fact still appears via list_active recency order.
         assert len(request.relevant_memory) == 1
+
+
+# ---------------------------------------------------------------------------
+# Keyword search path (no embedder)
+# ---------------------------------------------------------------------------
+
+
+class TestKeywordSearch:
+    async def test_keyword_search_called_without_embedder(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        repo = _mock_memory_repo([fact], keyword_results=[(fact, 0.8)])
+        uc, gw = _make_use_case(memory_repo=repo, embedder=None)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="thermodynamics question")
+        await uc.execute(cmd)
+        repo.keyword_search.assert_awaited_once()
+        request = gw.generate_stream.call_args[0][0]
+        assert len(request.relevant_memory) == 1
+
+    async def test_keyword_result_goes_to_relevant_memory(self) -> None:
+        fact = _make_fact(
+            key="preferred_format",
+            value={"format": "bullet points"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        repo = _mock_memory_repo([fact], keyword_results=[(fact, 0.7)])
+        uc, gw = _make_use_case(memory_repo=repo, embedder=None)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        assert len(request.relevant_memory) == 1
+        assert "preferred_format" in request.relevant_memory[0]
+
+    async def test_fallback_to_recency_when_keyword_returns_nothing(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        repo = _mock_memory_repo([fact], keyword_results=[])
+        uc, gw = _make_use_case(memory_repo=repo, embedder=None)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        # Recency fallback: fact still reaches the prompt.
+        assert len(request.relevant_memory) == 1
+
+    async def test_pinned_facts_excluded_from_keyword_results(self) -> None:
+        pinned = _make_fact(
+            key="exam_date",
+            value={"date": "2026-12-01"},
+            provenance=MemoryProvenance.USER_STATEMENT,
+        )
+        # Keyword search returns the pinned fact — it must be filtered out of relevant.
+        repo = _mock_memory_repo([pinned], keyword_results=[(pinned, 0.9)])
+        uc, gw = _make_use_case(memory_repo=repo, embedder=None)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        assert len(request.pinned_memory) == 1
+        assert request.relevant_memory == ()
+
+
+# ---------------------------------------------------------------------------
+# RRF fusion (embedder + keyword wired together)
+# ---------------------------------------------------------------------------
+
+
+class TestRRFFusion:
+    async def test_keyword_search_called_alongside_dense_when_embedder_wired(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        embedder = _mock_embedder()
+        repo = _mock_memory_repo([fact], dense_results=[(fact, 0.2)], keyword_results=[])
+        uc, _ = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        repo.keyword_search.assert_awaited_once()
+        repo.dense_search.assert_awaited_once()
+
+    async def test_fact_in_both_lists_appears_once_with_boosted_rank(self) -> None:
+        fact = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        other = _make_fact(
+            key="sessions_done",
+            value={"count": 3},
+            provenance=MemoryProvenance.APPLICATION_EVENT,
+        )
+        embedder = _mock_embedder()
+        # fact appears in both; other appears only in dense.
+        repo = _mock_memory_repo(
+            [fact, other],
+            dense_results=[(fact, 0.1), (other, 0.3)],
+            keyword_results=[(fact, 0.9)],
+        )
+        uc, gw = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        # Both facts included, no duplicate.
+        assert len(request.relevant_memory) == 2
+        contents = " ".join(request.relevant_memory)
+        assert "weak_topic" in contents
+        assert "sessions_done" in contents
+
+    async def test_rrf_fact_in_both_lists_ranked_first(self) -> None:
+        boosted = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        other = _make_fact(
+            key="sessions_done",
+            value={"count": 3},
+            provenance=MemoryProvenance.APPLICATION_EVENT,
+        )
+        embedder = _mock_embedder()
+        # boosted appears in both lists (rank 0 each → high RRF); other only in dense at rank 1.
+        repo = _mock_memory_repo(
+            [boosted, other],
+            dense_results=[(boosted, 0.1), (other, 0.3)],
+            keyword_results=[(boosted, 0.9)],
+        )
+        uc, gw = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        # The fact in both lists should rank first.
+        assert "weak_topic" in request.relevant_memory[0]
+
+    async def test_pinned_facts_excluded_from_fused_pool(self) -> None:
+        pinned = _make_fact(
+            key="exam_date",
+            value={"date": "2026-12-01"},
+            provenance=MemoryProvenance.USER_STATEMENT,
+        )
+        inferred = _make_fact(
+            key="weak_topic",
+            value={"topic": "thermodynamics"},
+            provenance=MemoryProvenance.ASSISTANT_INFERENCE,
+        )
+        embedder = _mock_embedder()
+        # Dense and keyword both return the pinned fact alongside the inferred one.
+        repo = _mock_memory_repo(
+            [pinned, inferred],
+            dense_results=[(pinned, 0.05), (inferred, 0.2)],
+            keyword_results=[(pinned, 0.95)],
+        )
+        uc, gw = _make_use_case(memory_repo=repo, embedder=embedder)
+        cmd = AnswerCommand(scope=_SCOPE, conversation_id=_CONV_ID, query="q")
+        await uc.execute(cmd)
+        request = gw.generate_stream.call_args[0][0]
+        assert len(request.pinned_memory) == 1
+        # Pinned fact must not appear in relevant_memory even though searches returned it.
+        assert all("exam_date" not in m for m in request.relevant_memory)
