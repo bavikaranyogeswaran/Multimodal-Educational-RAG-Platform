@@ -198,4 +198,13 @@ async def get_answer_use_case(
         answer_max_words=settings.generation.answer_max_words,
         answer_max_tokens=settings.generation.answer_max_tokens,
         post_turn_hook=post_turn_hook,
+        # Only pass the cache when it is actually configured — storage or database
+        # must be wired, otherwise container.cache is _Unimplemented.
+        cache=container.cache if (
+            settings.cache.enabled
+            and (settings.storage.account_id or settings.database.url.get_secret_value())
+        ) else None,
+        cache_ttl_seconds=settings.cache.answer_ttl_seconds,
+        index_version=settings.embedding.index_version,
+        generation_policy_version=settings.app.generation_policy_version,
     )

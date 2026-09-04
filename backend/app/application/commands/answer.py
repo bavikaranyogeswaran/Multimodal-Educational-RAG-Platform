@@ -58,7 +58,7 @@ from app.domain.models.validation import (
     decide,
 )
 from app.domain.memory.entities import MemoryFact
-from app.domain.ports.adapters import EmbeddingPort
+from app.domain.ports.adapters import CacheStore, EmbeddingPort
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
 from app.domain.ports.model_gateway import ModelGatewayPort
@@ -217,6 +217,35 @@ def _derive_prompt_version() -> str:
 PROMPT_VERSION = _derive_prompt_version()
 
 
+def _answer_cache_key(
+    scope: ScopeContext,
+    query: str,
+    history: tuple,
+    active_index_version: int,
+    generation_policy_version: int,
+) -> str:
+    """Deterministic cache key for an answer turn.
+
+    Changes whenever the query, conversation state, index version, prompt, or
+    generation policy changes. Prefixed with the KB id so invalidation can sweep
+    all keys for a KB by prefix (step 16.3).
+    """
+    history_parts = "\x1f".join(
+        f"{t.role.value}:{t.content.value}" for t in history
+    )
+    h = hashlib.sha256(
+        "\x00".join([
+            str(scope.knowledge_base_id),
+            query,
+            history_parts,
+            str(active_index_version),
+            PROMPT_VERSION,
+            str(generation_policy_version),
+        ]).encode("utf-8")
+    ).hexdigest()
+    return f"answer:{scope.knowledge_base_id}:{h}"
+
+
 @dataclass(frozen=True)
 class AnswerCommand:
     scope: ScopeContext
@@ -247,6 +276,10 @@ class AnswerUseCase:
         post_turn_hook: Callable[[ScopeContext, uuid.UUID], Awaitable[None]] | None = None,
         answer_max_words: int = 400,
         answer_max_tokens: int = 600,
+        cache: CacheStore | None = None,
+        cache_ttl_seconds: int = 86400,
+        index_version: int = 1,
+        generation_policy_version: int = 1,
     ) -> None:
         self._retrieve = retrieve
         self._uow = conversation_uow
@@ -264,6 +297,10 @@ class AnswerUseCase:
         self._post_turn_hook = post_turn_hook
         self._answer_max_words = answer_max_words
         self._answer_max_tokens = answer_max_tokens
+        self._cache = cache
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._index_version = index_version
+        self._generation_policy_version = generation_policy_version
 
     async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:
         """Stream the answer for one turn.
@@ -304,6 +341,28 @@ class AnswerUseCase:
                 updated_at=now,
             )
             await repo.save_message(command.scope, user_message)
+
+        # ── Answer cache probe ────────────────────────────────────────────────
+        # Runs after the user message is stored so the question is always
+        # recorded, but before retrieval so a hit skips the expensive path.
+        cache_key: str | None = None
+        if self._cache is not None:
+            cache_key = _answer_cache_key(
+                command.scope, command.query, history,
+                self._index_version, self._generation_policy_version,
+            )
+            cached_bytes = await self._cache.get(cache_key)
+            if cached_bytes is not None:
+                _log.info(
+                    "answer_cache_hit",
+                    kb_id=str(command.scope.knowledge_base_id),
+                )
+
+                async def _cache_replay() -> AsyncGenerator[str, None]:
+                    yield cached_bytes.decode("utf-8")
+
+                return _cache_replay()
+        # ── End cache probe ───────────────────────────────────────────────────
 
         retrieval = await self._retrieve.execute(
             RetrieveEvidenceQuery(
@@ -396,6 +455,8 @@ class AnswerUseCase:
         multi_hop = self._multi_hop
         quiz_generator = self._quiz_generator
         post_turn_hook = self._post_turn_hook
+        cache_ref = self._cache
+        cache_ttl = self._cache_ttl_seconds
         is_multi_hop = retrieval.query_class.needs_decomposition and multi_hop is not None
         is_quiz = retrieval.query_class.needs_quiz_generation and quiz_generator is not None
 
@@ -525,6 +586,23 @@ class AnswerUseCase:
                         _log.exception(
                             "answer.post_turn_hook_error",
                             assistant_message_id=str(assistant_id),
+                        )
+                if (
+                    outcome is MessageStatus.COMPLETED
+                    and answer_text is not None
+                    and cache_key is not None
+                    and cache_ref is not None
+                ):
+                    try:
+                        await cache_ref.put(
+                            cache_key,
+                            answer_text.encode("utf-8"),
+                            ttl=cache_ttl,
+                        )
+                    except Exception:
+                        _log.exception(
+                            "answer_cache_write_error",
+                            kb_id=str(scope.knowledge_base_id),
                         )
 
         return _tracked()
