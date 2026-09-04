@@ -511,6 +511,7 @@ class AnswerUseCase:
                         raw, usage, ttft_ms = await _collect_stream(initial_stream)
                     _log.info("answer_stage", stage="generation", elapsed_ms=_gen_timer.elapsed_ms())
                     _log.info("answer_stage", stage="time_to_first_token", elapsed_ms=ttft_ms)
+                    _log_model_metrics(gateway, usage, _gen_timer.elapsed_ms(), cache_hit=False)
                     with StageTimer("validation") as _val_timer:
                         checked = await _validate(
                             raw, labeled, entailment, faithfulness,
@@ -553,6 +554,7 @@ class AnswerUseCase:
                                 gateway.generate_stream(repair_request)
                             )
                         _log.info("answer_stage", stage="generation_repair", elapsed_ms=_repair_gen_timer.elapsed_ms())
+                        _log_model_metrics(gateway, usage, _repair_gen_timer.elapsed_ms(), cache_hit=False)
                         with StageTimer("validation") as _repair_val_timer:
                             checked = await _validate(
                                 repair_raw, labeled, entailment, faithfulness,
@@ -772,6 +774,47 @@ async def _collect_stream(
             ttft_ms = int((time.monotonic() - _start) * 1000)
         parts.append(token)
     return "".join(parts), getattr(stream, "usage", None), ttft_ms
+
+
+def _log_model_metrics(
+    gateway: ModelGatewayPort,
+    usage: GenerationUsage | None,
+    generation_ms: int,
+    *,
+    cache_hit: bool,
+) -> None:
+    """Emit one FR-OBS-03 model-metrics event per model invocation.
+
+    Skipped silently when usage is absent (provider did not report it, or the
+    stream was closed before it completed). tok_s is omitted when generation_ms
+    is zero to avoid a division-by-zero on very fast test doubles.
+    """
+    if usage is None:
+        return
+    provider: str = "unknown"
+    context_tokens: int | None = None
+    fallback_used: bool | None = None
+    try:
+        profile = gateway.profile_for(ModelTask.ANSWER_GENERATION)
+        provider = profile.provider
+        context_tokens = profile.context_tokens
+        fallback_used = usage.model_id != profile.model_key
+    except Exception:
+        pass
+    _log.info(
+        "model_metrics",
+        provider=provider,
+        model=usage.model_id,
+        input_tokens=usage.prompt_tokens,
+        output_tokens=usage.completion_tokens,
+        tok_s=(
+            round(usage.completion_tokens * 1000 / generation_ms, 1)
+            if generation_ms > 0 else None
+        ),
+        fallback_used=fallback_used,
+        cache_hit=cache_hit,
+        context_tokens=context_tokens,
+    )
 
 
 #: Outcomes the faithfulness check cannot move, so it is not worth its model call.
