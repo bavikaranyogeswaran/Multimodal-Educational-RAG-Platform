@@ -2425,27 +2425,15 @@ is deletion's *lifecycle* half â€” index-version bumping and cache invalida
 consumer until the answer cache below exists â€” and Knowledge Base deletion, which currently
 relies on cascades and leaves every document's stored object orphaned in R2.
 
-- [ ] `CacheStore` on UNLOGGED PostgreSQL â€” no Redis (D-14, ADR-005); table and sweep exist,
-      nothing uses them
-- [ ] All eleven Â§56 cacheable item types
-- [ ] Full Â§56 answer cache key including `conversation_state_hash`, `index_version`,
-      `prompt_version`, `generation_policy_version`
-- [ ] Invalidation on document change, index version, graph version, prompt, model, conversation
-      state
-- [ ] `pg_cron` sweeps expired cache entries and page renders, and drives Â§44 compaction
-- [ ] Semantic answer caching explicitly **not** built (Â§56)
-- [ ] Quantization benchmark â†’ ADR-011 (Â§55)
-- [ ] Prompt-token minimisation, task-specific output limits, parallel retrieval, batched
-      embeddings, rerank pairs, visual descriptions and sub-question checks
-- [ ] Conditional validation: cheap validators always, semantic entailment only for high-risk
-- [ ] Early exits for selected table, selected figure and exact identifier (Â§55)
-- [ ] Concurrency control: max active generations, per-user limits, queue size, timeouts,
-      cancellation on disconnect, backpressure
-- [ ] Deletion asynchronous and idempotent; **retrieval blocked as soon as deletion begins**;
-      entities supported elsewhere preserved; index version incremented; caches invalidated (Â§58)
-- [ ] KB deletion applies the same recursively
-- [ ] Security tests: deleted-document retrieval, cached-answer reuse across users
-- [ ] UC-20, UC-21
+| Step | Deliverable | Size | Done |
+|---|---|---|---|
+| 16.1 | PostgreSQL `SqlCacheStore` â€” `get`/`put`/`delete` on `cache_entries`; wire to replace `_Unimplemented("CacheStore")` | S | âœ… |
+| 16.2 | Answer cache â€” deterministic key (`kb_id` + query hash + versions); check/write in `AnswerUseCase` | M | â˜ |
+| 16.3 | Cache invalidation on KB state change â€” sweep answer-cache entries when index version bumps or document deleted | S | â˜ |
+| 16.4 | Knowledge Base deletion â€” `DELETE_KNOWLEDGE_BASE` job; marks KB `DELETING`, purges R2 objects, clears rows | M | â˜ |
+| 16.5 | Parallel retrieval & early exits â€” `asyncio.gather` for dense+keyword+memory; early exits for exact identifier, selected table, selected figure | M | â˜ |
+| 16.6 | Concurrency control â€” generation semaphore, per-user throttle, timeout, cancellation on disconnect | M | â˜ |
+| 16.7 | Quantization benchmark â†’ ADR-011 | S | â˜ |
 
 ## Phase 17 â€” Observability, evaluation & security release gates
 

@@ -252,7 +252,12 @@ def build_container(settings: Settings) -> Container:
         _figure_cropper = FigureCropper(dpi=settings.storage.page_render_dpi)
     else:
         _storage = cast(StoragePort, _u("StoragePort"))
-        _cache = cast(CacheStore, _u("CacheStore"))
+        if db_url:
+            from app.infrastructure.cache.postgres import SqlCacheStore
+
+            _cache = SqlCacheStore(_session_factory)
+        else:
+            _cache = cast(CacheStore, _u("CacheStore"))
         _figure_cropper = None
 
     _gw = _build_model_gateway(
