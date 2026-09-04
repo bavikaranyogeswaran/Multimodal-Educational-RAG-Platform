@@ -13,11 +13,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.container import get_container
 from app.api.dependencies.scope import get_kb_scope
 from app.api.schemas.knowledge_base import (
     BuildGraphResponse,
@@ -26,6 +28,7 @@ from app.api.schemas.knowledge_base import (
     ReindexResponse,
     UpdateKnowledgeBaseRequest,
 )
+from app.configuration.container import Container
 from app.configuration.settings import Settings, get_settings
 from app.domain.enums import (
     DocumentStatus,
@@ -44,6 +47,7 @@ from app.infrastructure.database.repositories.knowledge_base import SqlKnowledge
 from app.infrastructure.database.session import get_session
 
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
+_log = structlog.get_logger(__name__)
 
 
 @router.post("", status_code=201)
@@ -122,9 +126,48 @@ async def update_knowledge_base(
 async def delete_knowledge_base(
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    container: Annotated[Container, Depends(get_container)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> None:
-    repo = SqlKnowledgeBaseRepository(scope, session)
-    await repo.delete(scope)
+    documents = await SqlDocumentRepository(scope, session).list(scope)
+
+    await SqlKnowledgeBaseRepository(scope, session).delete(scope)
+
+    if settings.cache.enabled and settings.database.url.get_secret_value():
+        try:
+            await container.cache.delete_by_prefix(f"answer:{scope.knowledge_base_id}:")
+        except Exception:
+            _log.exception(
+                "kb_delete_cache_invalidation_failed",
+                knowledge_base_id=str(scope.knowledge_base_id),
+            )
+
+    if documents:
+        now = datetime.now(UTC)
+        job = ProcessingJob(
+            id=uuid4(),
+            job_type=JobType.DELETE_KNOWLEDGE_BASE,
+            priority=JobPriority.BACKGROUND,
+            status=JobStatus.PENDING,
+            attempt_count=0,
+            max_attempts=3,
+            payload={
+                "user_id": str(scope.user_id),
+                "knowledge_base_id": str(scope.knowledge_base_id),
+                "documents": [
+                    {
+                        "document_id": str(doc.id),
+                        "storage_key": doc.storage_key,
+                        "page_count": doc.page_count or 0,
+                    }
+                    for doc in documents
+                ],
+            },
+            created_at=now,
+            updated_at=now,
+        )
+        await SqlJobRepository(session).save(job)
+
     await session.commit()
 
 

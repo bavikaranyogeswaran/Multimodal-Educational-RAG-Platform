@@ -34,6 +34,11 @@ from app.application.commands.delete_document import (
     DeleteDocumentCommand,
     DeleteDocumentUseCase,
 )
+from app.application.commands.delete_knowledge_base import (
+    DeleteKnowledgeBaseCommand,
+    DeleteKnowledgeBaseUseCase,
+    DocumentCleanupRecord,
+)
 from app.application.commands.embed_chunks import EmbedChunksCommand, EmbedChunksUseCase
 from app.application.commands.ingest_document import IngestDocumentCommand, IngestDocumentUseCase
 from app.application.commands.ocr_page import OcrPageCommand, OcrPageUseCase
@@ -121,6 +126,9 @@ async def _run_job(container: Container, settings: Settings, job: ProcessingJob)
     if job.job_type is JobType.DELETE_DOCUMENT:
         await _run_deletion(container, settings, job)
         return
+    if job.job_type is JobType.DELETE_KNOWLEDGE_BASE:
+        await _run_kb_deletion(container, job)
+        return
     if job.job_type is JobType.REINDEX_KNOWLEDGE_BASE:
         await _run_reindex(container, settings, job)
         return
@@ -171,6 +179,43 @@ async def _run_deletion(container: Container, settings: Settings, job: Processin
         await session.commit()
 
     log.info("document_deletion_completed")
+
+
+async def _run_kb_deletion(container: Container, job: ProcessingJob) -> None:
+    """Remove every document's stored file and cached renders for a deleted KB.
+
+    The KB row and document rows are already gone (deleted by the API request before
+    this job was enqueued). What remains are the original PDF files in object storage
+    and the cached page renders, which this job removes document by document.
+
+    Deletion is idempotent — a file or render that is already gone raises no error, so
+    retrying a partially-completed job is safe. max_attempts is 3 rather than 1 for
+    this reason.
+    """
+    scope = _scope_from(job)
+    log = _log.bind(job_id=str(job.id), knowledge_base_id=str(scope.knowledge_base_id))
+    log.info("kb_deletion_started")
+
+    documents = tuple(
+        DocumentCleanupRecord(
+            document_id=uuid.UUID(d["document_id"]),
+            storage_key=d["storage_key"],
+            page_count=int(d.get("page_count") or 0),
+        )
+        for d in job.payload.get("documents", [])
+    )
+
+    use_case = DeleteKnowledgeBaseUseCase(
+        storage=container.storage,
+        page_renderer=container.page_renderer,
+    )
+    await use_case.execute(DeleteKnowledgeBaseCommand(scope=scope, documents=documents))
+
+    async with container.session_factory() as session:
+        await SqlJobRepository(session).save(job.complete(now=datetime.now(UTC)))
+        await session.commit()
+
+    log.info("kb_deletion_completed", documents=len(documents))
 
 
 async def _run_build_graph(
@@ -681,6 +726,7 @@ async def _main() -> None:
         {
             JobType.DOCUMENT_INGESTION,
             JobType.DELETE_DOCUMENT,
+            JobType.DELETE_KNOWLEDGE_BASE,
             JobType.REINDEX_KNOWLEDGE_BASE,
             JobType.BUILD_GRAPH,
             JobType.GENERATE_EMBEDDINGS,

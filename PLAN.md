@@ -2430,7 +2430,7 @@ relies on cascades and leaves every document's stored object orphaned in R2.
 | 16.1 | PostgreSQL `SqlCacheStore` â€” `get`/`put`/`delete` on `cache_entries`; wire to replace `_Unimplemented("CacheStore")` | S | âœ… |
 | 16.2 | Answer cache â€” deterministic key (`kb_id` + query hash + versions); check/write in `AnswerUseCase` | M | âœ… |
 | 16.3 | Cache invalidation on KB state change â€” sweep answer-cache entries when index version bumps or document deleted | S | âœ… |
-| 16.4 | Knowledge Base deletion â€” `DELETE_KNOWLEDGE_BASE` job; marks KB `DELETING`, purges R2 objects, clears rows | M | â˜ |
+| 16.4 | Knowledge Base deletion â€” `DELETE_KNOWLEDGE_BASE` job; marks KB `DELETING`, purges R2 objects, clears rows | M | âœ… |
 | 16.5 | Parallel retrieval & early exits â€” `asyncio.gather` for dense+keyword+memory; early exits for exact identifier, selected table, selected figure | M | â˜ |
 | 16.6 | Concurrency control â€” generation semaphore, per-user throttle, timeout, cancellation on disconnect | M | â˜ |
 | 16.7 | Quantization benchmark â†’ ADR-011 | S | â˜ |
