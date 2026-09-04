@@ -235,6 +235,7 @@ def _answer_cache_key(
     )
     h = hashlib.sha256(
         "\x00".join([
+            str(scope.user_id),           # NFR-SEC-08: key must include user_id
             str(scope.knowledge_base_id),
             query,
             history_parts,
