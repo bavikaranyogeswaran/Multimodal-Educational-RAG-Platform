@@ -139,9 +139,38 @@ def _build_pdf_parser(settings: Settings) -> PdfParserPort:
 
 def _build_ocr(settings: Settings) -> OcrPort:
     try:
+        from app.infrastructure.ocr.fallback import FallbackOcrAdapter
         from app.infrastructure.ocr.paddle_ocr import PaddleOcrAdapter
 
-        return PaddleOcrAdapter(
+        primary: OcrPort = PaddleOcrAdapter(
+            lang=settings.ocr.language,
+            dpi=settings.storage.page_render_dpi,
+        )
+
+        secondary: OcrPort | None = None
+        if settings.ocr.vl_fallback_enabled:
+            try:
+                from app.infrastructure.ocr.paddle_ocr_vl import PaddleOcrVlAdapter
+
+                secondary = PaddleOcrVlAdapter(
+                    lang=settings.ocr.language,
+                    dpi=settings.storage.page_render_dpi,
+                )
+            except ImportError:
+                pass
+
+        return FallbackOcrAdapter(
+            primary=primary,
+            secondary=secondary,
+            confidence_threshold=settings.ocr.vl_confidence_threshold,
+        )
+    except ImportError:
+        pass
+
+    try:
+        from app.infrastructure.ocr.tesseract import TesseractAdapter
+
+        return TesseractAdapter(
             lang=settings.ocr.language,
             dpi=settings.storage.page_render_dpi,
         )

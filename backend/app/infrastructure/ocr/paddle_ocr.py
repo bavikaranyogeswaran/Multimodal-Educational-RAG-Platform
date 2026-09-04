@@ -90,11 +90,17 @@ class PaddleOcrAdapter:
     in the worker process. The underlying PaddleOCR engine is initialised on the
     first call and then reused; initialisation involves loading model weights from
     disk, which is slow enough that doing it per-call would be prohibitive.
+
+    When `use_vl=True`, the engine enables orientation classification, page
+    unwarping, and textline orientation correction. These make recognition more
+    accurate on difficult pages (dense tables, rotated text, curved scans) at the
+    cost of higher latency — roughly 3-5× slower per page.
     """
 
-    def __init__(self, *, lang: str, dpi: int) -> None:
+    def __init__(self, *, lang: str, dpi: int, use_vl: bool = False) -> None:
         self._lang = lang
         self._dpi = dpi
+        self._use_vl = use_vl
         self._engine: Any = None  # initialised lazily on first call
 
     def _get_engine(self) -> Any:
@@ -103,11 +109,13 @@ class PaddleOcrAdapter:
 
             self._engine = PaddleOCR(
                 lang=self._lang,
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
+                use_doc_orientation_classify=self._use_vl,
+                use_doc_unwarping=self._use_vl,
+                use_textline_orientation=self._use_vl,
             )
-            _log.info("paddle_ocr_engine_ready", lang=self._lang)
+            _log.info(
+                "paddle_ocr_engine_ready", lang=self._lang, vl=self._use_vl
+            )
         return self._engine
 
     async def extract_text(

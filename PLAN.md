@@ -28,7 +28,7 @@ system design specification.
 |---|---|
 | Phases complete | **14 of 21** â€" Phase 0, 1, 2, 3, 4, 6, 7, 8, 11, 12, 13, 14, 18, 19 âœ… |
 | Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 5 (~90%, step 5.9 complete) Â· Phase 17 (~35%, retrieval measured, generation and memory not) |
+| Partly built | Phase 5 (complete) Â· Phase 17 (~35%, retrieval measured, generation and memory not) |
 | Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
 | Not started | Phase 15, 20 |
 | Tests | **3,496 backend** â€" 3,351 unit Â· 145 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 11 security files, 5 of 6 release gates enforced Â· one known flaky test (HuggingFace network call in container lifespan test) |
@@ -1209,7 +1209,7 @@ there is no reason to carry that risk inside an otherwise low-risk phase.
 | 5.6 | Page rendering via `pypdfium2` into the TTL cache prefix | S | âœ… |
 | â€” | **Reassess before committing to OCR** | | |
 | 5.7 | PaddleOCR PP-OCRv6 adapter on **CPU** (D-27), per-region for mixed pages | L Â· risky | âœ… |
-| 5.8 | PaddleOCR-VL fallback on Â§15 conditions only; Tesseract as emergency | M | â˜ |
+| 5.8 | PaddleOCR-VL fallback on Â§15 conditions only; Tesseract as emergency | M | âœ… |
 | 5.9 | `OCR_PAGE` jobs, idempotent per-page re-run | M | âœ… |
 
 ### 5.1 â€” Page classification âœ…
