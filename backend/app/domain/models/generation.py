@@ -92,6 +92,8 @@ Respond with a single JSON object only — no text before or after it.
   that appear beside the passages — no invented or approximated labels.
 - Set "insufficient_evidence" to true and "claims" to [] only when the passages do not address
   the question at all. Write what is missing in "answer".
+- If "claims" is empty, "insufficient_evidence" MUST be true. Never return an empty "claims"
+  array alongside "insufficient_evidence": false.
 - Do not add, rename, or remove keys."""
 
 
