@@ -2445,8 +2445,9 @@ files. All six evaluation scripts now cover every pipeline stage: reranking, gen
 multi-hop, memory, and instruction-following each have a dedicated `evaluate_*.py` in
 `scripts/`, and every script persists its summary scores to `evaluation/results/<script>/` via
 `scripts/_eval_store.py` (NFR-OBS-05). The cache-reuse gate closed in 17.1, making all six
-release gates enforced. What remains is threshold calibration and writing measured numbers into
-`REQUIREMENTS.md` â€” both require live DB runs and cannot be done offline.
+release gates enforced. The threshold calibration script (`scripts/calibrate_thresholds.py`) sweeps
+`relative_score_margin` and reports latency vs NFR-PERF-07; it requires a live DB run.
+Writing measured numbers into `REQUIREMENTS.md` is the only remaining offline-blocker.
 
 - [x] Stage timers via `StageTimer`, emitted as structlog events with elapsed milliseconds â€”
       retrieval stages only; the full Â§62 set spans phases not yet built
@@ -2486,7 +2487,11 @@ release gates enforced. What remains is threshold calibration and writing measur
       (`test_memory_security.py`, 21 `gate`-marked tests, landed Phase 14) Â· unauthorized cache
       reuse 0 âœ… (`test_cache_security.py`, three `gate`-marked tests, landed Phase 17.1).
       **All six enforced.**
-- [ ] Threshold calibration; latency NFRs recalibrated against measured p95 (D-23)
+- [~] Threshold calibration; latency NFRs recalibrated against measured p95 (D-23) â€"
+      `scripts/calibrate_thresholds.py` sweeps `EVIDENCE_RELATIVE_SCORE_MARGIN` across a
+      configurable range, picks the value that maximises mean(recall, NDCG, phrase coverage),
+      and reports p50/p95 retrieval latency vs NFR-PERF-07 (â‰¤ 800 ms p95). Requires a live DB
+      run to produce actual numbers.
 - [~] `evaluation_results` persisted; results written into `REQUIREMENTS.md` â€"
       `scripts/_eval_store.py` writes timestamped JSON to `evaluation/results/<script>/` after
       every run; measured numbers in `REQUIREMENTS.md` await live DB runs
