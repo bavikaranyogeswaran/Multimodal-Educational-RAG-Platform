@@ -395,7 +395,7 @@ class EvidenceSettings(BaseSettings):
     #: Selection therefore uses the margin relative to the top-ranked candidate.
     #: There is deliberately no absolute-threshold setting: omitting the knob is the
     #: most reliable way to prevent its misuse. Calibrated against the gold set.
-    relative_score_margin: float = Field(default=0.35, ge=0.0, le=1.0)
+    relative_score_margin: float = Field(default=0.10, ge=0.0, le=1.0)
 
     #: How much of the shorter passage has to sit inside the longer one before the two
     #: are the same evidence. Neighbouring child chunks share their overlap by design,

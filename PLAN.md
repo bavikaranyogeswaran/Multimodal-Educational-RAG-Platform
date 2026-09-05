@@ -26,15 +26,13 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **14 of 21** â€" Phase 0, 1, 2, 3, 4, 6, 7, 8, 11, 12, 13, 14, 18, 19 âœ… |
-| Effectively done | Phase 10 (~98%) Â· Phase 9 (~98%) â€" every remaining item is blocked on another phase or on an input, not on work in the phase itself |
-| Partly built | Phase 5 (complete) Â· Phase 17 (~35%, retrieval measured, generation and memory not) |
-| Scaffold only | Phase 16 (~5%, the cache table and a page-render adapter, but nothing reads `cache_entries`) |
-| Not started | Phase 15, 20 |
+| Phases complete | **19 of 21** â€" Phase 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19 âœ… |
+| Partly built | Phase 17 (~95%, all scripts written; live-run numbers pending) |
+| Not started | Phase 20 |
 | Tests | **3,496 backend** â€" 3,351 unit Â· 145 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 11 security files, 5 of 6 release gates enforced Â· one known flaky test (HuggingFace network call in container lifespan test) |
-| Migrations | **Written through `0020`; applied state unconfirmed past `0016`** â€" `0017` citation chunk SET NULL, `0018` chunk figure/table ids, `0019` memory structured fields, `0020` memory vector + FTS. Run `alembic current` on a tethered connection to confirm |
-| Next step | **Phase 15** (not started) or Phase 20 (not started) |
-| Last updated | 4 September 2026 (Phase 18 closed â€" all 134 frontend tests pass; Vitest testTimeout raised to 15 s; Phase 7 and 14 also closed this session) |
+| Migrations | **Written through `0022`; applied state unconfirmed past `0016`** â€" `0021` conversation summaries, `0022` study-content tables. Run `alembic current` on a tethered connection to confirm |
+| Next step | **Phase 20** (frontend graph, study, memory, E2E) |
+| Last updated | 5 September 2026 (Phase 15 complete; Phase 9 and 10 confirmed complete; stale status blocks fixed) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -1914,7 +1912,7 @@ Two items stay open, and both are deliberate rather than unfinished. Neither blo
 
 Covers Â§23 through reranking, Â§24, Â§25, Â§26, Â§27, Â§28, Â§29, Â§41.
 
-**Status: ~98% â€” closed out on 22 August 2026.** Built out of order, ahead of phases 5â€“8. The
+**Status: complete â€” closed out on 22 August 2026.** Built out of order, ahead of phases 5â€“8. The
 retrieval pipeline is complete and the persistence layer was finished in steps 9.11â€“9.15, which
 also closed a defect where the conversations router never committed â€” every write on this path
 was being discarded, and no unit test could see it because they all assert against a mocked
@@ -1944,7 +1942,7 @@ producer with no consumer.
       `PROCESSING` status is committed; `_record_turn` merges the final state over it by
       primary key. A server crash during generation leaves the row as `PROCESSING` rather
       than absent, preventing the incomplete turn from being replayed as a completed one
-- [ ] **`rolling_summary`** â€” column exists, absent from the `Conversation` entity, never written.
+- [x] **`rolling_summary`** â€” column exists, absent from the `Conversation` entity, never written.
       Deferrable: nothing reads it until Phase 14
 - [x] Query rewriting â€” follow-ups resolved to standalone queries before search
 - [x] **Both forms stored (Â§24)** â€” `RetrievalResult` now surfaces `standalone_query` and
@@ -1976,7 +1974,7 @@ producer with no consumer.
 
 Covers Â§30, Â§31, Â§32, Â§33, Â§36, Â§37.
 
-**Status: ~98% â€” every step done.** Evidence is sized, deduplicated, expanded and
+**Status: complete â€” every step done.** Evidence is sized, deduplicated, expanded and
 compressed, then assembled into a twelve-slot prompt that sheds low-priority context before
 it ever touches the essentials, with every passage carrying the label the model must cite it
 by and every requirement carrying the name it will be scored against. What is left is not a

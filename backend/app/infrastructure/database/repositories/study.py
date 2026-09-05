@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+import sqlalchemy as sa
 from sqlalchemy import select, update
 
 from app.domain.enums import (
@@ -196,11 +197,18 @@ class SqlStudyPlanRepository(ScopedRepository):
         status: StudyTaskStatus,
     ) -> None:
         self._require_scope(scope)
+        owned_plan = (
+            sa.select(StudyPlanModel.id)
+            .where(
+                StudyPlanModel.id == plan_id,
+                self._scope_filter(StudyPlanModel),
+            )
+        )
         await self._session.execute(
             update(StudyTaskModel)
             .where(
                 StudyTaskModel.id == task_id,
-                StudyTaskModel.plan_id == plan_id,
+                StudyTaskModel.plan_id.in_(owned_plan),
             )
             .values(status=status.value)
         )

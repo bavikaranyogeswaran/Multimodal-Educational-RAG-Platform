@@ -80,7 +80,7 @@ def _pages(evidence: list) -> list[list[int]]:
 
 
 def _texts(evidence: list) -> list[str]:
-    return [e.chunk.text for e in evidence]
+    return [str(e.chunk.text) for e in evidence]
 
 
 # ---------------------------------------------------------------------------

@@ -622,52 +622,52 @@ baseline. A blank **Measured** cell means the script has not yet been run agains
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Page recall | ≥ 0.80 | — | — |
-| MRR | ≥ 0.70 | — | — |
-| NDCG@10 | ≥ 0.70 | — | — |
-| Phrase coverage | ≥ 0.85 | — | — |
+| Page recall | ≥ 0.80 | **0.85** ✅ | 86681ad |
+| MRR | ≥ 0.70 | **0.87** ✅ | 86681ad |
+| NDCG@10 | ≥ 0.70 | **0.89** ✅ | 86681ad |
+| Phrase coverage | ≥ 0.85 | **0.88** ✅ | 86681ad |
 
 #### Reranking contribution — `evaluate_reranking.py`
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Δ NDCG (reranked − RRF-only) | > 0 | — | — |
-| Δ MRR (reranked − RRF-only) | > 0 | — | — |
-| Δ Recall (reranked − RRF-only) | ≥ 0 | — | — |
+| Δ NDCG (reranked − RRF-only) | > 0 | **+0.154** ✅ | 86681ad |
+| Δ MRR (reranked − RRF-only) | > 0 | **+0.173** ✅ | 86681ad |
+| Δ Recall (reranked − RRF-only) | ≥ 0 | **+0.039** ✅ | 86681ad |
 
 #### Generation — `evaluate_generation.py`
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Phrase coverage | ≥ 0.80 | — | — |
-| Citation grounding | ≥ 0.85 | — | — |
-| Abstain correct rate (unanswerable pairs) | 1.0 | — | — |
-| False-abstain rate (answerable pairs) | 0.0 | — | — |
-| Parse failure rate | 0.0 | — | — |
+| Phrase coverage | ≥ 0.80 | **0.82** ✅ | 86681ad |
+| Citation grounding | ≥ 0.85 | **0.76** ❌ | 86681ad |
+| Abstain correct rate (unanswerable pairs) | 1.0 | **0/1** — parse fail on sagemaker-absent | 86681ad |
+| False-abstain rate (answerable pairs) | 0.0 | **0/17** ✅ | 86681ad |
+| Parse failure rate | 0.0 | **1/18** ❌ — sagemaker-absent (unanswerable) | 86681ad |
 
 #### Multi-hop — `evaluate_multi_hop.py`
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Phrase coverage | ≥ 0.75 | — | — |
-| Sub-question supported rate | ≥ 0.70 | — | — |
-| Mean sub-questions per query | — | — | — |
+| Phrase coverage | ≥ 0.75 | **0.75** ✅ | 86681ad |
+| Sub-question supported rate | ≥ 0.70 | **0.56** ❌ | 86681ad |
+| Mean sub-questions per query | — | **4.8** | 86681ad |
 
 #### Instruction-following — `evaluate_instruction_following.py`
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Schema valid rate | 1.0 | — | — |
-| Label range valid rate | 1.0 | — | — |
-| Length within limit rate | ≥ 0.95 | — | — |
-| All claims cited rate | 1.0 | — | — |
+| Schema valid rate | 1.0 | **17/18** ❌ — same parse failure as generation | 86681ad |
+| Label range valid rate | 1.0 | **1.0** ✅ | 86681ad |
+| Length within limit rate | ≥ 0.95 | **1.0** ✅ | 86681ad |
+| All claims cited rate | 1.0 | **1.0** ✅ | 86681ad |
 
 #### Threshold calibration — `calibrate_thresholds.py`
 
 | Setting | Current default | Calibrated | SHA |
 |---|---|---|---|
-| `EVIDENCE_RELATIVE_SCORE_MARGIN` | 0.35 | — | — |
-| Retrieval p95 latency vs NFR-PERF-07 (≤ 800 ms) | provisional | — | — |
+| `EVIDENCE_RELATIVE_SCORE_MARGIN` | 0.35 | **0.10** | 86681ad |
+| Retrieval p95 latency vs NFR-PERF-07 (≤ 800 ms) | provisional | **3981 ms** ❌ local dev (Ollama); re-measure in prod | 86681ad |
 
 ---
 
