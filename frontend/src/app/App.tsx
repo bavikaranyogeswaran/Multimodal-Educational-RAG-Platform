@@ -9,6 +9,7 @@ import { DocumentListPage } from '@/features/documents/DocumentListPage';
 import { GraphPage } from '@/features/graph/GraphPage';
 import { KnowledgeBaseListPage } from '@/features/knowledge-bases/KnowledgeBaseListPage';
 import { MemoryPage } from '@/features/memory/MemoryPage';
+import { StudyPage } from '@/features/study/StudyPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
 /**
@@ -53,6 +54,14 @@ export function App() {
         element={
           <RequireAuth>
             <GraphPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/knowledge-bases/:kbId/study"
+        element={
+          <RequireAuth>
+            <StudyPage />
           </RequireAuth>
         }
       />

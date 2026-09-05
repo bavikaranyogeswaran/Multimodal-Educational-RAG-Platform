@@ -1,0 +1,830 @@
+:root {
+  --bg: #f5f4f1;
+  --surface: #ffffff;
+  --surface-raised: #fafaf8;
+  --border: #e4e2dd;
+  --text: #1c1b18;
+  --text-secondary: #4b4844;
+  --text-muted: #9a9690;
+  --accent: #2563eb;
+  --accent-subtle: #eff6ff;
+  --accent-fg: #ffffff;
+  --success: #059669;
+  --success-subtle: #ecfdf5;
+  --warn: #d97706;
+  --warn-subtle: #fffbeb;
+  --danger: #dc2626;
+  --danger-subtle: #fef2f2;
+  --again: #dc2626;
+  --hard: #d97706;
+  --good: #2563eb;
+  --easy: #059669;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #141412;
+    --surface: #1e1d1a;
+    --surface-raised: #252421;
+    --border: #2e2c28;
+    --text: #f0ede8;
+    --text-secondary: #b8b4ae;
+    --text-muted: #6e6a64;
+    --accent: #60a5fa;
+    --accent-subtle: #1e3a5f;
+    --accent-fg: #ffffff;
+    --success: #34d399;
+    --success-subtle: #064e3b;
+    --warn: #fbbf24;
+    --warn-subtle: #3b2000;
+    --danger: #f87171;
+    --danger-subtle: #3b0f0f;
+    --again: #f87171;
+    --hard: #fbbf24;
+    --good: #60a5fa;
+    --easy: #34d399;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #141412;
+  --surface: #1e1d1a;
+  --surface-raised: #252421;
+  --border: #2e2c28;
+  --text: #f0ede8;
+  --text-secondary: #b8b4ae;
+  --text-muted: #6e6a64;
+  --accent: #60a5fa;
+  --accent-subtle: #1e3a5f;
+  --accent-fg: #ffffff;
+  --success: #34d399;
+  --success-subtle: #064e3b;
+  --warn: #fbbf24;
+  --warn-subtle: #3b2000;
+  --danger: #f87171;
+  --danger-subtle: #3b0f0f;
+  --again: #f87171;
+  --hard: #fbbf24;
+  --good: #60a5fa;
+  --easy: #34d399;
+}
+
+/* ── Page shell ─────────────────────────────────────────────────────────── */
+
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.backLink {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.backLink:hover { text-decoration: underline; }
+
+.title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+
+/* ── Tab bar ────────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 0.65rem 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab:hover { color: var(--text); }
+
+.tabActive {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Tab body ───────────────────────────────────────────────────────────── */
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem 1.25rem 3rem;
+  max-width: 840px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ── Shared form pieces ─────────────────────────────────────────────────── */
+
+.form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 1.5rem;
+}
+
+.formRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.select,
+.input,
+.textarea {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  outline: none;
+  font-family: inherit;
+}
+
+.select:focus,
+.input:focus,
+.textarea:focus {
+  border-color: var(--accent);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.btnPrimary {
+  padding: 0.45rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btnGhost {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btnGhost:hover { background: var(--surface-raised); }
+
+/* ── Section headings ───────────────────────────────────────────────────── */
+
+.sectionHeading {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin: 1.5rem 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Empty state ────────────────────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+/* ── Summary cards ──────────────────────────────────────────────────────── */
+
+.summaryCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+
+.summaryCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.summaryCardHeader:hover { background: var(--surface-raised); }
+
+.summaryBadge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.summaryDate {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex: 1;
+  text-align: right;
+}
+
+.summaryChevron {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.summaryContent {
+  padding: 0 1rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Quiz ───────────────────────────────────────────────────────────────── */
+
+.quizMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.quizTopic {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+
+.questionCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.questionNumber {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.questionText {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+}
+
+.optionList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.optionLabel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.optionLabel:hover { border-color: var(--accent); background: var(--accent-subtle); }
+
+.optionLabel input { margin-top: 0.15rem; flex-shrink: 0; }
+
+.textAnswer {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.difficultyBadge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  margin-left: 0.5rem;
+}
+
+.diffEasy { background: var(--success-subtle); color: var(--success); }
+.diffMedium { background: var(--warn-subtle); color: var(--warn); }
+.diffHard { background: var(--danger-subtle); color: var(--danger); }
+
+/* Quiz results */
+
+.scoreRow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.scoreBig {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.scoreOf {
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.feedbackCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.feedbackHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.feedbackIcon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.feedbackQuestion {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.feedbackDetail {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0.25rem 0 0;
+}
+
+.feedbackCorrect { color: var(--success); }
+.feedbackWrong { color: var(--danger); }
+
+/* ── Flashcards ─────────────────────────────────────────────────────────── */
+
+.cardDeck {
+  perspective: 1200px;
+  margin-bottom: 1.5rem;
+}
+
+.flashcard {
+  position: relative;
+  width: 100%;
+  min-height: 200px;
+  cursor: pointer;
+  transform-style: preserve-3d;
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.flashcardFlipped { transform: rotateY(180deg); }
+
+.flashcardFace {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.flashcardBack {
+  transform: rotateY(180deg);
+  background: var(--surface-raised);
+}
+
+.flashcardHint {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.flashcardText {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.deckProgress {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.ratingRow {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.ratingBtn {
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 2px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+
+.ratingBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.ratingAgain { background: var(--danger-subtle); color: var(--again); border-color: var(--again); }
+.ratingHard  { background: var(--warn-subtle);   color: var(--hard);  border-color: var(--hard);  }
+.ratingGood  { background: var(--accent-subtle); color: var(--good);  border-color: var(--good);  }
+.ratingEasy  { background: var(--success-subtle); color: var(--easy); border-color: var(--easy);  }
+
+.deckDone {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-secondary);
+}
+
+.deckDoneTitle {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--success);
+  margin: 0 0 0.5rem;
+}
+
+/* ── Study plan ─────────────────────────────────────────────────────────── */
+
+.planCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.planMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin-bottom: 1rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.planMetaLabel { font-weight: 600; color: var(--text); }
+
+.taskGroup {
+  margin-top: 0.75rem;
+}
+
+.taskGroupDate {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.4rem;
+}
+
+.taskRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.taskRow:last-child { border-bottom: none; }
+
+.taskStatusBtn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  transition: border-color 0.12s, background 0.12s;
+  position: relative;
+}
+
+.taskStatusBtn:hover { border-color: var(--accent); }
+
+.taskStatusPending {}
+
+.taskStatusInProgress {
+  border-color: var(--warn);
+  background: var(--warn-subtle);
+}
+
+.taskStatusCompleted {
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.taskStatusCompleted::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  color: #fff;
+  font-weight: 700;
+}
+
+.taskBody { flex: 1; min-width: 0; }
+
+.taskTitle {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0 0 0.15rem;
+}
+
+.taskTitleDone {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.taskDesc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.taskHours {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ── Progress tab ───────────────────────────────────────────────────────── */
+
+.progressGrid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.progressCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+}
+
+.progressCardTitle {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin: 0 0 0.75rem;
+}
+
+.masterItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.masterLabel {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.masterBar {
+  width: 80px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.masterFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s;
+}
+
+.masterPct {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  width: 2.5rem;
+  text-align: right;
+}
+
+.bigStat {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+  margin-bottom: 0.25rem;
+}
+
+.bigStatLabel {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.tagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tag {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.scoreList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.scoreRow2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.scoreBar {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.scoreFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--success);
+}
+
+.scorePct {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  width: 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.planCompletion {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--success);
+  line-height: 1;
+}
+
+.planBar {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+
+.planBarFill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--success);
+  transition: width 0.5s;
+}
+
+/* ── Row number input ───────────────────────────────────────────────────── */
+
+.numRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.numInput {
+  width: 80px;
+}
