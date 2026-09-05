@@ -6,6 +6,7 @@ import { SignUpPage } from '@/features/authentication/SignUpPage';
 import { ChatPage } from '@/features/conversations/ChatPage';
 import { ConversationListPage } from '@/features/conversations/ConversationListPage';
 import { DocumentListPage } from '@/features/documents/DocumentListPage';
+import { GraphPage } from '@/features/graph/GraphPage';
 import { KnowledgeBaseListPage } from '@/features/knowledge-bases/KnowledgeBaseListPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
@@ -35,6 +36,14 @@ export function App() {
         element={
           <RequireAuth>
             <DocumentListPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/knowledge-bases/:kbId/graph"
+        element={
+          <RequireAuth>
+            <GraphPage />
           </RequireAuth>
         }
       />
