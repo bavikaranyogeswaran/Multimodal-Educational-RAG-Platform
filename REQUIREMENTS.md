@@ -639,11 +639,11 @@ baseline. A blank **Measured** cell means the script has not yet been run agains
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Phrase coverage | ≥ 0.80 | **0.82** ✅ | 86681ad |
-| Citation grounding | ≥ 0.85 | **0.76** ❌ | 86681ad |
-| Abstain correct rate (unanswerable pairs) | 1.0 | **0/1** — parse fail on sagemaker-absent | 86681ad |
-| False-abstain rate (answerable pairs) | 0.0 | **0/17** ✅ | 86681ad |
-| Parse failure rate | 0.0 | **1/18** ❌ — sagemaker-absent (unanswerable) | 86681ad |
+| Phrase coverage | ≥ 0.80 | **0.882** ✅ | f92c67e |
+| Citation grounding | ≥ 0.85 | **0.755** ❌ | f92c67e |
+| Abstain correct rate (unanswerable pairs) | 1.0 | **1/1** ✅ | f92c67e |
+| False-abstain rate (answerable pairs) | 0.0 | **0/17** ✅ | f92c67e |
+| Parse failure rate | 0.0 | **0/18** ✅ | f92c67e |
 
 #### Multi-hop — `evaluate_multi_hop.py`
 
@@ -657,7 +657,7 @@ baseline. A blank **Measured** cell means the script has not yet been run agains
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Schema valid rate | 1.0 | **17/18** ❌ — same parse failure as generation | 86681ad |
+| Schema valid rate | 1.0 | **18/18** ✅ | f92c67e |
 | Label range valid rate | 1.0 | **1.0** ✅ | 86681ad |
 | Length within limit rate | ≥ 0.95 | **1.0** ✅ | 86681ad |
 | All claims cited rate | 1.0 | **1.0** ✅ | 86681ad |
