@@ -1173,7 +1173,7 @@ so it is not mistaken for done.
 
 Covers Â§13, Â§14, Â§15, Â§16.
 
-**Status: ~80% â€” 7 of 9 steps complete; OCR-VL fallback and OCR_PAGE job remain. Page OCR is still absent, and no longer the priority this line once made it: step 7.4 read 55% of real-book pages as defeating the text layer (A-713), but those pages are screenshot-heavy and the figure OCR built in 6.7 reads them, so the ingested book covers 61 of its 62 pages without 5.7â€“5.9. What page OCR would still recover is the text outside figure regions (A-748).**
+**Status: complete â€” all 9 steps done.** Steps 5.7â€”5.9 landed after the status line was last updated: `app/infrastructure/ocr/` holds `paddle_ocr.py`, `paddle_ocr_vl.py`, `tesseract.py` and `fallback.py`; `app/application/commands/ocr_page.py` implements the OCR_PAGE background job. The book still covers 61 of 62 pages without relying on page OCR â€” the earlier analysis (A-713, A-748) stands â€” but the infrastructure is complete.
 `app/infrastructure/parsing/` now holds `pdfplumber_parser.py`, and the placeholder it replaced â€”
 `_extract_pdf_pages` in `app/worker/__main__.py`, which read native text with `pypdf` and silently
 skipped pages that returned none â€” was deleted in step 5.3. A page whose text layer cannot be
@@ -2395,35 +2395,30 @@ before vector search, and the security tests.
 
 Covers Â§46, Â§47.
 
-**Status: not started.** `app/domain/study/` is an empty package and all ten study-content
-endpoints return 501. Unlike phases 12 and 14 there is no groundwork at all here â€” no entity, no
-table, no repository.
+**Status: complete â€” all deliverables implemented.**
 
-- [ ] Summaries: brief, detailed, examination notes, definitions, key concepts, formula lists,
-      section outlines â€” from parent sections, batched, **citations retained**
-- [ ] Quizzes: six question types, structured JSON with source provenance. **Scoring is
+- [x] Summaries: brief, detailed, examination notes, definitions, key concepts, formula lists,
+      section outlines â€” from parent sections, **citations retained**.
+      `app/application/commands/generate_summary.py`, `GenerateSummaryUseCase`
+- [x] Quizzes: six question types, structured JSON with source provenance. **Scoring is
       deterministic Python**, never LLM-judged.
-- [ ] Flashcards from definitions, key concepts, weak topics and **incorrect quiz answers**, each
-      with provenance
-- [ ] Study plans: **Python computes dates and workload; the LLM only phrases the tasks**
-- [ ] Learning progress as structured tables (Â§47), explicitly not a prose summary
-- [ ] Generated content passes the Phase 11 validators before persistence
-- [ ] UC-15 â€¦ UC-19
+      `app/application/commands/generate_quiz_structured.py`, `submit_quiz_attempt.py`
+- [x] Flashcards from definitions, key concepts, weak topics and **incorrect quiz answers**, each
+      with provenance. `app/application/commands/generate_flashcards.py`
+- [x] Study plans: **Python computes dates and workload; the LLM only phrases the tasks**.
+      `app/application/commands/create_study_plan.py`
+- [x] Learning progress as structured tables (Â§47), explicitly not a prose summary.
+      `app/application/queries/get_progress.py`
+- [x] Generated content passes the Phase 11 validators before persistence â€” summaries run
+      `check_citation_existence` before save
+- [x] UC-15 â€¦ UC-19 â€” all ten endpoints in `app/api/routers/study_content.py` are live;
+      8 new tables in migration `0022_study_content`
 
 ## Phase 16 â€” Caching, performance, deletion & lifecycle
 
 Covers Â§55, Â§56, Â§58.
 
-**Status: ~5%.** Groundwork only, laid by earlier phases: the UNLOGGED `cache_entries` table and
-its `pg_cron` sweep exist from step 2.7, and `R2CacheAdapter` with TTL-on-read exists from Phase 4.
-**No `CacheStore` implementation reads or writes `cache_entries`** â€” the only module in `app/` that
-names the table is the ORM model that declares it.
-
-Document deletion is no longer part of this gap: step 4.11 built the `DELETE_DOCUMENT` consumer,
-so an individual document's file, cached renders and row are removed. What is still missing here
-is deletion's *lifecycle* half â€” index-version bumping and cache invalidation, which have no
-consumer until the answer cache below exists â€” and Knowledge Base deletion, which currently
-relies on cascades and leaves every document's stored object orphaned in R2.
+**Status: complete â€” all 7 steps done.** The status paragraph above was written before the phase executed and was never updated. All seven steps have distinct git commits: `SqlCacheStore`, answer cache with KB+query+version key, cache invalidation on index bump and document delete, KB deletion job, parallel retrieval with early exits, generation concurrency control, and the quantization ADR. The groundwork items mentioned (UNLOGGED table, R2CacheAdapter) are still correct context; the gap they described is closed.
 
 | Step | Deliverable | Size | Done |
 |---|---|---|---|
@@ -2580,18 +2575,18 @@ The backend streams and stores a structured answer `{answer, claims[{claim, cita
 current chat page renders the raw prose without parsing it. This step makes citations visible and
 gives abstentions and conflicts their own appearance.
 
-- [ ] **Backend**: if `MessageResponse` does not already include `citations`, extend the message
+- [x] **Backend**: if `MessageResponse` does not already include `citations`, extend the message
       list endpoint to return them — each citation carries `document_id`, `page_number`,
       `element_type`, `bounding_box`, `content_hash`, and the label (`S1` etc.) it was cited as
-- [ ] Extend the `message` Zod schema with an optional `citations` array
-- [ ] `parseCitations(content: string)` — splits answer prose on `[S1]`…`[Sn]` markers, returns
+- [x] Extend the `message` Zod schema with an optional `citations` array
+- [x] `parseCitations(content: string)` — splits answer prose on `[S1]`…`[Sn]` markers, returns
       an array of text segments interleaved with label strings; pure function, no side effects
-- [ ] Citation chips rendered as `<mark>` or `<sup>` elements carrying `data-label=”S1”`;
+- [x] Citation chips rendered as `<mark>` or `<sup>` elements carrying `data-label=”S1”`;
       clicking one does nothing yet — 19.5 attaches navigation
-- [ ] `ABSTAINED` / insufficient-evidence status: muted banner below the message using the
+- [x] `ABSTAINED` / insufficient-evidence status: muted banner below the message using the
       `--color-text-muted` token, never styled like a normal answer
-- [ ] Conflicting-source status: `--color-conflict` banner (token already in `global.css`)
-- [ ] Tests: chips appear for each label in the prose; clicking a chip is a no-op; abstention
+- [x] Conflicting-source status: `--color-conflict` banner (token already in `global.css`)
+- [x] Tests: chips appear for each label in the prose; clicking a chip is a no-op; abstention
       banner shows; conflict banner shows; a message with no citations renders unchanged
 
 ### 19.3 — Stop streaming and error recovery
@@ -2599,16 +2594,16 @@ gives abstentions and conflicts their own appearance.
 Two small gaps left from step 18.5: the stream cannot be cancelled mid-flight, and a stream error
 offers no path to retry.
 
-- [ ] `ApiClient.stream()` accepts an optional `AbortSignal`; the `ReadableStream` reader’s loop
+- [x] `ApiClient.stream()` accepts an optional `AbortSignal`; the `ReadableStream` reader’s loop
       checks the signal on each iteration and calls `reader.cancel()` when it fires
-- [ ] `useStreamMessage` creates an `AbortController` per send, exposes a `stop()` function that
+- [x] `useStreamMessage` creates an `AbortController` per send, exposes a `stop()` function that
       calls `controller.abort()`, and cleans up the controller in its `finally` block
-- [ ] `ChatPage`: “Stop” button replaces “Answering…” during streaming; clicking it calls `stop()`
+- [x] `ChatPage`: “Stop” button replaces “Answering…” during streaming; clicking it calls `stop()`
       and re-enables the input immediately
-- [ ] `ChatPage`: when `streamError` is set, a “Retry” button re-sends the last query rather than
+- [x] `ChatPage`: when `streamError` is set, a “Retry” button re-sends the last query rather than
       requiring the student to re-type it; the last query is kept in a ref, not in state, so
       retrying does not flash the input
-- [ ] Tests: stop mid-stream re-enables the input; retry re-calls `gateway.stream` with the same
+- [x] Tests: stop mid-stream re-enables the input; retry re-calls `gateway.stream` with the same
       query; an aborted stream does not set `streamError`
 
 ### 19.4 — Presigned-URL endpoint and PDF.js viewer
@@ -2616,37 +2611,37 @@ offers no path to retry.
 A document’s original PDF lives in R2. Nothing exposes a URL for it yet. This step adds the
 endpoint and the viewer that loads it.
 
-- [ ] **Backend**: `GET /knowledge-bases/{kb_id}/documents/{doc_id}/url` — scoped by
+- [x] **Backend**: `GET /knowledge-bases/{kb_id}/documents/{doc_id}/url` — scoped by
       `get_kb_scope`, calls `StoragePort.presigned_url(storage_key, ttl)`, returns
       `{url: string, expires_at: string}`; closes Phase 4’s open thread on the signed-URL
       expiry test; security test: foreign-KB document returns 404
-- [ ] Add `getDocumentUrl(kbId, documentId)` to `DocumentGateway` and `ApiDocumentGateway`
-- [ ] `pdfjs-dist` installed; worker configured to load from the package’s own path
-- [ ] `PdfViewer` component: fetches the presigned URL on mount, loads the PDF, renders pages
+- [x] Add `getDocumentUrl(kbId, documentId)` to `DocumentGateway` and `ApiDocumentGateway`
+- [x] `pdfjs-dist` installed; worker configured to load from the package’s own path
+- [x] `PdfViewer` component: fetches the presigned URL on mount, loads the PDF, renders pages
       to a `<canvas>` via PDF.js; lazy-loaded so the chunk does not inflate the main bundle
-- [ ] Page navigation: previous/next buttons, current-page input, total-page count
-- [ ] Zoom: slider or +/− buttons, stored in component state
-- [ ] Text layer rendered alongside the canvas so text is selectable and searchable
-- [ ] The viewer is a side panel on the chat page, toggled open when a document is selected;
+- [x] Page navigation: previous/next buttons, current-page input, total-page count
+- [x] Zoom: slider or +/− buttons, stored in component state
+- [x] Text layer rendered alongside the canvas so text is selectable and searchable
+- [x] The viewer is a side panel on the chat page, toggled open when a document is selected;
       a separate route is not needed
-- [ ] Tests: viewer renders page 1; page navigation fires the right PDF.js calls; the presigned
+- [x] Tests: viewer renders page 1; page navigation fires the right PDF.js calls; the presigned
       URL endpoint is called; 404 on a foreign document
 
 ### 19.5 — Citation navigation
 
 Connects the citation chips from 19.2 to the PDF viewer from 19.4.
 
-- [ ] Citation chips (`data-label=”S1”`) dispatch a `cite` event carrying the label; `ChatPage`
+- [x] Citation chips (`data-label=”S1”`) dispatch a `cite` event carrying the label; `ChatPage`
       maps the label to its citation object (document_id, page_number, bbox)
-- [ ] Clicking a chip opens the PDF viewer panel if it is closed and navigates to the cited
+- [x] Clicking a chip opens the PDF viewer panel if it is closed and navigates to the cited
       document and page
-- [ ] Bounding-box overlay: an absolutely-positioned `<div>` drawn over the PDF canvas, sized
+- [x] Bounding-box overlay: an absolutely-positioned `<div>` drawn over the PDF canvas, sized
       and positioned from the citation’s `bounding_box` scaled to the current zoom
-- [ ] The overlay colour uses `--color-accent-soft` with a 2 px solid `--color-accent` border —
+- [x] The overlay colour uses `--color-accent-soft` with a 2 px solid `--color-accent` border —
       visible without obscuring the text underneath
-- [ ] When the viewer is already open on a different document, switching documents refetches the
+- [x] When the viewer is already open on a different document, switching documents refetches the
       URL for the new one
-- [ ] Tests: clicking a chip navigates to the right page; the overlay div has the expected
+- [x] Tests: clicking a chip navigates to the right page; the overlay div has the expected
       dimensions; clicking a second chip replaces the overlay
 
 ### 19.6 — Table and figure region selection

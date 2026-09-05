@@ -620,3 +620,45 @@ class DataBoundary(StrEnum):
     @property
     def accepts_private_content(self) -> bool:
         return self is DataBoundary.LOCAL
+
+
+# ---------------------------------------------------------------------------
+# Study content (Phase 15)
+# ---------------------------------------------------------------------------
+class SummaryType(StrEnum):
+    BRIEF = "BRIEF"
+    DETAILED = "DETAILED"
+    EXAMINATION_NOTES = "EXAMINATION_NOTES"
+    DEFINITIONS = "DEFINITIONS"
+    KEY_CONCEPTS = "KEY_CONCEPTS"
+    FORMULA_LIST = "FORMULA_LIST"
+    SECTION_OUTLINE = "SECTION_OUTLINE"
+
+
+class QuestionType(StrEnum):
+    MULTIPLE_CHOICE = "MULTIPLE_CHOICE"
+    TRUE_FALSE = "TRUE_FALSE"
+    SHORT_ANSWER = "SHORT_ANSWER"
+    FILL_BLANK = "FILL_BLANK"
+    CHART_INTERPRETATION = "CHART_INTERPRETATION"
+    TABLE_INTERPRETATION = "TABLE_INTERPRETATION"
+
+
+class FlashcardSource(StrEnum):
+    DEFINITIONS = "DEFINITIONS"
+    KEY_CONCEPTS = "KEY_CONCEPTS"
+    WEAK_TOPICS = "WEAK_TOPICS"
+    INCORRECT_ANSWERS = "INCORRECT_ANSWERS"
+
+
+class ReviewRating(StrEnum):
+    AGAIN = "AGAIN"
+    HARD = "HARD"
+    GOOD = "GOOD"
+    EASY = "EASY"
+
+
+class StudyTaskStatus(StrEnum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"

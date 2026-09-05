@@ -23,6 +23,16 @@ from app.infrastructure.database.models.graph import GraphEntityModel, GraphRela
 from app.infrastructure.database.models.job import CacheEntryModel, ProcessingJobModel
 from app.infrastructure.database.models.knowledge_base import KnowledgeBaseModel
 from app.infrastructure.database.models.model_invocation import ModelInvocationModel
+from app.infrastructure.database.models.study import (
+    FlashcardModel,
+    FlashcardReviewModel,
+    QuizAttemptModel,
+    QuizModel,
+    QuizQuestionModel,
+    StudyPlanModel,
+    StudySummaryModel,
+    StudyTaskModel,
+)
 from app.infrastructure.database.models.table import DocumentTableModel
 
 __all__ = [
@@ -43,4 +53,12 @@ __all__ = [
     "MessageModel",
     "ModelInvocationModel",
     "ProcessingJobModel",
+    "FlashcardModel",
+    "FlashcardReviewModel",
+    "QuizAttemptModel",
+    "QuizModel",
+    "QuizQuestionModel",
+    "StudyPlanModel",
+    "StudySummaryModel",
+    "StudyTaskModel",
 ]
