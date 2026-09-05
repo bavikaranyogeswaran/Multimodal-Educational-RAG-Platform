@@ -153,6 +153,9 @@ def parse_generated_answer(raw: str) -> GeneratedAnswer:
     for i, raw_claim in enumerate(claims_raw):
         claims.append(_parse_claim(i, raw_claim))
 
+    if not claims and not insufficient:
+        insufficient = True
+
     try:
         return GeneratedAnswer(
             answer=answer,
