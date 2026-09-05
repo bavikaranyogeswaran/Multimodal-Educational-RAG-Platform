@@ -34,7 +34,7 @@ export const MemoryFactSchema = z.object({
   id: z.string().uuid(),
   memory_type: MemoryTypeSchema,
   key: z.string(),
-  value: z.record(z.unknown()),
+  value: z.record(z.string(), z.unknown()),
   confidence: z.number().min(0).max(1),
   provenance: MemoryProvenanceSchema,
   status: MemoryStatusSchema,

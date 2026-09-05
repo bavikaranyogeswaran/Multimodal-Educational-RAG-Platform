@@ -175,8 +175,9 @@ function QuizTab({ kbId }: { kbId: string }) {
     return (
       <div className={styles.form}>
         <div className={styles.formRow}>
-          <label className={styles.label}>Topic</label>
+          <label className={styles.label} htmlFor="quiz-topic">Topic</label>
           <input
+            id="quiz-topic"
             className={styles.input}
             placeholder="e.g. Krebs cycle"
             value={topic}
@@ -360,8 +361,9 @@ function FlashcardsTab({ kbId }: { kbId: string }) {
       <>
         <div className={styles.form}>
           <div className={styles.formRow}>
-            <label className={styles.label}>Source</label>
+            <label className={styles.label} htmlFor="flash-source">Source</label>
             <select
+              id="flash-source"
               className={styles.select}
               value={source}
               onChange={(e) => setSource(e.target.value as FlashcardSource)}
@@ -590,8 +592,9 @@ function StudyPlanTab({ kbId }: { kbId: string }) {
       <div className={styles.form}>
         <div style={{ display: 'grid', gap: '0.85rem', gridTemplateColumns: '1fr 1fr' }}>
           <div className={styles.formRow}>
-            <label className={styles.label}>Exam date</label>
+            <label className={styles.label} htmlFor="plan-exam-date">Exam date</label>
             <input
+              id="plan-exam-date"
               type="date"
               className={styles.input}
               value={examDate}
@@ -612,8 +615,9 @@ function StudyPlanTab({ kbId }: { kbId: string }) {
           </div>
         </div>
         <div className={styles.formRow}>
-          <label className={styles.label}>Chapters (one per line)</label>
+          <label className={styles.label} htmlFor="plan-chapters">Chapters (one per line)</label>
           <textarea
+            id="plan-chapters"
             className={styles.textarea}
             placeholder="Chapter 1: Cell Biology&#10;Chapter 2: Genetics&#10;Chapter 3: Metabolism"
             value={chaptersRaw}
