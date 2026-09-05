@@ -1,0 +1,313 @@
+:root {
+  --bg: #f8f8f7;
+  --surface: #ffffff;
+  --border: #e2e0dc;
+  --text: #1a1916;
+  --text-secondary: #4a4844;
+  --text-muted: #9a9692;
+  --accent: #2563eb;
+  --accent-subtle: #eff6ff;
+  --danger: #dc2626;
+  --danger-subtle: #fef2f2;
+  --warn: #d97706;
+  --warn-subtle: #fffbeb;
+  --success: #059669;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #141413;
+    --surface: #1e1d1b;
+    --border: #2e2c28;
+    --text: #f0ede8;
+    --text-secondary: #b8b4ae;
+    --text-muted: #6e6a64;
+    --accent: #60a5fa;
+    --accent-subtle: #1e3a5f;
+    --danger: #f87171;
+    --danger-subtle: #3b0f0f;
+    --warn: #fbbf24;
+    --warn-subtle: #3b2000;
+    --success: #34d399;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #141413;
+  --surface: #1e1d1b;
+  --border: #2e2c28;
+  --text: #f0ede8;
+  --text-secondary: #b8b4ae;
+  --text-muted: #6e6a64;
+  --accent: #60a5fa;
+  --accent-subtle: #1e3a5f;
+  --danger: #f87171;
+  --danger-subtle: #3b0f0f;
+  --warn: #fbbf24;
+  --warn-subtle: #3b2000;
+  --success: #34d399;
+}
+
+/* ── Page shell ─────────────────────────────────────────────────────────── */
+
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.backLink {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.backLink:hover { text-decoration: underline; }
+
+.title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+
+.count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* ── Body ───────────────────────────────────────────────────────────────── */
+
+.body {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 4rem 1rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.emptyState p { margin: 0; font-size: 0.9rem; }
+
+/* ── Group heading ──────────────────────────────────────────────────────── */
+
+.groupHeading {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin: 1.75rem 0 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Fact card ──────────────────────────────────────────────────────────── */
+
+.card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem 1rem;
+  align-items: start;
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.cardMain { min-width: 0; }
+
+.factKey {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 0.35rem;
+  word-break: break-word;
+}
+
+.factValue {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+  margin: 0 0 0.5rem;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  align-items: center;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.provenance {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.confidence {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.confBar {
+  display: inline-block;
+  vertical-align: middle;
+  width: 48px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-left: 4px;
+  overflow: hidden;
+}
+
+.confFill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--success);
+  transition: width 0.3s;
+}
+
+.expiry {
+  font-size: 0.72rem;
+  color: var(--warn);
+}
+
+.date {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* ── Card actions ───────────────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.btnDispute {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btnDispute:hover { background: var(--warn-subtle); }
+.btnDispute:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btnDelete {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btnDelete:hover { background: var(--danger-subtle); }
+.btnDelete:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Confirm dialog overlay ─────────────────────────────────────────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  max-width: 380px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dialogTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.dialogBody {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.dialogRow {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.btnCancel {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.875rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btnConfirmDelete {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.875rem;
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
