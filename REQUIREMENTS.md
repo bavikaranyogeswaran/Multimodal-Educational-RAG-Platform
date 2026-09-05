@@ -608,6 +608,67 @@ extracted from the 68-section system design specification.
 | FR-EVL-09 | Evaluation results MUST be persisted so changes can be compared across runs. | §59 | 17 |
 | FR-EVL-10 | The gold evaluation set MUST include labelled questions across every query class, with gold chunk and page identifiers. | §63, D-22 | 17 |
 
+### Measured baselines
+
+Run each `scripts/evaluate_*.py` against a live knowledge base and record the summary scores
+here. `scripts/_eval_store.py` persists every run as timestamped JSON under
+`evaluation/results/<script>/`; the git SHA in each file identifies which code version produced
+the numbers. Update the **Measured** column and the **SHA** when a run replaces a prior
+baseline. A blank **Measured** cell means the script has not yet been run against live data.
+
+**Gold set:** `evaluation/gold/data-science-in-the-cloud.json` (18 pairs, 5 classes).
+
+#### Retrieval — `evaluate_retrieval.py`
+
+| Metric | Target | Measured | SHA |
+|---|---|---|---|
+| Page recall | ≥ 0.80 | — | — |
+| MRR | ≥ 0.70 | — | — |
+| NDCG@10 | ≥ 0.70 | — | — |
+| Phrase coverage | ≥ 0.85 | — | — |
+
+#### Reranking contribution — `evaluate_reranking.py`
+
+| Metric | Target | Measured | SHA |
+|---|---|---|---|
+| Δ NDCG (reranked − RRF-only) | > 0 | — | — |
+| Δ MRR (reranked − RRF-only) | > 0 | — | — |
+| Δ Recall (reranked − RRF-only) | ≥ 0 | — | — |
+
+#### Generation — `evaluate_generation.py`
+
+| Metric | Target | Measured | SHA |
+|---|---|---|---|
+| Phrase coverage | ≥ 0.80 | — | — |
+| Citation grounding | ≥ 0.85 | — | — |
+| Abstain correct rate (unanswerable pairs) | 1.0 | — | — |
+| False-abstain rate (answerable pairs) | 0.0 | — | — |
+| Parse failure rate | 0.0 | — | — |
+
+#### Multi-hop — `evaluate_multi_hop.py`
+
+| Metric | Target | Measured | SHA |
+|---|---|---|---|
+| Phrase coverage | ≥ 0.75 | — | — |
+| Sub-question supported rate | ≥ 0.70 | — | — |
+| Mean sub-questions per query | — | — | — |
+
+#### Instruction-following — `evaluate_instruction_following.py`
+
+| Metric | Target | Measured | SHA |
+|---|---|---|---|
+| Schema valid rate | 1.0 | — | — |
+| Label range valid rate | 1.0 | — | — |
+| Length within limit rate | ≥ 0.95 | — | — |
+| All claims cited rate | 1.0 | — | — |
+
+#### Threshold calibration — `calibrate_thresholds.py`
+
+| Setting | Current default | Calibrated | SHA |
+|---|---|---|---|
+| `EVIDENCE_RELATIVE_SCORE_MARGIN` | 0.35 | — | — |
+| Retrieval p95 latency vs NFR-PERF-07 (≤ 800 ms) | provisional | — | — |
+
 ---
 
 ## Frontend

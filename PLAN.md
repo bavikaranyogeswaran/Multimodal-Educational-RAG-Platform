@@ -2439,15 +2439,11 @@ relies on cascades and leaves every document's stored object orphaned in R2.
 
 Covers Â§62, Â§63, Â§64, and closes Â§30's calibration debt.
 
-**Status: ~90%.** The observability baseline arrived early in step 3.4 and the security suite has
-been growing alongside each phase â€” 121 tests marked `security`, 87 marked `gate`, across eight
-files. All six evaluation scripts now cover every pipeline stage: reranking, generation,
-multi-hop, memory, and instruction-following each have a dedicated `evaluate_*.py` in
-`scripts/`, and every script persists its summary scores to `evaluation/results/<script>/` via
-`scripts/_eval_store.py` (NFR-OBS-05). The cache-reuse gate closed in 17.1, making all six
-release gates enforced. The threshold calibration script (`scripts/calibrate_thresholds.py`) sweeps
-`relative_score_margin` and reports latency vs NFR-PERF-07; it requires a live DB run.
-Writing measured numbers into `REQUIREMENTS.md` is the only remaining offline-blocker.
+**Status: ~95% â€” pending live runs.** All evaluation scripts, persistence, calibration, and
+baseline structure are in place. The only remaining work is running the scripts against a live
+knowledge base and filling in the `REQUIREMENTS.md` baselines table (§ “Measured baselines”)
+and recalibrating `EVIDENCE_RELATIVE_SCORE_MARGIN` from the output of
+`scripts/calibrate_thresholds.py`.
 
 - [x] Stage timers via `StageTimer`, emitted as structlog events with elapsed milliseconds â€”
       retrieval stages only; the full Â§62 set spans phases not yet built
@@ -2494,7 +2490,8 @@ Writing measured numbers into `REQUIREMENTS.md` is the only remaining offline-bl
       run to produce actual numbers.
 - [~] `evaluation_results` persisted; results written into `REQUIREMENTS.md` â€"
       `scripts/_eval_store.py` writes timestamped JSON to `evaluation/results/<script>/` after
-      every run; measured numbers in `REQUIREMENTS.md` await live DB runs
+      every run; `REQUIREMENTS.md` §"Measured baselines" table structure is in place; numbers
+      await live DB runs to fill in
 
 ## Phase 18 â€” Frontend foundation
 
