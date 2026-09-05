@@ -141,7 +141,7 @@ def parse_generated_answer(raw: str) -> GeneratedAnswer:
     if not answer:
         raise GenerationParseError("'answer' must not be blank")
 
-    claims_raw = data.get("claims", [])
+    claims_raw = data.get("claims") or []
     if not isinstance(claims_raw, list):
         raise GenerationParseError("'claims' must be an array")
 
