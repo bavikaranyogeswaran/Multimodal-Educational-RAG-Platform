@@ -30,6 +30,8 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from scripts._eval_store import save_run
+
 from app.api.dependencies.retrieval import build_retrieval_orchestrator
 from app.application.queries.retrieve_evidence import (
     RetrievalOrchestrator,
@@ -269,6 +271,25 @@ async def main() -> None:
         f"\nreranker adds: NDCG {_mean(ndcg_deltas):+.3f}  MRR {_mean(rr_deltas):+.3f}  "
         f"recall {_mean(rec_deltas):+.3f}  over RRF-only order"
     )
+
+    result_path = save_run(
+        "reranking",
+        kb_id,
+        gold.source,
+        {
+            "bypass_page_recall": _mean([s.page_recall for s in b_scores]),
+            "bypass_mrr": _mean([s.reciprocal_rank for s in b_scores]),
+            "bypass_ndcg": _mean([s.ndcg for s in b_scores]),
+            "reranked_page_recall": _mean([s.page_recall for s in r_scores]),
+            "reranked_mrr": _mean([s.reciprocal_rank for s in r_scores]),
+            "reranked_ndcg": _mean([s.ndcg for s in r_scores]),
+            "delta_recall": _mean(rec_deltas),
+            "delta_mrr": _mean(rr_deltas),
+            "delta_ndcg": _mean(ndcg_deltas),
+            "n_scored_pairs": len(b_scores),
+        },
+    )
+    print(f"results → {result_path}")
 
 
 if __name__ == "__main__":

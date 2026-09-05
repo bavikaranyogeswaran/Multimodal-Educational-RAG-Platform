@@ -32,6 +32,8 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from scripts._eval_store import save_run
+
 from app.application.commands.answer import _load_memory_context
 from app.configuration.settings import get_settings
 from app.configuration.wire import build_container
@@ -98,6 +100,19 @@ async def main() -> None:
             "\nNo active memory facts found for this knowledge base.\n"
             "Run at least one answer turn with memory extraction enabled to populate memory."
         )
+        save_run(
+            "memory",
+            kb_id,
+            gold.source,
+            {
+                "n_active_facts": 0,
+                "n_all_facts": n_all,
+                "embedding_coverage": 0.0,
+                "questions_with_any_fact_rate": 0.0,
+                "questions_with_phrase_hit_rate": 0.0,
+                "n_questions": len(gold.answerable),
+            },
+        )
         return
 
     print()
@@ -163,6 +178,22 @@ async def main() -> None:
         "\nNote: this is a retrieval probe — whether surfaced facts improve the answer\n"
         "requires a memory gold set mapping each question to expected facts."
     )
+
+    n_ans = len(gold.answerable)
+    result_path = save_run(
+        "memory",
+        kb_id,
+        gold.source,
+        {
+            "n_active_facts": n_active,
+            "n_all_facts": n_all,
+            "embedding_coverage": n_embedded / n_active if n_active else 0.0,
+            "questions_with_any_fact_rate": len(pairs_with_any) / n_ans if n_ans else 0.0,
+            "questions_with_phrase_hit_rate": len(pairs_with_phrase_hit) / n_ans if n_ans else 0.0,
+            "n_questions": n_ans,
+        },
+    )
+    print(f"results → {result_path}")
 
 
 if __name__ == "__main__":

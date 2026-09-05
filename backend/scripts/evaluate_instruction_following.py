@@ -34,6 +34,8 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from scripts._eval_store import save_run
+
 from app.api.dependencies.retrieval import build_retrieval_orchestrator
 from app.application.commands.answer import (
     _INSTRUCTIONS,
@@ -263,6 +265,22 @@ async def main() -> None:
                 c = all_checks[idx]
                 if c.schema_ok and c.labels_ok is False:
                     print(f"  {pair.id:<{col}}  max_S={c.max_label}  evidence={c.n_evidence}")
+
+    result_path = save_run(
+        "instruction_following",
+        kb_id,
+        gold.source,
+        {
+            "schema_ok_rate": schema_ok / n,
+            "labels_ok_rate": labels_ok / len(checked) if checked else None,
+            "length_ok_rate": length_ok / len(checked) if checked else None,
+            "uncited_ok_rate": uncited_ok / len(checked) if checked else None,
+            "mean_words": _mean([float(c.n_words) for c in checked]) if checked else None,
+            "mean_claims": _mean([float(c.n_claims) for c in checked]) if checked else None,
+            "n_pairs": n,
+        },
+    )
+    print(f"results → {result_path}")
 
 
 if __name__ == "__main__":

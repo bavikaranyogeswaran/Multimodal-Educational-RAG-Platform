@@ -39,6 +39,8 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from scripts._eval_store import save_run
+
 from app.api.dependencies.retrieval import build_retrieval_orchestrator
 from app.application.commands.answer import (
     _INSTRUCTIONS,
@@ -283,6 +285,21 @@ async def main() -> None:
     if false_abstains:
         print(f"false abstain    : {false_abstains}/{n_ans}  (answerable pairs incorrectly refused)")
     print(f"parse failures   : {parse_failures}/{len(gold.pairs)}")
+
+    result_path = save_run(
+        "generation",
+        kb_id,
+        gold.source,
+        {
+            "phrase_coverage": _mean(phrase_scores),
+            "cit_grounding": _mean(grounding_scores),
+            "abstain_correct_rate": abs_ok / n_unans if n_unans else None,
+            "false_abstain_rate": false_abstains / n_ans if n_ans else None,
+            "parse_failure_rate": parse_failures / len(gold.pairs),
+            "n_pairs": len(gold.pairs),
+        },
+    )
+    print(f"results → {result_path}")
 
 
 if __name__ == "__main__":

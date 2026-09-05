@@ -33,6 +33,8 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from scripts._eval_store import save_run
+
 from app.api.dependencies.retrieval import build_retrieval_orchestrator
 from app.application.commands.decompose import DecomposeQueryUseCase
 from app.application.commands.multi_hop_answer import MultiHopAnswerCommand, MultiHopAnswerUseCase
@@ -174,6 +176,19 @@ async def main() -> None:
         print("\nphrase coverage by class:")
         for cls, values in sorted(by_class.items()):
             print(f"  {cls:<16} {_mean(values):.2f}  ({len(values)} pairs)")
+
+    result_path = save_run(
+        "multi_hop",
+        kb_id,
+        gold.source,
+        {
+            "phrase_coverage": _mean(phrase_scores),
+            "sub_q_supported_rate": _mean(cov_scores),
+            "mean_sub_questions": _mean([float(x) for x in sub_counts]),
+            "n_scored_pairs": len(pairs),
+        },
+    )
+    print(f"results → {result_path}")
 
 
 if __name__ == "__main__":

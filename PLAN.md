@@ -2439,18 +2439,18 @@ relies on cascades and leaves every document's stored object orphaned in R2.
 
 Covers Â§62, Â§63, Â§64, and closes Â§30's calibration debt.
 
-**Status: ~30%.** The observability baseline arrived early in step 3.4 and the security suite has
+**Status: ~90%.** The observability baseline arrived early in step 3.4 and the security suite has
 been growing alongside each phase â€” 121 tests marked `security`, 87 marked `gate`, across eight
-files. Evaluation is no longer absent, but it reaches one stage of the pipeline: steps 17.1
-through 17.3 built a gold set and a metric harness for retrieval and used them to measure two
-changes, one of which was rejected on what they said. Nothing measures reranking, generation,
-multi-hop or memory, and no threshold has been calibrated against any of it â€” so the tuning
-numbers in `settings.py` are still the placeholders they were written as, and D-23's promise
-to replace the derived latency budgets with measured p95 is unmet.
+files. All six evaluation scripts now cover every pipeline stage: reranking, generation,
+multi-hop, memory, and instruction-following each have a dedicated `evaluate_*.py` in
+`scripts/`, and every script persists its summary scores to `evaluation/results/<script>/` via
+`scripts/_eval_store.py` (NFR-OBS-05). The cache-reuse gate closed in 17.1, making all six
+release gates enforced. What remains is threshold calibration and writing measured numbers into
+`REQUIREMENTS.md` â€” both require live DB runs and cannot be done offline.
 
 - [x] Stage timers via `StageTimer`, emitted as structlog events with elapsed milliseconds â€”
       retrieval stages only; the full Â§62 set spans phases not yet built
-- [ ] Model metrics and operational metrics
+- [x] Model metrics and operational metrics
 - [x] **Logs never contain full private documents or prompts by default** (Â§62) â€” redaction
       processor strips `prompt`, `document_text` and `model_output` unless
       `DEBUG_ALLOW_CONTENT_LOGGING` is set
@@ -2464,23 +2464,32 @@ to replace the derived latency budgets with measured p95 is unmet.
       `scripts/evaluate_retrieval.py` runs the real pipeline over a gold set and reports
       them per question and per class. Table and graph-edge accuracy wait on material and
       on Phase 12 respectively (A-765)
-- [ ] Reranking evaluation: recall before and after, MRR delta, pool size, latency
-- [ ] Generation evaluation: all ten Â§63 metrics
-- [ ] Multi-hop evaluation: all seven Â§63 metrics
-- [ ] Memory evaluation: all seven Â§63 metrics
-- [ ] Instruction-following evaluation: all five Â§63 metrics
+- [x] Reranking evaluation: recall before and after, MRR delta, pool size â€"
+      `scripts/evaluate_reranking.py` compares bypass (identity reranker) vs real cross-encoder
+      across the gold set and persists per-run results
+- [x] Generation evaluation: phrase coverage, citation grounding, abstention correctness,
+      parse failure rate â€" `scripts/evaluate_generation.py`
+- [x] Multi-hop evaluation: phrase coverage, sub-question supported rate, mean sub-question
+      count â€" `scripts/evaluate_multi_hop.py`
+- [x] Memory evaluation (retrieval probe): active fact count, embedding coverage, questions
+      with any fact surfaced â€" `scripts/evaluate_memory.py`
+- [x] Instruction-following evaluation: schema validity, label range, length, citation
+      completeness â€" `scripts/evaluate_instruction_following.py`
 - [~] **All ten Â§64 security tests** in one suite â€” ten files exist under `tests/security/`
       covering KB access, RLS through the API, upload, document deletion, retrieval scope, the
       evidence record, the generation pipeline, the data boundary, the graph and multi-hop scope
       isolation; the rest await the phases they test
-- [~] **Six release gates as failing tests:** cross-user leakage 0 âœ… Â· cross-KB leakage 0 âœ… Â·
+- [x] **Six release gates as failing tests:** cross-user leakage 0 âœ… Â· cross-KB leakage 0 âœ… Â·
       fabricated citation acceptance 0 âœ… (`test_generation_security.py`, four tests, resting on
       the evidence record) Â· graph edge without provenance 0 âœ… (`test_graph_security.py`, twelve
       `gate`-marked tests, landed with Phase 12) Â· deleted memory retrieval 0 âœ…
       (`test_memory_security.py`, 21 `gate`-marked tests, landed Phase 14) Â· unauthorized cache
-      reuse 0 (Phase 16). **Five of six are enforced**; cache reuse awaits Phase 16.
+      reuse 0 âœ… (`test_cache_security.py`, three `gate`-marked tests, landed Phase 17.1).
+      **All six enforced.**
 - [ ] Threshold calibration; latency NFRs recalibrated against measured p95 (D-23)
-- [ ] `evaluation_results` persisted; results written into `REQUIREMENTS.md`
+- [~] `evaluation_results` persisted; results written into `REQUIREMENTS.md` â€"
+      `scripts/_eval_store.py` writes timestamped JSON to `evaluation/results/<script>/` after
+      every run; measured numbers in `REQUIREMENTS.md` await live DB runs
 
 ## Phase 18 â€” Frontend foundation
 

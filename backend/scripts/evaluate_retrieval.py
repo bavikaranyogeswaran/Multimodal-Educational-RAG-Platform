@@ -28,6 +28,8 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from scripts._eval_store import save_run
+
 from app.api.dependencies.retrieval import build_retrieval_orchestrator
 from app.application.queries.retrieve_evidence import RetrieveEvidenceQuery
 from app.configuration.settings import get_settings
@@ -197,6 +199,21 @@ async def main() -> None:
         f"\nclasses this set never asks about ({len(missing)} of {len(list(QueryClass))}): "
         f"{', '.join(missing)}"
     )
+
+    result_path = save_run(
+        "retrieval",
+        kb_id,
+        gold.source,
+        {
+            "page_recall": _mean([s.page_recall for s in scores]),
+            "selection_precision": _mean(selections),
+            "mrr": _mean([s.reciprocal_rank for s in scores]),
+            "ndcg": _mean([s.ndcg for s in scores]),
+            "phrase_coverage": _mean([s.phrases for s in scores]),
+            "n_scored_pairs": len(scores),
+        },
+    )
+    print(f"results → {result_path}")
 
 
 if __name__ == "__main__":
