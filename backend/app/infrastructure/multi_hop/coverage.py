@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import structlog
+
 from app.domain.enums import CoverageStatus, ModelTask
-from app.domain.errors import DomainError
 from app.domain.models.entities import ModelRequest
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.retrieval.entities import Evidence
@@ -62,6 +63,9 @@ class LlmCoverageClassifier:
         return _parse(response.content.value)
 
 
+_log = structlog.get_logger(__name__)
+
+
 def _parse(raw: str) -> CoverageStatus:
     word = raw.strip().upper()
     if word in _VALID:
@@ -70,7 +74,10 @@ def _parse(raw: str) -> CoverageStatus:
     normalised = word.replace(" ", "_")
     if normalised in _VALID:
         return CoverageStatus(normalised)
-    raise DomainError(
-        f"coverage classification returned unexpected value {raw!r}; "
-        f"expected one of {sorted(_VALID)}"
-    )
+    # Scan for a valid keyword embedded in prose (model sometimes adds context words)
+    for candidate in sorted(_VALID, key=len, reverse=True):
+        if candidate in word:
+            return CoverageStatus(candidate)
+    # Fall back to PARTIALLY_SUPPORTED so the caller retries rather than crashing
+    _log.warning("coverage.parse_fallback", raw=raw)
+    return CoverageStatus.PARTIALLY_SUPPORTED
