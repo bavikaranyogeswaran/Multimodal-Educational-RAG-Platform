@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 
 import { useDeleteMemory, useDisputeMemory, useMemoryFacts } from '@/features/memory/hooks';
@@ -55,9 +55,32 @@ interface ConfirmDialogProps {
 }
 
 function ConfirmDialog({ fact, onConfirm, onCancel }: ConfirmDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const buttons = dialogRef.current?.querySelectorAll<HTMLElement>('button') ?? [];
+    buttons[0]?.focus();
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') { onCancel(); return; }
+      if (e.key === 'Tab') {
+        const btns = dialogRef.current?.querySelectorAll<HTMLElement>('button') ?? [];
+        const first = btns[0];
+        const last = btns[btns.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault(); last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault(); first?.focus();
+        }
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onCancel]);
+
   return (
     <div className={styles.overlay} role="dialog" aria-modal="true" aria-labelledby="dlg-title">
-      <div className={styles.dialog}>
+      <div className={styles.dialog} ref={dialogRef}>
         <p id="dlg-title" className={styles.dialogTitle}>Delete memory fact?</p>
         <p className={styles.dialogBody}>
           <strong>{fact.key}</strong> will be soft-deleted and will no longer influence your
@@ -146,6 +169,12 @@ export function MemoryPage() {
   const deleteMut = useDeleteMemory(kbId!);
 
   const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!confirmId) return;
+    const prev = document.activeElement as HTMLElement | null;
+    return () => { prev?.focus(); };
+  }, [confirmId]);
 
   const facts = data?.facts ?? [];
   const busy = disputeMut.isPending || deleteMut.isPending;

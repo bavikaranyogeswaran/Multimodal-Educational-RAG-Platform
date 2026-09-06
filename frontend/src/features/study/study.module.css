@@ -131,6 +131,12 @@
 
 .tab:hover { color: var(--text); }
 
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
 .tabActive {
   color: var(--accent);
   border-bottom-color: var(--accent);
@@ -283,6 +289,11 @@
 }
 
 .summaryCardHeader:hover { background: var(--surface-raised); }
+
+.summaryCardHeader:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 .summaryBadge {
   font-size: 0.65rem;

@@ -250,7 +250,13 @@ export function GraphPage() {
       <div className={styles.body}>
         {/* ── Canvas ──────────────────────────────────────────────────── */}
         <div className={styles.canvasWrap}>
-          <div ref={canvasRef} className={styles.canvas} />
+          <div
+            ref={canvasRef}
+            className={styles.canvas}
+            role="application"
+            tabIndex={0}
+            aria-label="Concept graph. Click nodes to explore. Use panel buttons to interact with selected nodes."
+          />
           {!effectiveDocId && !graphLoading && (
             <div className={styles.emptyState}>
               <p>No completed documents yet.</p>

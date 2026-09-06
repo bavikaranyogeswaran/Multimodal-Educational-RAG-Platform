@@ -53,6 +53,19 @@
   overflow: hidden;
 }
 
+@media (max-width: 640px) {
+  .body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+  }
+
+  .panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 260px;
+  }
+}
+
 .canvasWrap {
   position: relative;
   overflow: hidden;

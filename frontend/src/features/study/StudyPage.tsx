@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 
 import {
@@ -117,7 +117,16 @@ function SummaryTab({ kbId }: { kbId: string }) {
           <div key={s.id} className={styles.summaryCard}>
             <div
               className={styles.summaryCardHeader}
+              role="button"
+              tabIndex={0}
+              aria-expanded={expanded}
               onClick={() => setExpandedId(expanded ? null : s.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setExpandedId(expanded ? null : s.id);
+                }
+              }}
             >
               <span className={styles.summaryBadge}>{SUMMARY_TYPE_LABELS[s.summary_type]}</span>
               <span className={styles.summaryDate}>{formatDate(s.created_at)}</span>
@@ -788,6 +797,21 @@ export function StudyPage() {
   const kbName = (loc.state as { kbName?: string } | null)?.kbName ?? 'Knowledge Base';
 
   const [activeTab, setActiveTab] = useState<TabId>('summaries');
+  const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement>>>({});
+
+  function handleTabKeyDown(e: React.KeyboardEvent, idx: number) {
+    let next: number | null = null;
+    if (e.key === 'ArrowRight') next = (idx + 1) % TABS.length;
+    else if (e.key === 'ArrowLeft') next = (idx - 1 + TABS.length) % TABS.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = TABS.length - 1;
+    if (next !== null) {
+      e.preventDefault();
+      const nextTab = TABS[next]!;
+      setActiveTab(nextTab.id);
+      tabRefs.current[nextTab.id]?.focus();
+    }
+  }
 
   return (
     <div className={styles.page}>
@@ -802,19 +826,32 @@ export function StudyPage() {
         <h1 className={styles.title}>Study</h1>
       </header>
 
-      <nav className={styles.tabs}>
-        {TABS.map((t) => (
+      <div role="tablist" aria-label="Study sections" className={styles.tabs}>
+        {TABS.map((t, idx) => (
           <button
             key={t.id}
+            id={`tab-${t.id}`}
+            role="tab"
+            aria-selected={activeTab === t.id}
+            aria-controls={`tabpanel-${t.id}`}
+            tabIndex={activeTab === t.id ? 0 : -1}
+            ref={(el) => { if (el) tabRefs.current[t.id] = el; }}
             className={`${styles.tab} ${activeTab === t.id ? styles.tabActive : ''}`}
             onClick={() => setActiveTab(t.id)}
+            onKeyDown={(e) => handleTabKeyDown(e, idx)}
           >
             {t.label}
           </button>
         ))}
-      </nav>
+      </div>
 
-      <div className={styles.body}>
+      <div
+        role="tabpanel"
+        id={`tabpanel-${activeTab}`}
+        aria-labelledby={`tab-${activeTab}`}
+        tabIndex={0}
+        className={styles.body}
+      >
         {activeTab === 'summaries' && <SummaryTab kbId={kbId!} />}
         {activeTab === 'quiz' && <QuizTab kbId={kbId!} />}
         {activeTab === 'flashcards' && <FlashcardsTab kbId={kbId!} />}
