@@ -307,6 +307,15 @@ function QuizTab({ kbId }: { kbId: string }) {
                 <br />
                 {fb.explanation}
               </p>
+              {q.document_id && q.page_number != null && (
+                <Link
+                  to={`/knowledge-bases/${kbId}/documents/${q.document_id}`}
+                  state={{ page: q.page_number }}
+                  className={styles.sourceLink}
+                >
+                  View source — page {q.page_number}
+                </Link>
+              )}
             </div>
           );
         })}
@@ -441,6 +450,15 @@ function FlashcardsTab({ kbId }: { kbId: string }) {
             <div className={`${styles.flashcardFace} ${styles.flashcardBack}`}>
               <p className={styles.flashcardHint}>Answer</p>
               <p className={styles.flashcardText}>{card.back}</p>
+              {card.document_id && card.page_number != null && (
+                <Link
+                  to={`/knowledge-bases/${kbId}/documents/${card.document_id}`}
+                  state={{ page: card.page_number }}
+                  className={styles.flashcardSource}
+                >
+                  Source: page {card.page_number}
+                </Link>
+              )}
             </div>
           </div>
         </div>

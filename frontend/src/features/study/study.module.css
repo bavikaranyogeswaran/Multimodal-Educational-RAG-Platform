@@ -469,6 +469,23 @@
 .feedbackCorrect { color: var(--success); }
 .feedbackWrong { color: var(--danger); }
 
+.sourceLink {
+  display: inline-block;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+.sourceLink:hover { text-decoration: underline; }
+
+.flashcardSource {
+  margin-top: 0.75rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.flashcardSource:hover { color: var(--accent); }
+
 /* ── Flashcards ─────────────────────────────────────────────────────────── */
 
 .cardDeck {

@@ -2696,23 +2696,31 @@ why the system abstained if it did.
 
 Covers Â§7 complete, Â§57 UI, Â§68 verified end to end.
 
-**Status: not started.** Neither Cytoscape.js nor Playwright is installed, and `src/features/`
-holds authentication, conversations, documents and knowledge-bases only â€” no graph, memory or
-study surface. Phase 18 no longer blocks it, and the backend it renders is now largely there:
-the concept-graph API and the memory management API both exist. Study content (Phase 15) is the
-one backend dependency still entirely absent.
+**Status: ~90% complete.** All major surfaces are built and tested. The remaining items are
+the final documentation pass, quiz attempt history, and memory supersede/episode-browser
+(the latter two require backend endpoints not yet exposed through the API).
 
-- [ ] Cytoscape.js concept graph: 30â€“50 node initial view, node evidence and source page, one-hop
-      expansion, ask-about-this-node, prerequisite and related views. **Never renders the whole
-      Knowledge Base graph.**
-- [ ] Summary generation UI with citation rendering
-- [ ] Quiz taking, deterministic scoring, explanations, source links, attempt history
-- [ ] Flashcard decks and review flow
-- [ ] Study plan builder, calendar view, task completion
-- [ ] Learning progress dashboard: mastery, weak topics, completion
-- [ ] Memory management UI: view, edit, supersede, delete durable facts; episode browser
-- [ ] **Playwright end-to-end** covering the full Â§68 flow
-- [ ] Accessibility pass, responsive layout
+- [x] Cytoscape.js concept graph: 30â€”50 node initial view, node evidence and source page, one-hop
+      expansion, ask-about-this-node, prerequisite and related views. `src/features/graph/`
+      (`GraphPage.tsx`, `apiGateway.ts`, `hooks.ts`). **Never renders the whole Knowledge Base graph.**
+- [x] Summary generation UI with citation rendering â€” `SummaryTab` in `StudyPage.tsx`
+- [x] Quiz taking, deterministic scoring, explanations, source links â€” `QuizTab` in `StudyPage.tsx`;
+      feedback cards carry per-question source-page links via `document_id` + `page_number` from
+      the backend response. Attempt history deferred: no list-attempts endpoint on the backend.
+- [x] Flashcard decks and review flow â€” `FlashcardsTab` in `StudyPage.tsx`; flip animation,
+      AGAIN/HARD/GOOD/EASY ratings, source-page link on card back; existing-deck review.
+- [x] Study plan builder, date-grouped task view, task completion cycle â€” `StudyPlanTab` +
+      `PlanView` in `StudyPage.tsx`
+- [x] Learning progress dashboard: mastery bars, quiz scores, flashcard ratings, weak concepts,
+      plan completion â€” `ProgressTab` in `StudyPage.tsx`
+- [x] Memory management UI: view, dispute, delete durable facts â€” `MemoryPage.tsx`.
+      Edit and supersede deferred: the backend PATCH endpoint only accepts DISPUTED/DELETED;
+      supersede is system-driven. Episode browser deferred: no episode endpoint on the backend.
+- [x] **Playwright end-to-end** covering the full Â§68 flow â€” 16 tests in `e2e/flow.spec.ts`, all
+      passing
+- [x] Accessibility pass, responsive layout â€” ARIA tablist + roving tabindex on study tabs,
+      focus trap + return-focus on memory delete dialog, `role=”application”` on graph canvas,
+      `focus-visible` outlines; graph stacks at 640 px, memory cards collapse at 480 px
 - [ ] **Final documentation pass** â€” `USE_CASES.md`, `REQUIREMENTS.md` and `ARCHITECTURE.md`
       reconciled against what was built; every FR and NFR marked met, deferred or dropped with
       reasons
