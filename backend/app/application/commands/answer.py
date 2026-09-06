@@ -167,12 +167,11 @@ _INSTRUCTIONS: tuple[Instruction, ...] = (
     ),
     Instruction(
         text=(
-            "Cite only the passage whose text explicitly states the claim — not one "
-            "that discusses the same topic, not one you inferred the claim from. "
-            "Print each label exactly as it appears beside that passage."
+            "Cite the label of every passage a claim rests on, printed exactly as it "
+            "appears beside that passage."
         ),
-        category=InstructionCategory.GROUNDING_AND_SOURCE_USE,
-        level=RequirementLevel.CRITICAL,
+        category=InstructionCategory.OUTPUT_CONTRACT,
+        level=RequirementLevel.REQUIRED,
     ),
     Instruction(
         text=(
