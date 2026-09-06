@@ -148,11 +148,11 @@ test.describe('study', () => {
 
   test('shows all five tabs', async ({ page }) => {
     await page.goto(`/knowledge-bases/${KB_ID}/study`);
-    await expect(page.getByRole('button', { name: 'Summaries' })).toBeVisible({ timeout: 8000 });
-    await expect(page.getByRole('button', { name: 'Quiz' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Flashcards' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Study Plan' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Progress' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Summaries' })).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole('tab', { name: 'Quiz' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Flashcards' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Study Plan' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Progress' })).toBeVisible();
   });
 
   test('summaries tab generates a summary and shows it', async ({ page }) => {
@@ -169,7 +169,7 @@ test.describe('study', () => {
 
   test('progress tab shows topic mastery and weak concepts', async ({ page }) => {
     await page.goto(`/knowledge-bases/${KB_ID}/study`);
-    await page.getByRole('button', { name: 'Progress' }).click();
+    await page.getByRole('tab', { name: 'Progress' }).click();
     await expect(page.getByText('Mitosis')).toBeVisible({ timeout: 8000 });
     await expect(page.getByText('Meiosis')).toBeVisible();
     await expect(page.getByText('Prophase')).toBeVisible();
@@ -177,21 +177,21 @@ test.describe('study', () => {
 
   test('quiz tab shows topic input and generate button', async ({ page }) => {
     await page.goto(`/knowledge-bases/${KB_ID}/study`);
-    await page.getByRole('button', { name: 'Quiz' }).click();
+    await page.getByRole('tab', { name: 'Quiz' }).click();
     await expect(page.getByLabel('Topic')).toBeVisible({ timeout: 8000 });
     await expect(page.getByRole('button', { name: /generate quiz/i })).toBeVisible();
   });
 
   test('flashcards tab shows source selector and generate button', async ({ page }) => {
     await page.goto(`/knowledge-bases/${KB_ID}/study`);
-    await page.getByRole('button', { name: 'Flashcards' }).click();
+    await page.getByRole('tab', { name: 'Flashcards' }).click();
     await expect(page.getByLabel('Source')).toBeVisible({ timeout: 8000 });
     await expect(page.getByRole('button', { name: /generate cards/i })).toBeVisible();
   });
 
   test('study plan tab shows plan creation form', async ({ page }) => {
     await page.goto(`/knowledge-bases/${KB_ID}/study`);
-    await page.getByRole('button', { name: 'Study Plan' }).click();
+    await page.getByRole('tab', { name: 'Study Plan' }).click();
     await expect(page.getByLabel('Exam date')).toBeVisible({ timeout: 8000 });
     await expect(page.getByLabel('Chapters (one per line)')).toBeVisible();
     await expect(page.getByRole('button', { name: /create plan/i })).toBeVisible();
