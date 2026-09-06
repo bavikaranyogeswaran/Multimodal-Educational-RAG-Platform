@@ -105,7 +105,7 @@ class PaddleOcrAdapter:
 
     def _get_engine(self) -> Any:
         if self._engine is None:
-            from paddleocr import PaddleOCR  # type: ignore[import-untyped]
+            from paddleocr import PaddleOCR  # type: ignore[import-untyped]  # noqa: PLC0415
 
             self._engine = PaddleOCR(
                 lang=self._lang,
@@ -168,8 +168,8 @@ class PaddleOcrAdapter:
                 "rec_polys", page_result.get("rec_boxes", [])
             )
 
-            for text, score, poly in zip(texts, scores, polys):
-                text = str(text).strip()
+            for text, score, poly in zip(texts, scores, polys, strict=False):
+                text = str(text).strip()  # noqa: PLW2901
                 if not text:
                     continue
 

@@ -17,7 +17,7 @@ _SYSTEM_PREAMBLE = (
 )
 
 _TASK_TEMPLATE = """\
-Summarize the tutoring conversation below into a short paragraph (100–200 words).
+Summarize the tutoring conversation below into a short paragraph (100-200 words).
 Focus on: what subject the student is studying, what they have asked about, any \
 weaknesses or goals they have expressed, and what the tutor has explained so far.
 {prior_section}
@@ -37,7 +37,7 @@ class LlmSummarizer:
 
     async def summarize(
         self,
-        scope: ScopeContext,
+        _scope: ScopeContext,
         *,
         turns: Sequence[str],
         previous_summary: str | None,

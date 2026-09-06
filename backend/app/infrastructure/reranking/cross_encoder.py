@@ -29,7 +29,7 @@ class CrossEncoderReranker:
 
     def __init__(self, *, model_id: str, device: str, batch_size: int) -> None:
         try:
-            from sentence_transformers import CrossEncoder
+            from sentence_transformers import CrossEncoder  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
                 "sentence-transformers is not installed. "

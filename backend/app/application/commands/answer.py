@@ -41,6 +41,7 @@ from app.domain.enums import (
 )
 from app.domain.errors import GenerationParseError, GenerationRejectedError
 from app.domain.graph.entities import GraphEntity, GraphRelationship
+from app.domain.memory.entities import MemoryFact
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
 from app.domain.models.entities import ConversationTurn, GenerationUsage, LabeledPassage
 from app.domain.models.generation import OUTPUT_SCHEMA, GeneratedAnswer, parse_generated_answer
@@ -59,7 +60,6 @@ from app.domain.models.validation import (
     check_table_references,
     decide,
 )
-from app.domain.memory.entities import MemoryFact
 from app.domain.ports.adapters import CacheStore, EmbeddingPort
 from app.domain.ports.entailment import ClaimEntailmentPort
 from app.domain.ports.faithfulness import AnswerFaithfulnessPort
@@ -305,7 +305,7 @@ class AnswerUseCase:
         self._index_version = index_version
         self._generation_policy_version = generation_policy_version
 
-    async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:
+    async def execute(self, command: AnswerCommand) -> AsyncGenerator[str, None]:  # noqa: PLR0915
         """Stream the answer for one turn.
 
         Returns a generator rather than a plain iterator because closing it is part of the
@@ -477,7 +477,7 @@ class AnswerUseCase:
         is_multi_hop = retrieval.query_class.needs_decomposition and multi_hop is not None
         is_quiz = retrieval.query_class.needs_quiz_generation and quiz_generator is not None
 
-        async def _tracked() -> AsyncGenerator[str, None]:
+        async def _tracked() -> AsyncGenerator[str, None]:  # noqa: PLR0915
             failed = False
             abandoned = False
             abstained = False
@@ -509,7 +509,9 @@ class AnswerUseCase:
                 else:
                     with StageTimer("generation") as _gen_timer:
                         raw, usage, ttft_ms = await _collect_stream(initial_stream)
-                    _log.info("answer_stage", stage="generation", elapsed_ms=_gen_timer.elapsed_ms())
+                    _log.info(
+                        "answer_stage", stage="generation", elapsed_ms=_gen_timer.elapsed_ms()
+                    )
                     _log.info("answer_stage", stage="time_to_first_token", elapsed_ms=ttft_ms)
                     _log_model_metrics(gateway, usage, _gen_timer.elapsed_ms(), cache_hit=False)
                     with StageTimer("validation") as _val_timer:
@@ -517,7 +519,9 @@ class AnswerUseCase:
                             raw, labeled, entailment, faithfulness,
                             self._answer_max_words, self._answer_max_tokens,
                         )
-                    _log.info("answer_stage", stage="validation", elapsed_ms=_val_timer.elapsed_ms())
+                    _log.info(
+                        "answer_stage", stage="validation", elapsed_ms=_val_timer.elapsed_ms()
+                    )
 
                     if checked.decision is ValidationDecision.REPAIRABLE:
                         repair = build_repair_instructions(
@@ -553,14 +557,24 @@ class AnswerUseCase:
                             repair_raw, usage, _ = await _collect_stream(
                                 gateway.generate_stream(repair_request)
                             )
-                        _log.info("answer_stage", stage="generation_repair", elapsed_ms=_repair_gen_timer.elapsed_ms())
-                        _log_model_metrics(gateway, usage, _repair_gen_timer.elapsed_ms(), cache_hit=False)
+                        _log.info(
+                            "answer_stage",
+                            stage="generation_repair",
+                            elapsed_ms=_repair_gen_timer.elapsed_ms(),
+                        )
+                        _log_model_metrics(
+                            gateway, usage, _repair_gen_timer.elapsed_ms(), cache_hit=False
+                        )
                         with StageTimer("validation") as _repair_val_timer:
                             checked = await _validate(
                                 repair_raw, labeled, entailment, faithfulness,
                                 self._answer_max_words, self._answer_max_tokens,
                             )
-                        _log.info("answer_stage", stage="validation_repair", elapsed_ms=_repair_val_timer.elapsed_ms())
+                        _log.info(
+                            "answer_stage",
+                            stage="validation_repair",
+                            elapsed_ms=_repair_val_timer.elapsed_ms(),
+                        )
 
                     answer = _returnable_answer(checked)
                     if answer is None:
@@ -799,7 +813,7 @@ def _log_model_metrics(
         provider = profile.provider
         context_tokens = profile.context_tokens
         fallback_used = usage.model_id != profile.model_key
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     _log.info(
         "model_metrics",
@@ -843,7 +857,7 @@ class _Validation:
     table_ref_result: TableReferenceCheckResult | None = None
 
 
-async def _validate(
+async def _validate(  # noqa: PLR0917
     raw: str,
     labeled: tuple[LabeledPassage, ...],
     entailment: ClaimEntailmentPort,
@@ -1026,7 +1040,9 @@ async def _load_memory_context(
                     relevant_facts = inferred_facts[:_MAX_RELEVANT_MEMORY]
             else:
                 # Pass 2b: keyword search only (no embedder).
-                keyword_hits = await memory_repo.keyword_search(scope, query, limit=_MAX_RELEVANT_MEMORY)
+                keyword_hits = await memory_repo.keyword_search(
+                    scope, query, limit=_MAX_RELEVANT_MEMORY
+                )
                 keyword_filtered = [f for f, _ in keyword_hits if f.id not in exclude_ids]
                 # Fall back to recency order when keyword returns nothing.
                 non_key_inferred = keyword_filtered or [

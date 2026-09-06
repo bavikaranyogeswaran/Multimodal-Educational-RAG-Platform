@@ -28,7 +28,7 @@ class SubmitFlashcardReviewUseCase:
         self._repo = flashcard_repo
 
     async def execute(
-        self, command: SubmitFlashcardReviewCommand, session: object
+        self, command: SubmitFlashcardReviewCommand, _session: object
     ) -> SubmitFlashcardReviewResult:
         review = FlashcardReview(
             id=uuid.uuid4(),

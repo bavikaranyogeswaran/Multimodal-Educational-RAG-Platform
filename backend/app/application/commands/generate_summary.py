@@ -110,7 +110,7 @@ class GenerateSummaryUseCase:
         self._repo = summary_repo
 
     async def execute(
-        self, command: GenerateSummaryCommand, session: object
+        self, command: GenerateSummaryCommand, _session: object
     ) -> GenerateSummaryResult:
         if not command.evidence:
             raise ValueError("No evidence provided for summary generation")

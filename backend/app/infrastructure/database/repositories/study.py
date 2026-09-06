@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import select, update
@@ -38,7 +38,6 @@ from app.infrastructure.database.models.study import (
     StudyTaskModel,
 )
 from app.infrastructure.database.repository import ScopedRepository
-
 
 # ---------------------------------------------------------------------------
 # Summaries
@@ -150,7 +149,7 @@ class SqlFlashcardRepository(ScopedRepository):
 
     async def last_review_date(self, scope: ScopeContext) -> datetime | None:
         self._require_scope(scope)
-        from sqlalchemy import func
+        from sqlalchemy import func  # noqa: PLC0415
         stmt = select(func.max(FlashcardReviewModel.reviewed_at)).where(
             self._scope_filter(FlashcardReviewModel)
         )

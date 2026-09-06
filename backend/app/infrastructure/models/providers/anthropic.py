@@ -59,12 +59,14 @@ class AnthropicGateway:
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         raise NotImplementedError(
-            "AnthropicGateway: credentials not configured — add ANTHROPIC_API_KEY and implement the native SDK adapter"
+            "AnthropicGateway: credentials not configured — add ANTHROPIC_API_KEY"
+            " and implement the native SDK adapter"
         )
 
     def generate_stream(self, request: ModelRequest) -> None:
         raise NotImplementedError(
-            "AnthropicGateway: credentials not configured — add ANTHROPIC_API_KEY and implement the native SDK adapter"
+            "AnthropicGateway: credentials not configured — add ANTHROPIC_API_KEY"
+            " and implement the native SDK adapter"
         )
 
     async def generate_with_image(
@@ -73,5 +75,6 @@ class AnthropicGateway:
         image: bytes,
     ) -> ModelResponse:
         raise NotImplementedError(
-            "AnthropicGateway: credentials not configured — add ANTHROPIC_API_KEY and implement the native SDK adapter"
+            "AnthropicGateway: credentials not configured — add ANTHROPIC_API_KEY"
+            " and implement the native SDK adapter"
         )

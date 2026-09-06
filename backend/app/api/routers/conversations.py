@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.answer import get_answer_use_case
 from app.api.dependencies.scope import get_kb_scope
-from app.configuration.settings import Settings, get_settings
 from app.api.schemas.conversation import (
     BoundingBoxResponse,
     CitationResponse,
@@ -29,6 +28,7 @@ from app.api.schemas.conversation import (
     UpdateConversationRequest,
 )
 from app.application.commands.answer import AnswerCommand, AnswerUseCase
+from app.configuration.settings import Settings, get_settings
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.errors import GenerationRejectedError
 from app.domain.scope import ScopeContext
@@ -252,7 +252,7 @@ async def delete_conversation(
 
 
 @router.post("/{conversation_id}/stream", status_code=200)
-async def stream_response(
+async def stream_response(  # noqa: PLR0917
     request: Request,
     conversation_id: uuid.UUID,
     body: StreamRequest,
@@ -295,7 +295,7 @@ async def stream_response(
         repo = SqlConversationRepository(scope=scope, session=session)
         conversation = await repo.get(scope, conversation_id)
         if conversation is None:
-            raise HTTPException(status_code=404, detail=_404_CONVERSATION)
+            raise HTTPException(status_code=404, detail=_404_CONVERSATION)  # noqa: TRY301
 
         command = AnswerCommand(
             scope=scope,

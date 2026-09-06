@@ -97,7 +97,9 @@ class OllamaModelGateway:
         self._client = http_client
         self._model_id = model_id
         self._timeout = timeout_seconds
-        self._prompt_profile = prompt_profile if prompt_profile is not None else DEFAULT_PROMPT_PROFILE
+        self._prompt_profile = (
+            prompt_profile if prompt_profile is not None else DEFAULT_PROMPT_PROFILE
+        )
         self._profile = ModelProfile(
             model_key=model_id,
             provider="ollama",

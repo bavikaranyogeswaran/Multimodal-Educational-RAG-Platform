@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
-from app.domain.enums import ReviewRating
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import LearningProgress
 

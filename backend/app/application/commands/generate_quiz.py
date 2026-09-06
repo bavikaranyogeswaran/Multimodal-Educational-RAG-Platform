@@ -21,7 +21,6 @@ from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.retrieval.entities import Evidence
 from app.domain.scope import ScopeContext
 
-
 _SYSTEM_PREAMBLE = (
     "You are an educational tutor creating quiz questions to help a student test "
     "their understanding of course material they have uploaded."

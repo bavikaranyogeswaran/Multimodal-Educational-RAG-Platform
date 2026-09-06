@@ -24,7 +24,8 @@ from app.infrastructure.database.repository import ScopedRepository
 
 
 class SqlDocumentRepository(ScopedRepository):
-    """Reads and writes Document, DocumentPage, DocumentElement, DocumentTable and DocumentFigure."""
+    """Reads and writes Document, DocumentPage, DocumentElement, DocumentTable and
+    DocumentFigure."""
 
     async def get(self, scope: ScopeContext, document_id: UUID) -> Document | None:
         self._require_scope(scope)

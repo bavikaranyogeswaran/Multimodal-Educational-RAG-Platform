@@ -59,12 +59,14 @@ class GeminiGateway:
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         raise NotImplementedError(
-            "GeminiGateway: credentials not configured — add GEMINI_API_KEY and implement the native SDK adapter"
+            "GeminiGateway: credentials not configured — add GEMINI_API_KEY"
+            " and implement the native SDK adapter"
         )
 
     def generate_stream(self, request: ModelRequest) -> None:
         raise NotImplementedError(
-            "GeminiGateway: credentials not configured — add GEMINI_API_KEY and implement the native SDK adapter"
+            "GeminiGateway: credentials not configured — add GEMINI_API_KEY"
+            " and implement the native SDK adapter"
         )
 
     async def generate_with_image(
@@ -73,5 +75,6 @@ class GeminiGateway:
         image: bytes,
     ) -> ModelResponse:
         raise NotImplementedError(
-            "GeminiGateway: credentials not configured — add GEMINI_API_KEY and implement the native SDK adapter"
+            "GeminiGateway: credentials not configured — add GEMINI_API_KEY"
+            " and implement the native SDK adapter"
         )

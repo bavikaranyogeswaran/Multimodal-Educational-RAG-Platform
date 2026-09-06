@@ -16,7 +16,6 @@ from datetime import UTC, date, datetime, timedelta
 
 from app.domain.enums import ModelTask, StudyTaskStatus
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
-from app.domain.models.entities import LabeledPassage
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import StudyPlan, StudyTask
@@ -70,9 +69,9 @@ class CreateStudyPlanUseCase:
         self._repo = plan_repo
 
     async def execute(
-        self, command: CreateStudyPlanCommand, session: object
+        self, command: CreateStudyPlanCommand, _session: object
     ) -> CreateStudyPlanResult:
-        today = date.today()
+        today = datetime.now(UTC).date()
         days_left = (command.exam_date - today).days
         if days_left <= 0:
             raise ValueError("Exam date must be in the future")

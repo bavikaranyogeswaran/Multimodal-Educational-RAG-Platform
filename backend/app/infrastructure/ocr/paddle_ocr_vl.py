@@ -20,6 +20,6 @@ from __future__ import annotations
 from app.infrastructure.ocr.paddle_ocr import PaddleOcrAdapter
 
 
-def PaddleOcrVlAdapter(*, lang: str, dpi: int) -> PaddleOcrAdapter:
+def PaddleOcrVlAdapter(*, lang: str, dpi: int) -> PaddleOcrAdapter:  # noqa: N802
     """Return a PaddleOcrAdapter with VL preprocessing enabled."""
     return PaddleOcrAdapter(lang=lang, dpi=dpi, use_vl=True)

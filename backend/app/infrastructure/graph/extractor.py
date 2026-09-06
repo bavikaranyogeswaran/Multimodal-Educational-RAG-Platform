@@ -103,7 +103,7 @@ def _strip_fences(raw: str) -> str:
     return text
 
 
-def _parse_and_validate(
+def _parse_and_validate(  # noqa: PLR0912, PLR0915
     raw: str,
     scope: ScopeContext,
     document_id: UUID,
@@ -196,7 +196,8 @@ def _parse_and_validate(
             )
         if source_name == target_name:
             raise GraphExtractionError(
-                f"relationship at index {i} source and target refer to the same entity {source_name!r}"
+                f"relationship at index {i} source and target refer to the same entity"
+                f" {source_name!r}"
             )
         if rel_type_str not in _VALID_REL_TYPES:
             raise GraphExtractionError(

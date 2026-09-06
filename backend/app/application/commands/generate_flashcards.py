@@ -83,7 +83,7 @@ class GenerateFlashcardsUseCase:
         self._repo = flashcard_repo
 
     async def execute(
-        self, command: GenerateFlashcardsCommand, session: object
+        self, command: GenerateFlashcardsCommand, _session: object
     ) -> GenerateFlashcardsResult:
         if not command.evidence:
             raise ValueError("No evidence provided for flashcard generation")

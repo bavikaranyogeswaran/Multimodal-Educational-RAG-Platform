@@ -66,7 +66,7 @@ class BuildGraphUseCase:
     - providing an already-open database session shared across all repositories
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0917
         self,
         kb_repo: KnowledgeBaseRepository,
         document_repo: DocumentRepository,

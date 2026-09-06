@@ -42,7 +42,7 @@ class SqlJobRepository:
         self,
         *,
         job_types: frozenset[JobType],
-        worker_id: str,
+        worker_id: str,  # noqa: ARG002
         lease_until: datetime,
     ) -> ProcessingJob | None:
         """Atomically claim the highest-priority claimable job of an eligible type.

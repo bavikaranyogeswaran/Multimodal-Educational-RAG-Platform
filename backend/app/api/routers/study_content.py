@@ -465,7 +465,7 @@ def _quiz_response(q: Quiz) -> QuizResponse:
     )
 
 
-def _flashcard_response(c: Flashcard, scope: ScopeContext) -> FlashcardResponse:
+def _flashcard_response(c: Flashcard, _scope: ScopeContext) -> FlashcardResponse:
     return FlashcardResponse(
         id=c.id,
         knowledge_base_id=c.kb_id,

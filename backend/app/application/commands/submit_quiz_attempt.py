@@ -13,9 +13,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from app.domain.enums import QuestionType
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import Quiz, QuizAttempt
-from app.domain.enums import QuestionType
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class SubmitQuizAttemptUseCase:
         self._repo = attempt_repo
 
     async def execute(
-        self, command: SubmitQuizAttemptCommand, session: object
+        self, command: SubmitQuizAttemptCommand, _session: object
     ) -> SubmitQuizAttemptResult:
         feedback: dict[str, dict] = {}
         incorrect_ids: list[uuid.UUID] = []

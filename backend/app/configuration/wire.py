@@ -59,7 +59,7 @@ def _build_model_gateway(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession] | None,
 ) -> ModelGatewayPort:
-    from app.domain.enums import DataBoundary
+    from app.domain.enums import DataBoundary  # noqa: PLC0415
 
     client = httpx.AsyncClient(base_url=settings.model.ollama_base_url)
     ollama = OllamaModelGateway(
@@ -87,7 +87,7 @@ def _build_model_gateway(
 
 def _build_reranker(settings: Settings) -> RerankerPort:
     try:
-        from app.infrastructure.reranking.cross_encoder import (
+        from app.infrastructure.reranking.cross_encoder import (  # noqa: PLC0415
             CrossEncoderReranker,
         )
 
@@ -102,14 +102,14 @@ def _build_reranker(settings: Settings) -> RerankerPort:
 
 def _build_pdf_parser(settings: Settings) -> PdfParserPort:
     try:
-        from app.domain.documents.element_classifier import (
+        from app.domain.documents.element_classifier import (  # noqa: PLC0415
             ElementClassifier,
         )
-        from app.domain.documents.page_classifier import PageClassifier
-        from app.domain.documents.reading_order import (
+        from app.domain.documents.page_classifier import PageClassifier  # noqa: PLC0415
+        from app.domain.documents.reading_order import (  # noqa: PLC0415
             ReadingOrderResolver,
         )
-        from app.infrastructure.parsing.pdfplumber_parser import (
+        from app.infrastructure.parsing.pdfplumber_parser import (  # noqa: PLC0415
             PdfPlumberParser,
         )
 
@@ -139,8 +139,8 @@ def _build_pdf_parser(settings: Settings) -> PdfParserPort:
 
 def _build_ocr(settings: Settings) -> OcrPort:
     try:
-        from app.infrastructure.ocr.fallback import FallbackOcrAdapter
-        from app.infrastructure.ocr.paddle_ocr import PaddleOcrAdapter
+        from app.infrastructure.ocr.fallback import FallbackOcrAdapter  # noqa: PLC0415
+        from app.infrastructure.ocr.paddle_ocr import PaddleOcrAdapter  # noqa: PLC0415
 
         primary: OcrPort = PaddleOcrAdapter(
             lang=settings.ocr.language,
@@ -150,7 +150,7 @@ def _build_ocr(settings: Settings) -> OcrPort:
         secondary: OcrPort | None = None
         if settings.ocr.vl_fallback_enabled:
             try:
-                from app.infrastructure.ocr.paddle_ocr_vl import PaddleOcrVlAdapter
+                from app.infrastructure.ocr.paddle_ocr_vl import PaddleOcrVlAdapter  # noqa: PLC0415
 
                 secondary = PaddleOcrVlAdapter(
                     lang=settings.ocr.language,
@@ -168,7 +168,7 @@ def _build_ocr(settings: Settings) -> OcrPort:
         pass
 
     try:
-        from app.infrastructure.ocr.tesseract import TesseractAdapter
+        from app.infrastructure.ocr.tesseract import TesseractAdapter  # noqa: PLC0415
 
         return TesseractAdapter(
             lang=settings.ocr.language,
@@ -193,7 +193,7 @@ def _build_token_counter(settings: Settings) -> TokenCounterPort:
 
 def _build_embedder(settings: Settings) -> EmbeddingPort:
     try:
-        from app.infrastructure.embeddings.sentence_transformer import (
+        from app.infrastructure.embeddings.sentence_transformer import (  # noqa: PLC0415
             SentenceTransformerEmbedder,
         )
 
@@ -253,7 +253,7 @@ def build_container(settings: Settings) -> Container:
     else:
         _storage = cast(StoragePort, _u("StoragePort"))
         if db_url:
-            from app.infrastructure.cache.postgres import SqlCacheStore
+            from app.infrastructure.cache.postgres import SqlCacheStore  # noqa: PLC0415
 
             _cache = SqlCacheStore(_session_factory)
         else:

@@ -21,7 +21,13 @@ import structlog
 from app.application.observability.timer import StageTimer
 from app.domain.enums import EarlyExitPath, QueryClass, RetrieverKind
 from app.domain.models.entities import ConversationTurn
-from app.domain.ports.adapters import DenseRetriever, EmbeddingPort, KeywordRetriever, QueryClassificationPort, RerankerPort
+from app.domain.ports.adapters import (
+    DenseRetriever,
+    EmbeddingPort,
+    KeywordRetriever,
+    QueryClassificationPort,
+    RerankerPort,
+)
 from app.domain.ports.repositories import ChunkRepository
 from app.domain.retrieval.compression import EvidenceCompressor
 from app.domain.retrieval.entities import Evidence, EvidenceLabel, RetrievalFilters, RetrievalPlan
@@ -94,7 +100,7 @@ class RetrievalOrchestrator:
         self._selector = selector
         self._compressor = compressor
 
-    async def execute(self, query: RetrieveEvidenceQuery) -> RetrievalResult:
+    async def execute(self, query: RetrieveEvidenceQuery) -> RetrievalResult:  # noqa: PLR0915
         with StageTimer("classify") as _timer:
             query_class = await self._classifier.classify(query.query)
         _log.info("retrieval_stage", stage="classify", elapsed_ms=_timer.elapsed_ms())
@@ -110,7 +116,10 @@ class RetrievalOrchestrator:
             if chunk is not None:
                 _log.info("retrieval_stage", stage="table_lookup", early_exit=True)
                 return RetrievalResult(
-                    evidence=[Evidence(label=EvidenceLabel(1), chunk=chunk, retrievers=frozenset({RetrieverKind.TABLE}), rank=0)],
+                    evidence=[Evidence(
+                        label=EvidenceLabel(1), chunk=chunk,
+                        retrievers=frozenset({RetrieverKind.TABLE}), rank=0,
+                    )],
                     standalone_query=query.query,
                     was_rewritten=False,
                     query_class=query_class,
@@ -121,7 +130,10 @@ class RetrievalOrchestrator:
             if chunk is not None:
                 _log.info("retrieval_stage", stage="visual_lookup", early_exit=True)
                 return RetrievalResult(
-                    evidence=[Evidence(label=EvidenceLabel(1), chunk=chunk, retrievers=frozenset({RetrieverKind.VISUAL}), rank=0)],
+                    evidence=[Evidence(
+                        label=EvidenceLabel(1), chunk=chunk,
+                        retrievers=frozenset({RetrieverKind.VISUAL}), rank=0,
+                    )],
                     standalone_query=query.query,
                     was_rewritten=False,
                     query_class=query_class,

@@ -221,7 +221,7 @@ def aggregate_claim_status(results: Sequence[EntailmentResult]) -> ClaimStatus:
     return ClaimStatus.NOT_SUPPORTED
 
 
-def decide(
+def decide(  # noqa: PLR0917
     answer: GeneratedAnswer,
     citation_results: tuple[CitationCheckResult, ...],
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
@@ -364,7 +364,7 @@ def _partial_prose(kept: Sequence[Claim], dropped: Sequence[str]) -> str:
     )
 
 
-def build_repair_instructions(
+def build_repair_instructions(  # noqa: PLR0917
     citation_results: tuple[CitationCheckResult, ...],
     entailment_by_claim: Sequence[Sequence[EntailmentResult]],
     fidelity: AnswerFidelity | None = None,
@@ -574,7 +574,8 @@ def check_table_references(
     answer: GeneratedAnswer,
     evidence: Sequence[LabeledPassage],
 ) -> TableReferenceCheckResult:
-    """Check that every table/figure reference in the answer appears in at least one evidence passage.
+    """Check that every table/figure reference in the answer appears in at least one evidence
+    passage.
 
     Extracts labels like "Table 4.2" or "Fig. 3" from both the answer and the evidence
     passages. A reference that appears in the answer but in none of the passages was not

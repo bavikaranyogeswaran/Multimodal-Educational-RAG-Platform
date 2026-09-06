@@ -60,8 +60,8 @@ class TesseractAdapter:
         self, image: bytes, page: DocumentPage
     ) -> list[DocumentElement]:
         try:
-            import pytesseract  # type: ignore[import-untyped]
-            from PIL import Image  # type: ignore[import-untyped]
+            import pytesseract  # type: ignore[import-untyped]  # noqa: PLC0415
+            from PIL import Image  # type: ignore[import-untyped]  # noqa: PLC0415
         except ImportError:
             _log.error("tesseract_not_available")
             return []
@@ -86,7 +86,7 @@ class TesseractAdapter:
         now = datetime.now(UTC)
 
         for i, text in enumerate(data["text"]):
-            text = str(text).strip()
+            text = str(text).strip()  # noqa: PLW2901
             if not text:
                 continue
 

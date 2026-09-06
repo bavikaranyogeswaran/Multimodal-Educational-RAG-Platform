@@ -226,7 +226,7 @@ async def _discard_figure_crops(figures: Sequence[DocumentFigure], storage: Stor
 # ---------------------------------------------------------------------------
 
 
-async def _crop_and_upload_figures(
+async def _crop_and_upload_figures(  # noqa: PLR0917
     figures: Sequence[DocumentFigure],
     parsed: Sequence[ParsedPage],
     data: bytes,
@@ -293,7 +293,7 @@ Examine the image. Classify it as exactly one of:
   DIAGRAM  — a schematic, flowchart, architecture diagram, process flow, or structural illustration
 
 Extract every readable text label visible in the image.
-Write a 1–3 sentence factual description of what the image shows."""
+Write a 1–3 sentence factual description of what the image shows."""  # noqa: RUF001
 
 _FIGURE_OUTPUT_SCHEMA = """\
 Respond with exactly this JSON (no markdown fences, no extra text):
@@ -395,7 +395,7 @@ def _parse_vision_response(text: str) -> dict[str, object]:
     if kind is not None:
         updates["kind"] = kind
 
-    for field in (
+    for key in (
         "description",
         "ocr_text",
         "chart_type",
@@ -406,14 +406,14 @@ def _parse_vision_response(text: str) -> dict[str, object]:
         "data_labels",
         "visible_trend",
     ):
-        val = data.get(field)
+        val = data.get(key)
         if val is not None:
-            updates[field] = str(val) or None
+            updates[key] = str(val) or None
 
-    for field in ("diagram_labels", "components", "arrows", "visible_relationships"):
-        val = data.get(field)
+    for key in ("diagram_labels", "components", "arrows", "visible_relationships"):
+        val = data.get(key)
         if isinstance(val, list):
-            updates[field] = tuple(str(item) for item in val if item)
+            updates[key] = tuple(str(item) for item in val if item)
 
     return updates
 
@@ -530,8 +530,14 @@ def _to_chunks(
             scope=scope,
             index_version=index_version,
             now=now,
-            figure_id=fig_map.get(family.parent.source_element_id) if family.parent.source_element_id else None,
-            table_id=tbl_map.get(family.parent.source_element_id) if family.parent.source_element_id else None,
+            figure_id=(
+                fig_map.get(family.parent.source_element_id)
+                if family.parent.source_element_id else None
+            ),
+            table_id=(
+                tbl_map.get(family.parent.source_element_id)
+                if family.parent.source_element_id else None
+            ),
         )
         chunks.append(parent)
 
@@ -545,8 +551,14 @@ def _to_chunks(
                     scope=scope,
                     index_version=index_version,
                     now=now,
-                    figure_id=fig_map.get(draft.source_element_id) if draft.source_element_id else None,
-                    table_id=tbl_map.get(draft.source_element_id) if draft.source_element_id else None,
+                    figure_id=(
+                        fig_map.get(draft.source_element_id)
+                        if draft.source_element_id else None
+                    ),
+                    table_id=(
+                        tbl_map.get(draft.source_element_id)
+                        if draft.source_element_id else None
+                    ),
                 )
             )
             child_ordinal += 1

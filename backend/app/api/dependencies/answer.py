@@ -13,16 +13,15 @@ long closed.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
 import structlog
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-import uuid
-from datetime import UTC, datetime
 
 from app.api.dependencies.container import get_container
 from app.api.dependencies.retrieval import get_retrieval_orchestrator
@@ -42,12 +41,14 @@ from app.application.queries.retrieve_evidence import RetrievalOrchestrator
 from app.application.queries.sub_question_pipeline import SubQuestionPipeline
 from app.configuration.container import Container
 from app.configuration.settings import get_settings
-from app.domain.models.context_builder import ContextBuilder
-from app.domain.scope import ScopeContext
 from app.domain.enums import JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
+from app.domain.models.context_builder import ContextBuilder
+from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
-from app.infrastructure.database.repositories.conversation_summary import SqlConversationSummaryRepository
+from app.infrastructure.database.repositories.conversation_summary import (
+    SqlConversationSummaryRepository,
+)
 from app.infrastructure.database.repositories.graph import SqlGraphRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
 from app.infrastructure.database.repositories.knowledge_base import SqlKnowledgeBaseRepository
@@ -62,7 +63,7 @@ _log = structlog.get_logger(__name__)
 
 def _build_post_turn_hook(
     session_factory: async_sessionmaker[AsyncSession],
-    scope: ScopeContext,
+    scope: ScopeContext,  # noqa: ARG001
     container: Container,
 ) -> Callable[[ScopeContext, UUID], Awaitable[None]]:
     """Build a post-turn callable that extracts memory facts and triggers compaction.

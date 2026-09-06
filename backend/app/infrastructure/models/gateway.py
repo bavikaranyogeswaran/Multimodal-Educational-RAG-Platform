@@ -81,18 +81,17 @@ class ModelGatewayFacade:
         if self._session_factory is None:
             return
         try:
-            async with self._session_factory() as session:
-                async with session.begin():
-                    await write_model_invocation(
-                        session=session,
-                        model_id=response.model_id,
-                        task=response.model_task.value,
-                        provider=provider.profile.provider,
-                        prompt_tokens=response.prompt_tokens,
-                        completion_tokens=response.completion_tokens,
-                        latency_ms=response.latency_ms,
-                        used_fallback=used_fallback,
-                    )
+            async with self._session_factory() as session, session.begin():
+                await write_model_invocation(
+                    session=session,
+                    model_id=response.model_id,
+                    task=response.model_task.value,
+                    provider=provider.profile.provider,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    latency_ms=response.latency_ms,
+                    used_fallback=used_fallback,
+                )
         except Exception as exc:
             _log.warning("gateway.invocation_write_failed", error=str(exc))
 
@@ -113,7 +112,6 @@ class ModelGatewayFacade:
             try:
                 result = await provider.generate(request)
                 await self._record_invocation(result, provider, used_fallback=(index > 0))
-                return result
             except ProviderError as exc:
                 if not exc.retryable:
                     raise
@@ -124,6 +122,8 @@ class ModelGatewayFacade:
                     error=str(exc),
                 )
                 last_error = exc
+            else:
+                return result
 
         raise last_error  # type: ignore[misc]
 
@@ -156,7 +156,6 @@ class ModelGatewayFacade:
                     request, image
                 )
                 await self._record_invocation(result, provider, used_fallback=(index > 0))
-                return result
             except ProviderError as exc:
                 if not exc.retryable:
                     raise
@@ -167,5 +166,7 @@ class ModelGatewayFacade:
                     error=str(exc),
                 )
                 last_error = exc
+            else:
+                return result
 
         raise last_error  # type: ignore[misc]

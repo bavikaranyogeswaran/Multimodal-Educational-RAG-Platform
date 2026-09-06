@@ -32,9 +32,12 @@ Assistant response:
 {assistant_message}
 
 Return a JSON array. Each item must have:
-- "memory_type": one of PREFERENCE, PROJECT_DECISION, CONSTRAINT, IDENTIFIER, GOAL, EXAM_DATE, WEAK_TOPIC
-- "key": a short snake_case identifier that is stable across corrections (e.g. "target_exam", "weak_topic_calculus")
-- "value": a JSON object containing the fact payload (e.g. {{"date": "2026-12-01"}} or {{"topic": "integration by parts"}})
+- "memory_type": one of PREFERENCE, PROJECT_DECISION, CONSTRAINT, IDENTIFIER, GOAL,
+  EXAM_DATE, WEAK_TOPIC
+- "key": a short snake_case identifier stable across corrections (e.g. "target_exam",
+  "weak_topic_calculus")
+- "value": a JSON object with the fact payload (e.g. {{"date": "2026-12-01"}} or
+  {{"topic": "integration by parts"}})
 - "confidence": a float in [0.0, 1.0] reflecting how certain you are from this single turn
 
 Rules:

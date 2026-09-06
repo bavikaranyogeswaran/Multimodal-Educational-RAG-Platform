@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from typing import Any, List  # noqa: UP035
 from uuid import UUID
 
-from sqlalchemy import delete as sa_delete, func
-from sqlalchemy import or_, select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, or_, select
 
 from app.domain.conversations.entities import Conversation, Message
 from app.domain.enums import MessageRole, MessageStatus

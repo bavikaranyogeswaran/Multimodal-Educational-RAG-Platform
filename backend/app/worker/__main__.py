@@ -56,8 +56,9 @@ from app.domain.jobs.entities import ProcessingJob
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
-from app.infrastructure.database.repositories.conversation_summary import SqlConversationSummaryRepository
-from app.infrastructure.database.repositories.conversation_summary import SqlConversationSummaryRepository
+from app.infrastructure.database.repositories.conversation_summary import (
+    SqlConversationSummaryRepository,
+)
 from app.infrastructure.database.repositories.document import SqlDocumentRepository
 from app.infrastructure.database.repositories.graph import SqlGraphRepository
 from app.infrastructure.database.repositories.job import SqlJobRepository
@@ -121,7 +122,7 @@ async def _heartbeat_loop(
 # ---------------------------------------------------------------------------
 
 
-async def _run_job(container: Container, settings: Settings, job: ProcessingJob) -> None:
+async def _run_job(container: Container, settings: Settings, job: ProcessingJob) -> None:  # noqa: PLR0911
     """Run whichever kind of work this job describes."""
     if job.job_type is JobType.DELETE_DOCUMENT:
         await _run_deletion(container, settings, job)
@@ -539,7 +540,9 @@ async def _enqueue_ocr_pages(
 
     Returns the number of jobs queued (zero for fully native-text documents).
     """
-    from app.infrastructure.database.repositories.document import SqlDocumentRepository
+    from app.infrastructure.database.repositories.document import (  # noqa: PLC0415
+        SqlDocumentRepository,
+    )
 
     pages = await SqlDocumentRepository(scope, session).get_pages(scope, document_id)
     ocr_pages = [p for p in pages if p.needs_ocr]

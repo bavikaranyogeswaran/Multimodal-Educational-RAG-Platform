@@ -67,7 +67,7 @@ _RUNNING_HEADER_TOP_PTS: float = 80.0
 # a unique string ("Overview of Azure ML | 3", "4 | Overview of Azure ML") despite an
 # identical underlying title. Stripping the number before counting lets occurrences that
 # differ only by page number still accumulate toward the suppression threshold.
-_PAGE_NUMBER_NOISE = re.compile(r"^\d+\s*[|—–]\s*|\s*[|—–]\s*\d+$")
+_PAGE_NUMBER_NOISE = re.compile(r"^\d+\s*[|—–]\s*|\s*[|—–]\s*\d+$")  # noqa: RUF001
 
 
 def _normalize_running_header(text: str) -> str:

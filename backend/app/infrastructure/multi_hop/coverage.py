@@ -23,7 +23,8 @@ Retrieved passages:
 
 Does the evidence above answer the question? Respond with exactly one word:
 - SUPPORTED — the passages clearly and completely answer the question
-- PARTIALLY_SUPPORTED — the passages are relevant but leave gaps or only address part of the question
+- PARTIALLY_SUPPORTED — the passages are relevant but leave gaps or only address part
+  of the question
 - UNSUPPORTED — the passages do not address the question at all
 - CONFLICTING — two or more passages make incompatible claims about the same fact
 

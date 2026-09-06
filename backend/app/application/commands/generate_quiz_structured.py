@@ -36,14 +36,15 @@ _TASK_INSTRUCTIONS = (
     "Use at least 2 different question types from: multiple_choice, true_false, short_answer, "
     "fill_blank, chart_interpretation, table_interpretation. "
     "Vary the difficulty: include at least one 'easy', one 'medium', one 'hard'. "
-    "For multiple_choice and true_false, include 4 options (A–D) or exactly [\"True\", \"False\"]. "
+    "For multiple_choice and true_false, include 4 options (A–D) or exactly [\"True\", \"False\"]. "  # noqa: RUF001
     "Each question must cite which passage it comes from via source information fields."
 )
 
 _OUTPUT_SCHEMA = """\
 Return a JSON array of question objects. Each object must have exactly these fields:
 {
-  "question_type": one of "multiple_choice" | "true_false" | "short_answer" | "fill_blank" | "chart_interpretation" | "table_interpretation",
+  "question_type": one of "multiple_choice" | "true_false" | "short_answer" |
+    "fill_blank" | "chart_interpretation" | "table_interpretation",
   "question": "<question text>",
   "options": ["A) ...", "B) ...", "C) ...", "D) ..."] or ["True", "False"] or null for open-ended,
   "correct_answer": "<the correct option text or answer>",
@@ -81,7 +82,7 @@ class GenerateStructuredQuizUseCase:
         self._repo = quiz_repo
 
     async def execute(
-        self, command: GenerateStructuredQuizCommand, session: object
+        self, command: GenerateStructuredQuizCommand, _session: object
     ) -> GenerateStructuredQuizResult:
         if not command.evidence:
             raise ValueError("No evidence provided for quiz generation")

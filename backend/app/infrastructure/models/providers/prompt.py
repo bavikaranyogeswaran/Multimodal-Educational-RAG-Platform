@@ -79,9 +79,15 @@ def build_chat_messages(
     if individual:
         memory_parts.append("\n".join(f"- {fact}" for fact in individual))
     if memory_parts:
-        messages.append({"role": "user", "content": f"[Student context]\n" + "\n\n".join(memory_parts)})
+        messages.append({
+            "role": "user",
+            "content": "[Student context]\n" + "\n\n".join(memory_parts),
+        })
         if profile.use_acknowledged_exchange:
-            messages.append({"role": "assistant", "content": "Understood, I have noted the context."})
+            messages.append({
+                "role": "assistant",
+                "content": "Understood, I have noted the context.",
+            })
 
     for turn in request.conversation_history:
         role = "user" if turn.role is MessageRole.USER else "assistant"
@@ -96,7 +102,10 @@ def build_chat_messages(
     messages.append({"role": "user", "content": request.query})
 
     if request.output_schema:
-        messages.append({"role": "user", "content": f"[Required output format]\n{request.output_schema}"})
+        messages.append({
+            "role": "user",
+            "content": f"[Required output format]\n{request.output_schema}",
+        })
 
     if request.critical_checklist:
         points = "\n".join(f"- {point}" for point in request.critical_checklist)
