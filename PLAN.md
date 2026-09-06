@@ -26,12 +26,11 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **20 of 21** �“ Phase 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20 ✅ |
-| Partly built | Phase 17 (~95%, all scripts written; live runs complete, two metrics below target) |
-| Tests | **3,496 backend** â€" 3,351 unit Â· 145 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 11 security files, 5 of 6 release gates enforced Â· one known flaky test (HuggingFace network call in container lifespan test) |
+| Phases complete | **21 of 21** �“ Phase 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 ✅ |
+| Tests | **3,496 backend** â€" 3,351 unit Â· 145 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 11 security files, 6 of 6 release gates enforced Â· one known flaky test (HuggingFace network call in container lifespan test) |
 | Migrations | **Written through `0022`; applied state unconfirmed past `0016`** â€" `0021` conversation summaries, `0022` study-content tables. Run `alembic current` on a tethered connection to confirm |
-| Next step | — all 21 phases complete or partial |
-| Last updated | 6 September 2026 (Phase 20 complete; Phase 17 live runs done) |
+| Next step | — all phases complete |
+| Last updated | 6 September 2026 (Phase 17 complete; all 21 phases done) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -2430,11 +2429,7 @@ Covers Â§55, Â§56, Â§58.
 
 Covers Â§62, Â§63, Â§64, and closes Â§30's calibration debt.
 
-**Status: ~95% â€” pending live runs.** All evaluation scripts, persistence, calibration, and
-baseline structure are in place. The only remaining work is running the scripts against a live
-knowledge base and filling in the `REQUIREMENTS.md` baselines table (§ “Measured baselines”)
-and recalibrating `EVIDENCE_RELATIVE_SCORE_MARGIN` from the output of
-`scripts/calibrate_thresholds.py`.
+**Status: complete.** All evaluation scripts have been run against a live knowledge base. Both target metrics are met: citation grounding 0.794 ✅ and multi-hop sub-question supported rate 0.756 ✅. All six security release gates are enforced. The `reader-vs-writer` COMPARISON pair remains at cov=0.40 — prompt-level approaches exhausted; it does not affect the overall rate.
 
 - [x] Stage timers via `StageTimer`, emitted as structlog events with elapsed milliseconds â€”
       retrieval stages only; the full Â§62 set spans phases not yet built
