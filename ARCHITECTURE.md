@@ -498,4 +498,57 @@ Per §67. Each step is taken **only when measurement justifies it**, never pre-e
 | Framework-mediated | No LangChain, LangGraph or LlamaIndex. The pipeline carries substantial custom security, multimodal, graph and citation behaviour that a generic framework would obscure. |
 | Graph-first | Graph RAG is one retrieval path among several, selected by classification — never the default retriever (`FR-RET-12`). |
 | Microservices | A modular monolith with clean boundaries. The boundaries exist so services *could* be split later; they are not split now. |
+
+---
+
+## 12. Reconciliation against the build — Phase 20 documentation pass
+
+The architecture described in sections 1–11 was the plan. This section records how the finished
+system compares to it, and where reality diverged from the document.
+
+### What matches
+
+Every structural decision recorded here was realised as described:
+
+- **Clean/hexagonal architecture** — all application logic sits in `app/application/`; ports in
+  `app/domain/ports/`; adapters in `app/infrastructure/`. The gateway boundary is the only entry
+  point from the API layer.
+- **PostgreSQL as the single source of truth** — no data lives in R2 or Ollama that is not
+  derivable from, or covered by, canonical PostgreSQL records.
+- **Two-process model** — FastAPI (`main.py`) and the background worker (`worker.py`) are separate
+  processes sharing one codebase. Ingestion never blocks chat.
+- **Provider-agnostic model gateway** — `OllamaAdapter` is the only concrete model import; every
+  caller goes through `ModelGatewayPort`. Swapping providers requires one adapter.
+- **PostgreSQL graph adapter, Neo4j deferred** — `PostgreSQLGraphAdapter` implements `GraphPort`
+  in traversal terms. `SYNC_NEO4J` exists as a no-op job type. Migration is a new adapter file.
+- **Selective Graph RAG** — graph retrieval runs only on `RELATIONAL` and `GRAPH` classified
+  queries. It is one path among five in the retrieval layer, never the default.
+- **Six security release gates** — all six are enforced by passing automated tests continuously
+  from the phase that introduced each surface.
+
+### Deviations and gaps
+
+| Item | Planned | Actual |
+|---|---|---|
+| `BUILD_GRAPH` auto-enqueue | Worker enqueues `BUILD_GRAPH` when `graph_enabled` is toggled on | Not yet auto-enqueued; graph building requires a manual trigger |
+| `multi_hop` adapter | Full multi-hop route through the pipeline | Adapter stub exists; partial pipeline coverage via existing retrieval stages |
+| Ollama live model calls | Gemma 3 4B running on `localhost:11434` | Not responding in the dev environment; every model call in the test suite uses a fake adapter — no real generation has been executed |
+| `TEST_DATABASE_URL` | Integration tests exercise PostgreSQL | Unset; 15 integration tests silently skip; streaming writes to PostgreSQL are not integration-tested |
+| Phase 17 live-run numbers | Evaluation scripts produce measured baselines | Scripts are complete; baselines table in `REQUIREMENTS.md` awaits a live run with a real Knowledge Base |
+| Memory edit / supersede UI | Student can edit or supersede a stored fact | Backend PATCH only accepts `DISPUTED`/`DELETED`; supersede is system-driven on conflict; no user-facing edit path |
+| Quiz attempt history | Student can review past quiz attempts | No list-attempts endpoint on the backend; history is not persisted per-attempt in a queryable way |
+| Episode browser | Student can browse episodic memory records | No episode endpoint or schema on the frontend; deferred |
+
+### Frontend realisation
+
+The frontend described in §7 was built as a React single-page app with:
+
+- CSS Modules and design tokens (light and dark themes)
+- TanStack Query for server state; Zod schemas mirroring every backend Pydantic model
+- Supabase Auth with token refresh and protected routes
+- PDF.js for document rendering; Cytoscape.js for the concept graph
+- Playwright E2E suite (16 tests) covering all primary flows
+
+All §7 surfaces are live. The three deferred UI features (quiz attempt history, memory
+edit/supersede, episode browser) require backend additions before they can be built.
 | Containerised | Development and deployment run without Docker, by constraint. |
