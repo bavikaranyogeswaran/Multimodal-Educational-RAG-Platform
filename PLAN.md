@@ -26,13 +26,12 @@ system design specification.
 
 | | |
 |---|---|
-| Phases complete | **19 of 21** â€" Phase 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19 âœ… |
-| Partly built | Phase 17 (~95%, all scripts written; live-run numbers pending) |
-| Not started | Phase 20 |
+| Phases complete | **20 of 21** �“ Phase 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20 ✅ |
+| Partly built | Phase 17 (~95%, all scripts written; live runs complete, two metrics below target) |
 | Tests | **3,496 backend** â€" 3,351 unit Â· 145 security Â· 18 integration **passing against the live database**, 1 destructive round-trip skipped by design Â· 134 frontend Â· 11 security files, 5 of 6 release gates enforced Â· one known flaky test (HuggingFace network call in container lifespan test) |
 | Migrations | **Written through `0022`; applied state unconfirmed past `0016`** â€" `0021` conversation summaries, `0022` study-content tables. Run `alembic current` on a tethered connection to confirm |
-| Next step | **Phase 20** (frontend graph, study, memory, E2E) |
-| Last updated | 5 September 2026 (Phase 15 complete; Phase 9 and 10 confirmed complete; stale status blocks fixed) |
+| Next step | — all 21 phases complete or partial |
+| Last updated | 6 September 2026 (Phase 20 complete; Phase 17 live runs done) |
 
 Phases 0 through 3 are complete, and so are 8, 11 and 19. Phase 9 was built well ahead of phases
 4 through 8 being finished, so the numbering no longer describes the build order â€” work jumped to
@@ -58,16 +57,15 @@ log is written as each step lands.**
 multi-hop path and memory context injection were skipped on every real turn, while their unit
 tests passed against use cases constructed directly.
 
-Three of the four are now wired, on the request's own session, since all three are read while
-assembling the prompt and finished before the first token leaves. `multi_hop` is not, and cannot
-be: `MultiHopAnswerUseCase` needs `QueryDecompositionPort`, `CoverageClassifierPort` and
-`MultiHopSynthesisPort`, and **none of the three has a concrete adapter** â€” only the protocol
-exists. That is adapter work, not wiring, and it is the same shape as the `memory_extractor` slot
-Phase 14 left at `None`.
+All four are now wired. `graph_repo`, `kb_repo` and `memory_repo` were closed during Phase 12;
+`multi_hop` was closed during Phase 13. All three ports `MultiHopAnswerUseCase` needs
+(`QueryDecompositionPort`, `CoverageClassifierPort`, `MultiHopSynthesisPort`) have concrete
+LLM-backed adapters in `backend/app/infrastructure/multi_hop/` and are wired into
+`get_answer_use_case` in `api/dependencies/answer.py`. The `memory_extractor` slot Phase 14 closed similarly.
 
-`BUILD_GRAPH` is the remaining gap on the graph side: no job enqueues it and the worker's
-dispatch handles only `DOCUMENT_INGESTION`, `DELETE_DOCUMENT` and `REINDEX_KNOWLEDGE_BASE`. The
-retrieval path can now reach a graph; nothing yet builds one for it to reach.
+`BUILD_GRAPH` was the remaining gap on the graph side; it is closed as of Phase 12. The worker
+dispatches it, and it is enqueued inside the same transaction that completes each document's
+ingestion — so a document that reports itself indexed always has its graph job waiting.
 
 The lesson generalises past this instance. An optional collaborator that defaults to `None`
 degrades *silently* â€” no graph context, no memory context, no error â€” so the tests that construct
@@ -2696,9 +2694,9 @@ why the system abstained if it did.
 
 Covers Â§7 complete, Â§57 UI, Â§68 verified end to end.
 
-**Status: ~90% complete.** All major surfaces are built and tested. The remaining items are
-the final documentation pass, quiz attempt history, and memory supersede/episode-browser
-(the latter two require backend endpoints not yet exposed through the API).
+**Status: complete.** All major surfaces are built and tested. Documentation pass done (USE_CASES.md, REQUIREMENTS.md, ARCHITECTURE.md reconciled, commit 058b25a). Three items deferred to future phases as they require new backend endpoints:
+quiz attempt history (no list-attempts endpoint), memory edit/supersede (PATCH only accepts DISPUTED/DELETED),
+and episode browser (no episode endpoint or schema).
 
 - [x] Cytoscape.js concept graph: 30â€”50 node initial view, node evidence and source page, one-hop
       expansion, ask-about-this-node, prerequisite and related views. `src/features/graph/`
@@ -2721,9 +2719,9 @@ the final documentation pass, quiz attempt history, and memory supersede/episode
 - [x] Accessibility pass, responsive layout â€” ARIA tablist + roving tabindex on study tabs,
       focus trap + return-focus on memory delete dialog, `role=”application”` on graph canvas,
       `focus-visible` outlines; graph stacks at 640 px, memory cards collapse at 480 px
-- [ ] **Final documentation pass** â€” `USE_CASES.md`, `REQUIREMENTS.md` and `ARCHITECTURE.md`
+- [x] **Final documentation pass** — `USE_CASES.md`, `REQUIREMENTS.md` and `ARCHITECTURE.md`
       reconciled against what was built; every FR and NFR marked met, deferred or dropped with
-      reasons
+      reasons (commit 058b25a)
 
 ---
 
