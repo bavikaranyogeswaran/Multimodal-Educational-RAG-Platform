@@ -86,7 +86,12 @@ class QuizAttemptResponse(BaseModel):
     score: float
     correct_count: int
     total_count: int
+    created_at: datetime
     feedback: dict[str, QuizAttemptFeedback]
+
+
+class QuizAttemptListResponse(BaseModel):
+    attempts: list[QuizAttemptResponse]
 
 
 # ---------------------------------------------------------------------------

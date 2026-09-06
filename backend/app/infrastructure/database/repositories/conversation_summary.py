@@ -78,6 +78,27 @@ class SqlConversationSummaryRepository(ScopedRepository):
         rows = (await self._session.execute(stmt)).all()
         return [(_to_entity(row[0]), float(row[1])) for row in rows]
 
+    async def list_all(
+        self,
+        scope: ScopeContext,
+        *,
+        tier: SummaryTier = SummaryTier.EPISODE,
+        limit: int = 200,
+    ) -> Sequence[ConversationSummary]:
+        """Return all summaries for a KB scope, newest first."""
+        self._require_scope(scope)
+        stmt = (
+            select(ConversationSummaryModel)
+            .where(
+                self._scope_filter(ConversationSummaryModel),
+                ConversationSummaryModel.tier == tier.value,
+            )
+            .order_by(ConversationSummaryModel.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_to_entity(row) for row in rows]
+
     async def list_by_conversation(
         self,
         scope: ScopeContext,

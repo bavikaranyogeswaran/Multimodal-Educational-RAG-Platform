@@ -2689,9 +2689,7 @@ why the system abstained if it did.
 
 Covers Â§7 complete, Â§57 UI, Â§68 verified end to end.
 
-**Status: complete.** All major surfaces are built and tested. Documentation pass done (USE_CASES.md, REQUIREMENTS.md, ARCHITECTURE.md reconciled, commit 058b25a). Three items deferred to future phases as they require new backend endpoints:
-quiz attempt history (no list-attempts endpoint), memory edit/supersede (PATCH only accepts DISPUTED/DELETED),
-and episode browser (no episode endpoint or schema).
+**Status: complete.** All major surfaces are built and tested. Documentation pass done (USE_CASES.md, REQUIREMENTS.md, ARCHITECTURE.md reconciled, commit 058b25a). The three previously deferred items are now resolved: quiz attempt history (GET /quizzes/{quiz_id}/attempts endpoint added, frontend history toggle wired), memory edit/supersede (PATCH accepts new_value and calls create_successor, missing session.commit fixed), and episode browser (GET /memory/episodes endpoint added, episode browser section in MemoryPage).
 
 - [x] Cytoscape.js concept graph: 30â€”50 node initial view, node evidence and source page, one-hop
       expansion, ask-about-this-node, prerequisite and related views. `src/features/graph/`
@@ -2699,7 +2697,7 @@ and episode browser (no episode endpoint or schema).
 - [x] Summary generation UI with citation rendering â€” `SummaryTab` in `StudyPage.tsx`
 - [x] Quiz taking, deterministic scoring, explanations, source links â€” `QuizTab` in `StudyPage.tsx`;
       feedback cards carry per-question source-page links via `document_id` + `page_number` from
-      the backend response. Attempt history deferred: no list-attempts endpoint on the backend.
+      the backend response. Attempt history now available: GET /quizzes/{quiz_id}/attempts endpoint added; frontend shows past attempts toggle on results panel.
 - [x] Flashcard decks and review flow â€” `FlashcardsTab` in `StudyPage.tsx`; flip animation,
       AGAIN/HARD/GOOD/EASY ratings, source-page link on card back; existing-deck review.
 - [x] Study plan builder, date-grouped task view, task completion cycle â€” `StudyPlanTab` +
@@ -2707,8 +2705,7 @@ and episode browser (no episode endpoint or schema).
 - [x] Learning progress dashboard: mastery bars, quiz scores, flashcard ratings, weak concepts,
       plan completion â€” `ProgressTab` in `StudyPage.tsx`
 - [x] Memory management UI: view, dispute, delete durable facts â€” `MemoryPage.tsx`.
-      Edit and supersede deferred: the backend PATCH endpoint only accepts DISPUTED/DELETED;
-      supersede is system-driven. Episode browser deferred: no episode endpoint on the backend.
+      Edit button added with inline textarea; PATCH endpoint extended to accept new_value and call create_successor. Episode browser now available: GET /memory/episodes endpoint added; collapsible browser section at bottom of MemoryPage.
 - [x] **Playwright end-to-end** covering the full Â§68 flow â€” 16 tests in `e2e/flow.spec.ts`, all
       passing
 - [x] Accessibility pass, responsive layout â€” ARIA tablist + roving tabindex on study tabs,

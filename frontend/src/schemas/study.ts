@@ -87,9 +87,15 @@ export const QuizAttemptResponseSchema = z.object({
   score: z.number(),
   correct_count: z.number(),
   total_count: z.number(),
+  created_at: z.string().datetime(),
   feedback: z.record(z.string(), QuizAttemptFeedbackSchema),
 });
 export type QuizAttemptResponse = z.infer<typeof QuizAttemptResponseSchema>;
+
+export const QuizAttemptListSchema = z.object({
+  attempts: z.array(QuizAttemptResponseSchema),
+});
+export type QuizAttemptList = z.infer<typeof QuizAttemptListSchema>;
 
 // ── Flashcards ────────────────────────────────────────────────────────────────
 

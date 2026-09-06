@@ -8,6 +8,7 @@ import {
   useGenerateQuiz,
   useGenerateSummary,
   useProgress,
+  useQuizAttempts,
   useReviewFlashcard,
   useStudyPlans,
   useSubmitQuizAttempt,
@@ -153,9 +154,14 @@ function QuizTab({ kbId }: { kbId: string }) {
   const [activeQuiz, setActiveQuiz] = useState<QuizResponse | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [result, setResult] = useState<QuizAttemptResponse | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   const generateMut = useGenerateQuiz(kbId);
   const submitMut = useSubmitQuizAttempt(kbId);
+  const { data: historyData, isLoading: historyLoading } = useQuizAttempts(
+    kbId,
+    showHistory && activeQuiz ? activeQuiz.id : null,
+  );
 
   async function handleGenerate() {
     if (!topic.trim()) return;
@@ -178,6 +184,7 @@ function QuizTab({ kbId }: { kbId: string }) {
     setActiveQuiz(null);
     setAnswers({});
     setResult(null);
+    setShowHistory(false);
   }
 
   if (quizState === 'setup') {
@@ -320,9 +327,43 @@ function QuizTab({ kbId }: { kbId: string }) {
           );
         })}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
+          <button
+            className={styles.btnGhost}
+            onClick={() => setShowHistory((v) => !v)}
+          >
+            {showHistory ? 'Hide history' : 'Past attempts'}
+          </button>
           <button className={styles.btnPrimary} onClick={handleReset}>New quiz</button>
         </div>
+
+        {showHistory && (
+          <div style={{ marginTop: '1.25rem' }}>
+            <p className={styles.sectionHeading}>Attempt history</p>
+            {historyLoading && <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Loading…</p>}
+            {!historyLoading && historyData && historyData.attempts.length === 0 && (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No previous attempts.</p>
+            )}
+            {historyData?.attempts.map((a) => (
+              <div
+                key={a.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '0.5rem 0.75rem',
+                  borderBottom: '1px solid var(--border)',
+                  fontSize: '0.85rem',
+                }}
+              >
+                <span style={{ color: 'var(--text-secondary)' }}>{formatDate(a.created_at)}</span>
+                <span>
+                  {a.correct_count}/{a.total_count} &mdash; {Math.round(a.score * 100)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </>
     );
   }

@@ -49,10 +49,22 @@ export const MemoryFactListSchema = z.object({
 });
 export type MemoryFactList = z.infer<typeof MemoryFactListSchema>;
 
-export const MemoryUpdateRequestSchema = z.object({
-  status: z.enum(['DISPUTED', 'DELETED']),
-});
+export const MemoryUpdateRequestSchema = z.union([
+  z.object({ status: z.enum(['DISPUTED', 'DELETED']), new_value: z.undefined().optional() }),
+  z.object({ new_value: z.string().min(1), status: z.undefined().optional() }),
+]);
 export type MemoryUpdateRequest = z.infer<typeof MemoryUpdateRequestSchema>;
+
+export const EpisodeSchema = z.object({
+  id: z.string().uuid(),
+  conversation_id: z.string().uuid(),
+  text: z.string(),
+  message_count: z.number(),
+  created_at: z.string().datetime({ offset: true }),
+});
+export type Episode = z.infer<typeof EpisodeSchema>;
+
+export const EpisodeListSchema = z.array(EpisodeSchema);
 
 export const PROVENANCE_LABELS: Record<MemoryProvenance, string> = {
   10: 'Inferred',

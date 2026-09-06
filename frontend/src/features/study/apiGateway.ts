@@ -3,6 +3,7 @@ import {
   FlashcardListSchema,
   FlashcardReviewResponseSchema,
   LearningProgressSchema,
+  QuizAttemptListSchema,
   QuizAttemptResponseSchema,
   QuizResponseSchema,
   StudyPlanListSchema,
@@ -14,6 +15,7 @@ import {
   type FlashcardReviewResponse,
   type FlashcardSource,
   type LearningProgress,
+  type QuizAttemptList,
   type QuizAttemptResponse,
   type QuizResponse,
   type ReviewRating,
@@ -65,6 +67,12 @@ export class ApiStudyGateway {
       QuizAttemptResponseSchema,
       `/knowledge-bases/${kbId}/quizzes/${quizId}/attempts`,
       { method: 'POST', body: { answers } },
+    );
+
+  listAttempts = (kbId: string, quizId: string): Promise<QuizAttemptList> =>
+    this.#client.request(
+      QuizAttemptListSchema,
+      `/knowledge-bases/${kbId}/quizzes/${quizId}/attempts`,
     );
 
   // Flashcards

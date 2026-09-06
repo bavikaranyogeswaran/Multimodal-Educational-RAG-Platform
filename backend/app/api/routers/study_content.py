@@ -20,6 +20,7 @@ from app.api.schemas.study import (
     GenerateSummaryRequest,
     LearningProgressResponse,
     QuizAttemptFeedback,
+    QuizAttemptListResponse,
     QuizAttemptResponse,
     QuizQuestionResponse,
     QuizResponse,
@@ -231,10 +232,47 @@ async def submit_quiz_attempt(
         score=result.attempt.score,
         correct_count=result.attempt.correct_count,
         total_count=result.attempt.total_count,
+        created_at=result.attempt.created_at,
         feedback={
             qid: QuizAttemptFeedback(**fb)
             for qid, fb in result.feedback.items()
         },
+    )
+
+
+@router.get("/quizzes/{quiz_id}/attempts", response_model=QuizAttemptListResponse)
+async def list_quiz_attempts(
+    quiz_id: uuid.UUID,
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> QuizAttemptListResponse:
+    """Return all past attempts for a quiz with reconstructed per-question feedback."""
+    repo = SqlQuizRepository(scope=scope, session=session)
+    quiz = await repo.get(scope, quiz_id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    attempts = await repo.list_attempts(scope, quiz_id)
+    questions = {str(q.id): q for q in quiz.questions}
+    return QuizAttemptListResponse(
+        attempts=[
+            QuizAttemptResponse(
+                id=a.id,
+                quiz_id=a.quiz_id,
+                score=a.score,
+                correct_count=a.correct_count,
+                total_count=a.total_count,
+                created_at=a.created_at,
+                feedback={
+                    qid: QuizAttemptFeedback(
+                        correct=str(q.id) not in {str(x) for x in a.incorrect_question_ids},
+                        correct_answer=q.correct_answer,
+                        explanation=q.explanation,
+                    )
+                    for qid, q in questions.items()
+                },
+            )
+            for a in attempts
+        ]
     )
 
 

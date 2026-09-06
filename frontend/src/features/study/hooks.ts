@@ -54,6 +54,16 @@ export function useSubmitQuizAttempt(kbId: string) {
   });
 }
 
+export function useQuizAttempts(kbId: string, quizId: string | null) {
+  const gw = useGateway();
+  return useQuery({
+    queryKey: ['study', kbId, 'quizzes', quizId, 'attempts'] as const,
+    queryFn: () => gw.listAttempts(kbId, quizId!),
+    enabled: quizId !== null,
+    staleTime: 0,
+  });
+}
+
 // ── Flashcards ────────────────────────────────────────────────────────────────
 
 const flashcardListKey = (kbId: string) => ['study', kbId, 'flashcards'] as const;

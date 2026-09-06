@@ -34,3 +34,24 @@ export function useDeleteMemory(kbId: string) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: listKey(kbId) }),
   });
 }
+
+export function useEditMemory(kbId: string) {
+  const gateway = useGateway();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ memoryId, newValue }: { memoryId: string; newValue: string }) =>
+      gateway.edit(kbId, memoryId, newValue),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: listKey(kbId) }),
+  });
+}
+
+const episodesKey = (kbId: string) => ['memory', kbId, 'episodes'] as const;
+
+export function useEpisodes(kbId: string) {
+  const gateway = useGateway();
+  return useQuery({
+    queryKey: episodesKey(kbId),
+    queryFn: () => gateway.listEpisodes(kbId),
+    staleTime: 60 * 1000,
+  });
+}

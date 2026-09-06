@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.domain.enums import MemoryProvenance, MemoryStatus, MemoryType
 from app.domain.memory.entities import MemoryFact
@@ -45,6 +45,21 @@ class MemoryFactListResponse(BaseModel):
 
 
 class MemoryFactUpdateRequest(BaseModel):
-    """Student-initiated status transitions: dispute or delete a fact."""
+    """Student-initiated update: dispute/delete a fact, or correct its value."""
 
-    status: Literal["DISPUTED", "DELETED"]
+    status: Literal["DISPUTED", "DELETED"] | None = None
+    new_value: str | None = None
+
+    @model_validator(mode="after")
+    def _require_one(self) -> MemoryFactUpdateRequest:
+        if self.status is None and self.new_value is None:
+            raise ValueError("provide either 'status' or 'new_value'")
+        return self
+
+
+class EpisodeResponse(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    text: str
+    message_count: int
+    created_at: datetime

@@ -1,19 +1,22 @@
 """Memory resource endpoints.
 
-Three endpoints over the student's active memory facts within a Knowledge Base:
+Five endpoints over the student's active memory facts within a Knowledge Base:
 
   GET  /knowledge-bases/{kb_id}/memory
     Returns all ACTIVE facts for the current user's KB scope, ordered by
     creation time (newest first).
 
   PATCH /knowledge-bases/{kb_id}/memory/{memory_id}
-    Accepts {"status": "DISPUTED" | "DELETED"} and applies the corresponding
-    domain transition. Only the allowed terminal transitions are accepted —
-    the client cannot freely overwrite status.
+    Accepts {"status": "DISPUTED" | "DELETED"} to apply the corresponding
+    domain transition, or {"new_value": "<text>"} to supersede the fact with
+    a student-corrected value.
 
   DELETE /knowledge-bases/{kb_id}/memory/{memory_id}
-    Soft-deletes one fact. Equivalent to PATCH with status=DELETED but more
-    REST-conventional for a removal intent.
+    Soft-deletes one fact. Equivalent to PATCH with status=DELETED.
+
+  GET /knowledge-bases/{kb_id}/memory/episodes
+    Returns all EPISODE-tier conversation summaries for this KB scope,
+    newest first (up to 200).
 """
 
 from __future__ import annotations
@@ -27,12 +30,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.scope import get_kb_scope
 from app.api.schemas.memory import (
+    EpisodeResponse,
     MemoryFactListResponse,
     MemoryFactResponse,
     MemoryFactUpdateRequest,
 )
+from app.domain.enums import MemoryProvenance
 from app.domain.errors import InvariantViolationError
 from app.domain.scope import ScopeContext
+from app.infrastructure.database.repositories.conversation_summary import (
+    SqlConversationSummaryRepository,
+)
 from app.infrastructure.database.repositories.memory import SqlMemoryRepository
 from app.infrastructure.database.session import get_session
 
@@ -63,7 +71,7 @@ async def update_memory(
     scope: Annotated[ScopeContext, Depends(get_kb_scope)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> MemoryFactResponse:
-    """Dispute or soft-delete a single memory fact."""
+    """Dispute, soft-delete, or correct (supersede) a single memory fact."""
     repo = SqlMemoryRepository(scope=scope, session=session)
     fact = await repo.get(scope, memory_id)
     if fact is None:
@@ -71,6 +79,19 @@ async def update_memory(
 
     now = datetime.now(UTC)
     try:
+        if body.new_value is not None:
+            retired, successor = fact.create_successor(
+                successor_id=uuid.uuid4(),
+                value={"text": body.new_value},
+                confidence=fact.confidence,
+                provenance=MemoryProvenance.USER_CORRECTION,
+                now=now,
+            )
+            await repo.save(scope, retired)
+            await repo.save(scope, successor)
+            await session.commit()
+            return MemoryFactResponse.from_domain(successor)
+
         if body.status == "DISPUTED":
             updated = fact.mark_disputed(now=now)
         else:
@@ -79,6 +100,7 @@ async def update_memory(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     await repo.save(scope, updated)
+    await session.commit()
     return MemoryFactResponse.from_domain(updated)
 
 
@@ -101,3 +123,24 @@ async def delete_memory(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     await repo.save(scope, deleted)
+    await session.commit()
+
+
+@router.get("/episodes", response_model=list[EpisodeResponse])
+async def list_episodes(
+    scope: Annotated[ScopeContext, Depends(get_kb_scope)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[EpisodeResponse]:
+    """Return all EPISODE-tier summaries for this KB scope, newest first."""
+    repo = SqlConversationSummaryRepository(scope=scope, session=session)
+    summaries = await repo.list_all(scope)
+    return [
+        EpisodeResponse(
+            id=s.id,
+            conversation_id=s.conversation_id,
+            text=s.text,
+            message_count=s.message_count,
+            created_at=s.created_at,
+        )
+        for s in summaries
+    ]

@@ -1,7 +1,9 @@
 import type { ApiClient } from '@/api/client';
 import {
+  EpisodeListSchema,
   MemoryFactListSchema,
   MemoryFactSchema,
+  type Episode,
   type MemoryFact,
   type MemoryFactList,
 } from '@/schemas/memory';
@@ -28,4 +30,14 @@ export class ApiMemoryGateway {
       `/knowledge-bases/${kbId}/memory/${memoryId}`,
       { method: 'DELETE' },
     );
+
+  edit = (kbId: string, memoryId: string, newValue: string): Promise<MemoryFact> =>
+    this.#client.request(
+      MemoryFactSchema,
+      `/knowledge-bases/${kbId}/memory/${memoryId}`,
+      { method: 'PATCH', body: { new_value: newValue } },
+    );
+
+  listEpisodes = (kbId: string): Promise<Episode[]> =>
+    this.#client.request(EpisodeListSchema, `/knowledge-bases/${kbId}/memory/episodes`);
 }
