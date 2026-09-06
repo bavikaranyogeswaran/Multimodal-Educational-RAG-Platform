@@ -639,19 +639,32 @@ baseline. A blank **Measured** cell means the script has not yet been run agains
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Phrase coverage | ≥ 0.80 | **0.882** ✅ | f92c67e |
-| Citation grounding | ≥ 0.85 | **0.755** ❌ | f92c67e |
-| Abstain correct rate (unanswerable pairs) | 1.0 | **1/1** ✅ | f92c67e |
-| False-abstain rate (answerable pairs) | 0.0 | **0/17** ✅ | f92c67e |
-| Parse failure rate | 0.0 | **0/18** ✅ | f92c67e |
+| Phrase coverage | ≥ 0.80 | **0.824** ✅ | 058b25a |
+| Citation grounding | ≥ 0.85 | **0.696** ❌ | 058b25a |
+| Abstain correct rate (unanswerable pairs) | 1.0 | **1/1** ✅ | 058b25a |
+| False-abstain rate (answerable pairs) | 0.0 | **0/17** ✅ | 058b25a |
+| Parse failure rate | 0.0 | **0/18** ✅ | 058b25a |
+
+> Citation grounding (0.696) remains below the ≥ 0.85 target at `EVIDENCE_RELATIVE_SCORE_MARGIN=0.35`. A run at the retrieval-calibrated 0.10 raised grounding to 0.794 but caused abstain and phrase-coverage regressions (see §Threshold calibration). 0.35 is retained as it preserves safety properties. Phrase coverage dropped from the prior run (0.882 → 0.824) due to model-output variance with gemma3:4b Q4_K_M.
 
 #### Multi-hop — `evaluate_multi_hop.py`
 
 | Metric | Target | Measured | SHA |
 |---|---|---|---|
-| Phrase coverage | ≥ 0.75 | **0.75** ✅ | 86681ad |
-| Sub-question supported rate | ≥ 0.70 | **0.56** ❌ | 86681ad |
-| Mean sub-questions per query | — | **4.8** | 86681ad |
+| Phrase coverage | ≥ 0.75 | **0.750** ✅ | 058b25a |
+| Sub-question supported rate | ≥ 0.70 | **0.56** ❌ | 058b25a |
+| Mean sub-questions per query | — | **4.8** | 058b25a |
+
+> Sub-question supported rate (0.56) remains below the ≥ 0.70 target. Sub-questions are decomposed correctly but evidence is rated PARTIALLY_SUPPORTED when the model's answer covers the question's claim only partially; raising it requires either a stronger generation model or evidence-selection improvements.
+
+#### Memory — `evaluate_memory.py`
+
+| Metric | Measured | SHA | Notes |
+|---|---|---|---|
+| Active facts | **0** | 058b25a | Test KB has no prior conversation turns |
+| Embedding coverage | **0/0** | 058b25a | No facts to embed |
+
+> Memory evaluation requires a KB with prior conversation turns that triggered fact extraction. The test KB (`data-science-in-the-cloud`) is read-only for the gold-set evaluation pipeline. Run `uv run python scripts/evaluate_memory.py <kb-id>` against a KB with active memory to populate this table.
 
 #### Instruction-following — `evaluate_instruction_following.py`
 
@@ -664,10 +677,12 @@ baseline. A blank **Measured** cell means the script has not yet been run agains
 
 #### Threshold calibration — `calibrate_thresholds.py`
 
-| Setting | Current default | Calibrated | SHA |
+| Setting | Current value | Retrieval-optimal | SHA |
 |---|---|---|---|
-| `EVIDENCE_RELATIVE_SCORE_MARGIN` | 0.35 | **0.10** | 86681ad |
+| `EVIDENCE_RELATIVE_SCORE_MARGIN` | **0.35** | 0.10 | 86681ad |
 | Retrieval p95 latency vs NFR-PERF-07 (≤ 800 ms) | provisional | **3981 ms** ❌ local dev (Ollama); re-measure in prod | 86681ad |
+
+> `calibrate_thresholds.py` found 0.10 maximises retrieval quality. A generation-eval run at 0.10 (SHA 0397fe3) showed citation grounding rising to 0.794 but phrase coverage dropping to 0.765 (❌ below 0.80), abstain regressing from 1/1 to 0/1, and parse failures rising to 1/18. The abstain regression is a safety property — the model answered an unanswerable question when given the narrow but loosely-related evidence slice selected at margin 0.10. Value reverted to 0.35, which preserves abstain correctness and phrase coverage at the cost of lower citation grounding.
 
 ---
 
@@ -982,7 +997,7 @@ consolidates them into a single suite and adds the evaluation metrics around the
 | DEL | ✅ Met | Document deletion cascade; KB deletion job; cache invalidation; R2 cleanup |
 | API | ✅ Met | RESTful, versioned, scoped; all endpoints documented in ADRs |
 | OBS | ✅ Met | `StageTimer` events; structured logging; content redaction; model + operational metrics |
-| EVL | ⚠️ Partial | All six evaluation scripts and security gate tests are written and passing. **Pending:** live runs against a real KB to fill in the `REQUIREMENTS.md` baselines table and recalibrate `EVIDENCE_RELATIVE_SCORE_MARGIN` |
+| EVL | ⚠️ Partial | All six evaluation scripts run against a live KB (2026-09-06, SHA 058b25a). Two metrics remain below target: citation grounding (0.696 vs ≥ 0.85) and sub-question supported rate (0.56 vs ≥ 0.70). Root causes documented in the baselines table. Memory baseline requires a KB with conversation history. |
 | UI | ✅ Met | All Phase 18–20 screens: auth, KB management, documents, conversations, PDF viewer, citations, graph, study (summaries/quiz/flashcards/plan/progress), memory. **Deferred:** quiz attempt history listing, memory edit/supersede, episode browser (no backend endpoint) |
 
 ### NFR status

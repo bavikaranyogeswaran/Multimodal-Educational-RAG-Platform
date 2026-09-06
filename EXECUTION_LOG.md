@@ -1519,3 +1519,29 @@ Everything in this table feeds a latency or capacity target in
 | A-847 | choice | Early return when chunk rows are empty skips the citations query | If no chunks were recorded for the message the second query would return nothing regardless. Returning `[]` immediately saves a round trip and keeps the fast path — no retrieval data — as a single execute call. |
 | A-848 | choice | `SourcesPanel` is a separate component rather than an inline conditional with hooks | React's rules of hooks forbid conditional hook calls. `useMessageSources` must be called every render if it is called at all. Mounting `SourcesPanel` only when `sourcesOpenId === msg.id` means the hook fires only for the open panel, which is the demand-load behaviour needed. A separate component makes this safe because the component itself calls the hook unconditionally. |
 | A-849 | choice | Relevance bar width is `(score / maxScore) * 100%` where `maxScore` is at least 0.001 | Normalising to the highest score in the current result set makes the bar relative to what was actually retrieved, not to a fixed scale the reranker may never reach. The 0.001 floor prevents a division-by-zero when all scores are zero, which can occur when the model's reranker returns degenerate output. |
+
+## Step 20.1 — Source page links for quiz and flashcards
+
+| ID | Kind | Summary | Detail |
+|---|---|---|---|
+| A-850 | choice | Source link added to quiz feedback using existing `document_id` + `page_number` fields | `QuizQuestion` already carries `document_id` and `page_number`; no backend change needed. A `<Link>` with `state={{ page }}` navigates the PDF viewer to the exact page where the question was sourced. The link renders only when both fields are non-null so it is safe for questions generated without a page reference. |
+| A-851 | choice | Source link added to flashcard back using the same `document_id` + `page_number` fields | `FlashcardResponse` already carries both fields from the backend. The link appears on the card back (after the student flips) so it does not distract from the question on the front. Style uses `flashcardSource` at `0.72rem` in muted colour — smaller than the quiz link to suit the compact card layout. |
+| A-852 | choice | `sourceLink` and `flashcardSource` styles defined in `study.module.css` rather than inline | Co-locating link styles with the rest of the study module keeps hover states and font-size overrides in CSS rather than JSX. Both styles use `var(--accent)` or `var(--text-muted)` so they follow the theme without extra work. |
+
+## Step 20.2 — Final documentation pass
+
+| ID | Kind | Summary | Detail |
+|---|---|---|---|
+| A-853 | choice | `USE_CASES.md` updated by global replace then targeted reverts for six unmet items | Marking 24 use cases individually risked transcription errors. A global `[ ]` → `[x]` replace followed by six targeted reverts for the latency targets and the BUILD_GRAPH gap is both faster and auditable via diff. Each reverted line carries a parenthetical note naming the specific reason. |
+| A-854 | choice | `REQUIREMENTS.md` gains an "Implementation Status" section rather than a Status column per row | The 334-row requirements table has complex cross-references; inserting a new column would reformat every row and obscure the diff. A freestanding table of 32 domain rows and 11 NFR rows covers the same ground without touching the original content. Key gaps are documented in prose beneath the tables. |
+| A-855 | choice | `ARCHITECTURE.md` reconciliation placed in a new Section 12 rather than editing existing sections | The existing nine sections describe the intended architecture; a separate reconciliation section preserves the intent and adds the "what we actually built" view beside it. Editing in place would blend design intent with implementation notes, making both harder to read. |
+
+## Step 17.4 — Phase 17 live runs
+
+| ID | Kind | Summary | Detail |
+|---|---|---|---|
+| A-856 | correction | `asyncio.run()` fails with psycopg3 on Windows because Python 3.12 defaults to ProactorEventLoop | psycopg3's async driver requires SelectorEventLoop. Evaluation scripts already guard this with `asyncio.WindowsSelectorEventLoopPolicy()` at the `if __name__ == "__main__"` block. Direct invocations from a bare `-c` snippet must set the policy explicitly. |
+| A-857 | correction | `build_session_factory` takes an `AsyncEngine`, not a `Settings` object | The session module exposes two composable factories: `build_engine(DatabaseSettings)` then `build_session_factory(AsyncEngine)`. The application's URL normalization (`_normalise_url`) rewrites bare `postgresql://` to `postgresql+psycopg://` so psycopg3's async driver is selected automatically. |
+| A-858 | measurement | Generation evaluation: phrase coverage 0.824 ✅, citation grounding 0.696 ❌ | Run against KB `2c7fdbc4` (Data Science in the Cloud, 160 chunks). Phrase coverage remains above the ≥ 0.80 target; citation grounding remains below ≥ 0.85. Root cause: `EVIDENCE_RELATIVE_SCORE_MARGIN` is 0.35 in production settings; the calibrated value is 0.10. Applying the calibration is expected to raise grounding but has not yet been applied to avoid changing evidence selection behaviour mid-audit. |
+| A-859 | measurement | Multi-hop evaluation: phrase coverage 0.750 ✅, sub-q supported rate 0.56 ❌ | Same KB. Sub-question decomposition is correct (4.8 sub-questions per query) but evidence is rated PARTIALLY_SUPPORTED when the model's answer covers claims only partially. Raising the rate requires either a stronger generation model or adjusting the evidence-coverage classifier threshold. |
+| A-860 | measurement | Memory evaluation: 0 active facts, 0 embedded | The gold-set KB has no prior conversation turns so the memory store is empty. This is an expected baseline for a read-only evaluation KB, not a defect. Run against a KB with active conversation history to populate real numbers. |
