@@ -29,6 +29,7 @@ Return a JSON array where each item has:
 Rules:
 - Only create sub-questions that are genuinely distinct and necessary.
 - A simple question that needs no decomposition should return a single-item array.
+- For comparison or enumeration questions, prefer 3–4 sub-questions; only exceed 4 if the question genuinely requires it.
 - "depends_on" must only reference ids that appear earlier in the array.
 - Respond with a JSON array only — no markdown fences, no commentary."""
 
