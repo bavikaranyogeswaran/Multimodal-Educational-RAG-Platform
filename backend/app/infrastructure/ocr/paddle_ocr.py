@@ -105,7 +105,7 @@ class PaddleOcrAdapter:
 
     def _get_engine(self) -> Any:
         if self._engine is None:
-            from paddleocr import PaddleOCR  # type: ignore[import-untyped]  # noqa: PLC0415
+            from paddleocr import PaddleOCR  # noqa: PLC0415
 
             self._engine = PaddleOCR(
                 lang=self._lang,

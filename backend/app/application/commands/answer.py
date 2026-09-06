@@ -222,7 +222,7 @@ PROMPT_VERSION = _derive_prompt_version()
 def _answer_cache_key(
     scope: ScopeContext,
     query: str,
-    history: tuple,
+    history: tuple[ConversationTurn, ...],
     active_index_version: int,
     generation_policy_version: int,
 ) -> str:
@@ -1009,7 +1009,7 @@ async def _load_memory_context(
     relevant_strings: tuple[str, ...] = ()
 
     # Compute the query embedding once; shared by both the memory and episode passes.
-    query_embedding: list[float] | None = None
+    query_embedding: Sequence[float] | None = None
     if embedder is not None and (memory_repo is not None or summary_repo is not None):
         query_embedding = await embedder.embed_query(query)
 
@@ -1040,12 +1040,12 @@ async def _load_memory_context(
                     relevant_facts = inferred_facts[:_MAX_RELEVANT_MEMORY]
             else:
                 # Pass 2b: keyword search only (no embedder).
-                keyword_hits = await memory_repo.keyword_search(
+                kw_hits = await memory_repo.keyword_search(
                     scope, query, limit=_MAX_RELEVANT_MEMORY
                 )
-                keyword_filtered = [f for f, _ in keyword_hits if f.id not in exclude_ids]
+                kw_facts = [f for f, _ in kw_hits if f.id not in exclude_ids]
                 # Fall back to recency order when keyword returns nothing.
-                non_key_inferred = keyword_filtered or [
+                non_key_inferred = kw_facts or [
                     f for f in inferred_facts if f.id not in exclude_ids
                 ]
                 relevant_facts = (key_hits + non_key_inferred)[:_MAX_RELEVANT_MEMORY]
@@ -1174,14 +1174,14 @@ def _filters_from_conversation(conversation: object | None) -> RetrievalFilters:
     if conversation is None:
         return RetrievalFilters()
     doc_ids = (
-        frozenset({conversation.active_document_id})  # type: ignore[union-attr]
-        if conversation.active_document_id  # type: ignore[union-attr]
+        frozenset({conversation.active_document_id})  # type: ignore[attr-defined]
+        if conversation.active_document_id  # type: ignore[attr-defined]
         else frozenset()
     )
     return RetrievalFilters(
         document_ids=doc_ids,
-        table_id=conversation.active_table_id,  # type: ignore[union-attr]
-        figure_id=conversation.active_figure_id,  # type: ignore[union-attr]
+        table_id=conversation.active_table_id,  # type: ignore[attr-defined]
+        figure_id=conversation.active_figure_id,  # type: ignore[attr-defined]
     )
 
 

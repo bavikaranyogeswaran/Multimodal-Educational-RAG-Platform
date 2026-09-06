@@ -11,6 +11,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.domain.enums import ModelTask, QuestionType
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
@@ -18,6 +19,9 @@ from app.domain.models.entities import LabeledPassage
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.retrieval.entities import Evidence
 from app.domain.scope import ScopeContext
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.repositories.study import SqlQuizRepository
 from app.domain.study.entities import Quiz, QuizQuestion
 
 _SYSTEM_PREAMBLE = (
@@ -75,7 +79,7 @@ class GenerateStructuredQuizUseCase:
         *,
         model_gateway: ModelGatewayPort,
         context_builder: ContextBuilder,
-        quiz_repo: object,  # SqlQuizRepository
+        quiz_repo: SqlQuizRepository,
     ) -> None:
         self._gateway = model_gateway
         self._context_builder = context_builder

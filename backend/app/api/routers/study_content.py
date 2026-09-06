@@ -62,9 +62,9 @@ from app.application.queries.retrieve_evidence import (
 from app.configuration.container import Container
 from app.configuration.settings import get_settings
 from app.domain.models.context_builder import ContextBuilder
-from app.domain.retrieval.entities import RetrievalFilters
+from app.domain.retrieval.entities import Evidence, RetrievalFilters
 from app.domain.scope import ScopeContext
-from app.domain.study.entities import Flashcard, Quiz, StudyPlan, StudySummary
+from app.domain.study.entities import Flashcard, Quiz, StudyPlan, StudySummary, StudyTask
 from app.infrastructure.database.repositories.study import (
     SqlFlashcardRepository,
     SqlQuizRepository,
@@ -86,7 +86,7 @@ async def _retrieve(
     query: str,
     scope: ScopeContext,
     orchestrator: RetrievalOrchestrator,
-) -> tuple:
+) -> tuple[Evidence, ...]:
     if not query.strip():
         return ()
     result = await orchestrator.execute(
@@ -492,7 +492,7 @@ def _plan_response(p: StudyPlan) -> StudyPlanResponse:
     )
 
 
-def _task_response(t) -> StudyTaskResponse:
+def _task_response(t: StudyTask) -> StudyTaskResponse:
     return StudyTaskResponse(
         id=t.id,
         title=t.title,

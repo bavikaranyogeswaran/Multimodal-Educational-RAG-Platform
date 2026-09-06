@@ -171,7 +171,7 @@ class UpdateStudyTaskRequest(BaseModel):
 class LearningProgressResponse(BaseModel):
     knowledge_base_id: UUID
     topic_mastery: dict[str, float]
-    quiz_scores: list[dict]
+    quiz_scores: list[dict[str, object]]
     flashcard_ratings: dict[str, int]
     completed_chapters: list[str]
     weak_concepts: list[str]

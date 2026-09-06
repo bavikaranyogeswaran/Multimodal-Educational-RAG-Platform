@@ -5,10 +5,14 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.domain.enums import ReviewRating
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import FlashcardReview
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.repositories.study import SqlFlashcardRepository
 
 
 @dataclass(frozen=True)
@@ -24,7 +28,7 @@ class SubmitFlashcardReviewResult:
 
 
 class SubmitFlashcardReviewUseCase:
-    def __init__(self, *, flashcard_repo: object) -> None:  # SqlFlashcardRepository
+    def __init__(self, *, flashcard_repo: SqlFlashcardRepository) -> None:
         self._repo = flashcard_repo
 
     async def execute(

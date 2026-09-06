@@ -9,9 +9,17 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import LearningProgress
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.repositories.study import (
+        SqlFlashcardRepository,
+        SqlQuizRepository,
+        SqlStudyPlanRepository,
+    )
 
 
 @dataclass(frozen=True)
@@ -23,9 +31,9 @@ class GetProgressUseCase:
     def __init__(
         self,
         *,
-        quiz_repo: object,       # SqlQuizRepository
-        flashcard_repo: object,  # SqlFlashcardRepository
-        plan_repo: object,       # SqlStudyPlanRepository
+        quiz_repo: SqlQuizRepository,
+        flashcard_repo: SqlFlashcardRepository,
+        plan_repo: SqlStudyPlanRepository,
     ) -> None:
         self._quiz_repo = quiz_repo
         self._flashcard_repo = flashcard_repo
@@ -36,7 +44,7 @@ class GetProgressUseCase:
 
         # Quiz performance — per attempt, score, date.
         attempts = list(await self._quiz_repo.list_all_attempts(scope))
-        quiz_scores: list[dict] = [
+        quiz_scores: list[dict[str, object]] = [
             {
                 "quiz_id": str(a.quiz_id),
                 "score": a.score,

@@ -12,10 +12,14 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.domain.enums import QuestionType
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import Quiz, QuizAttempt
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.repositories.study import SqlQuizRepository
 
 
 @dataclass(frozen=True)
@@ -28,7 +32,7 @@ class SubmitQuizAttemptCommand:
 @dataclass(frozen=True)
 class SubmitQuizAttemptResult:
     attempt: QuizAttempt
-    feedback: dict[str, dict]  # question_id -> {correct, correct_answer, explanation}
+    feedback: dict[str, dict[str, object]]  # question_id -> {correct, correct_answer, explanation}
 
 
 _PUNCT = re.compile(r"[^\w\s]")
@@ -45,13 +49,13 @@ def _is_correct(question_type: QuestionType, submitted: str, correct: str) -> bo
 
 
 class SubmitQuizAttemptUseCase:
-    def __init__(self, *, attempt_repo: object) -> None:  # SqlQuizRepository
+    def __init__(self, *, attempt_repo: SqlQuizRepository) -> None:
         self._repo = attempt_repo
 
     async def execute(
         self, command: SubmitQuizAttemptCommand, _session: object
     ) -> SubmitQuizAttemptResult:
-        feedback: dict[str, dict] = {}
+        feedback: dict[str, dict[str, object]] = {}
         incorrect_ids: list[uuid.UUID] = []
         correct_count = 0
 

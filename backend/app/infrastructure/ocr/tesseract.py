@@ -60,8 +60,8 @@ class TesseractAdapter:
         self, image: bytes, page: DocumentPage
     ) -> list[DocumentElement]:
         try:
-            import pytesseract  # type: ignore[import-untyped]  # noqa: PLC0415
-            from PIL import Image  # type: ignore[import-untyped]  # noqa: PLC0415
+            import pytesseract  # type: ignore[import-not-found]  # noqa: PLC0415
+            from PIL import Image  # noqa: PLC0415
         except ImportError:
             _log.error("tesseract_not_available")
             return []
@@ -99,11 +99,11 @@ class TesseractAdapter:
             width = int(data["width"][i])
             height = int(data["height"][i])
 
-            polygon = [
-                [left, top],
-                [left + width, top],
-                [left + width, top + height],
-                [left, top + height],
+            polygon: list[list[float]] = [
+                [float(left), float(top)],
+                [float(left + width), float(top)],
+                [float(left + width), float(top + height)],
+                [float(left), float(top + height)],
             ]
             bbox = _to_bbox(polygon, page_height=page.height, dpi=self._dpi)
             if bbox is None:

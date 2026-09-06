@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from app.domain.enums import JobPriority, JobStatus, JobType
@@ -55,7 +56,7 @@ class ProcessingJob:
     max_attempts: int
     created_at: datetime
     updated_at: datetime
-    payload: Mapping[str, str]
+    payload: Mapping[str, Any]
     scheduled_at: datetime | None = None
     lease_expires_at: datetime | None = None
     last_heartbeat_at: datetime | None = None

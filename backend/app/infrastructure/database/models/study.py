@@ -35,7 +35,7 @@ class StudySummaryModel(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
     summary_type: Mapped[str] = mapped_column(String(30))
-    section_ids: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    section_ids: Mapped[list[str]] = mapped_column(JSONB, server_default="[]")
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -66,7 +66,7 @@ class QuizQuestionModel(Base):
     )
     question_type: Mapped[str] = mapped_column(String(30))
     question: Mapped[str] = mapped_column(Text)
-    options: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    options: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     correct_answer: Mapped[str] = mapped_column(Text)
     explanation: Mapped[str] = mapped_column(Text)
     difficulty: Mapped[str] = mapped_column(String(10))
@@ -88,11 +88,11 @@ class QuizAttemptModel(Base):
     )
     knowledge_base_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
-    answers: Mapped[dict] = mapped_column(JSONB, server_default="{}")
+    answers: Mapped[dict[str, str]] = mapped_column(JSONB, server_default="{}")
     score: Mapped[float] = mapped_column(Float)
     correct_count: Mapped[int] = mapped_column(Integer)
     total_count: Mapped[int] = mapped_column(Integer)
-    incorrect_question_ids: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    incorrect_question_ids: Mapped[list[str]] = mapped_column(JSONB, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -148,8 +148,8 @@ class StudyPlanModel(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
     exam_date: Mapped[date] = mapped_column(Date)
     available_hours_per_day: Mapped[float] = mapped_column(Float)
-    chapters: Mapped[list] = mapped_column(JSONB, server_default="[]")
-    priority_topics: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    chapters: Mapped[list[str]] = mapped_column(JSONB, server_default="[]")
+    priority_topics: Mapped[list[str]] = mapped_column(JSONB, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

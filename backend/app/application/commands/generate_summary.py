@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.domain.enums import ModelTask, SummaryType
 from app.domain.errors import GenerationParseError
@@ -22,6 +23,9 @@ from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.retrieval.entities import Evidence
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import StudySummary
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.repositories.study import SqlStudySummaryRepository
 
 _SYSTEM_PREAMBLE = (
     "You are an educational assistant creating structured study materials from course content "
@@ -103,7 +107,7 @@ class GenerateSummaryUseCase:
         *,
         model_gateway: ModelGatewayPort,
         context_builder: ContextBuilder,
-        summary_repo: object,  # SqlStudySummaryRepository
+        summary_repo: SqlStudySummaryRepository,
     ) -> None:
         self._gateway = model_gateway
         self._context_builder = context_builder

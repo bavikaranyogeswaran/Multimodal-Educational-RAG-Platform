@@ -119,7 +119,7 @@ class LearningProgress:
     kb_id: uuid.UUID
     user_id: uuid.UUID
     topic_mastery: dict[str, float]
-    quiz_scores: tuple[dict, ...]
+    quiz_scores: tuple[dict[str, object], ...]
     flashcard_ratings: dict[str, int]
     completed_chapters: tuple[str, ...]
     weak_concepts: tuple[str, ...]

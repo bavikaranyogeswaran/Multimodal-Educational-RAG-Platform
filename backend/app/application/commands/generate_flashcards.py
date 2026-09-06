@@ -6,6 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.domain.enums import FlashcardSource, ModelTask
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
@@ -14,6 +15,9 @@ from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.retrieval.entities import Evidence
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import Flashcard
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.repositories.study import SqlFlashcardRepository
 
 _SYSTEM_PREAMBLE = (
     "You are an educational assistant creating flashcards to help a student memorise "
@@ -76,7 +80,7 @@ class GenerateFlashcardsUseCase:
         *,
         model_gateway: ModelGatewayPort,
         context_builder: ContextBuilder,
-        flashcard_repo: object,  # SqlFlashcardRepository
+        flashcard_repo: SqlFlashcardRepository,
     ) -> None:
         self._gateway = model_gateway
         self._context_builder = context_builder

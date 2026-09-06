@@ -200,7 +200,7 @@ class ReindexKnowledgeBaseUseCase:
         return True
 
 
-def _embedding_job(scope: ScopeContext, chunk_ids: tuple) -> ProcessingJob:
+def _embedding_job(scope: ScopeContext, chunk_ids: tuple[uuid.UUID, ...]) -> ProcessingJob:
     now = datetime.now(UTC)
     return ProcessingJob(
         id=uuid.uuid4(),

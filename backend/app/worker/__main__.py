@@ -53,6 +53,7 @@ from app.configuration.wire import build_container
 from app.domain.documents.chunker import Chunker
 from app.domain.enums import DocumentStatus, JobPriority, JobStatus, JobType
 from app.domain.jobs.entities import ProcessingJob
+from app.domain.ports.adapters import CacheStore
 from app.domain.scope import ScopeContext
 from app.infrastructure.database.repositories.chunk import SqlChunkRepository
 from app.infrastructure.database.repositories.conversation import SqlConversationRepository
@@ -71,7 +72,7 @@ from app.runtime import loop_factory
 _log = structlog.get_logger(__name__)
 
 
-def _configured_cache(container: Container, settings: Settings):
+def _configured_cache(container: Container, settings: Settings) -> CacheStore | None:
     """Return the cache adapter when one is configured, else None.
 
     Avoids touching container.cache when it is _Unimplemented — that object

@@ -13,12 +13,23 @@ import math
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING, TypedDict
 
 from app.domain.enums import ModelTask, StudyTaskStatus
 from app.domain.models.context_builder import ContextBuilder, ContextInputs
 from app.domain.ports.model_gateway import ModelGatewayPort
 from app.domain.scope import ScopeContext
 from app.domain.study.entities import StudyPlan, StudyTask
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.repositories.study import SqlStudyPlanRepository
+
+
+class _ScheduleTask(TypedDict):
+    chapter: str
+    hours: float
+    due_date: date
+
 
 _SYSTEM_PREAMBLE = (
     "You are an educational planning assistant. Given a list of study sessions, write "
@@ -62,7 +73,7 @@ class CreateStudyPlanUseCase:
         *,
         model_gateway: ModelGatewayPort,
         context_builder: ContextBuilder,
-        plan_repo: object,  # SqlStudyPlanRepository
+        plan_repo: SqlStudyPlanRepository,
     ) -> None:
         self._gateway = model_gateway
         self._context_builder = context_builder
@@ -118,7 +129,7 @@ class CreateStudyPlanUseCase:
         await self._repo.save(command.scope, plan)
         return CreateStudyPlanResult(plan=plan)
 
-    async def _phrase_tasks(self, raw_tasks: list[dict]) -> list[str]:
+    async def _phrase_tasks(self, raw_tasks: list[_ScheduleTask]) -> list[str]:
         if not raw_tasks:
             return []
 
@@ -164,7 +175,7 @@ def _build_schedule(
     available_hours: float,
     chapters: list[str],
     priority_topics: list[str],
-) -> list[dict]:
+) -> list[_ScheduleTask]:
     if not chapters:
         return []
 
@@ -178,7 +189,7 @@ def _build_schedule(
     days_per_chapter = max(1, math.ceil(study_days / len(ordered)))
     hours_per_chapter = round(available_hours * days_per_chapter, 1)
 
-    tasks: list[dict] = []
+    tasks: list[_ScheduleTask] = []
     current_day = today + timedelta(days=1)  # start tomorrow
     for chapter in ordered:
         due = current_day + timedelta(days=days_per_chapter - 1)
